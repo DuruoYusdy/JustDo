@@ -1,3 +1,4 @@
+import { COWORK_PLAN_PREVIEW_EVENT, extractPresentPlanPreview } from '@shared/cowork/planPreview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
@@ -405,6 +406,47 @@ function renderProgressReceipt(tool: ToolItem, showAvatar: boolean): TemplateRes
   );
 }
 
+function renderPlanPresentation(tool: ToolItem, showAvatar: boolean): TemplateResult {
+  const preview = extractPresentPlanPreview(tool.name, tool.input, tool.id);
+  const title = preview?.title || i18nService.t('planReviewTitle');
+  return renderAssistantTimelineRow(
+    html`
+      <button
+        type="button"
+        class="plan-presentation-card"
+        data-plan-presentation-id=${tool.id}
+        ?disabled=${!preview}
+        @click=${(event: Event) => {
+          event.stopPropagation();
+          if (!preview) return;
+          window.dispatchEvent(
+            new CustomEvent(COWORK_PLAN_PREVIEW_EVENT, {
+              detail: preview,
+            }),
+          );
+        }}
+      >
+        <span class="plan-presentation-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none">
+            <path d="M6 4.75h8a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 14 16.75H6a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 6 4.75Z" />
+            <path d="M8 4.75v-1.5h4v1.5M7.25 9.25l.75.75 1.5-1.75M11.25 9.25h2M7.25 13h6" />
+          </svg>
+        </span>
+        <span class="plan-presentation-card__copy">
+          <strong>${title}</strong>
+        </span>
+        <span class="plan-presentation-card__arrow" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none">
+            <path d="m6 3.5 4.5 4.5L6 12.5" />
+          </svg>
+        </span>
+      </button>
+    `,
+    showAvatar,
+    'chat-group--plan-presentation',
+  );
+}
+
 function renderAssistantTimelineRow(
   content: TemplateResult,
   showAvatar: boolean,
@@ -490,6 +532,9 @@ export function renderTimelineItem(
   }
   if (item.kind === 'progress-receipt') {
     return renderProgressReceipt(item.item, showAvatar);
+  }
+  if (item.kind === 'plan-presentation') {
+    return renderPlanPresentation(item.item, showAvatar);
   }
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {

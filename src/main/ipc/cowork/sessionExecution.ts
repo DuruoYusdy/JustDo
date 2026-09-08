@@ -31,6 +31,7 @@ interface StartSessionOptions {
   agentId?: string;
   clientTurnId?: string;
   startedAt?: number;
+  planMode?: boolean;
 }
 
 const broadcastSessionError = (sessionId: string, error: unknown): void => {
@@ -110,6 +111,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           attachments: options.attachments,
           agentId: options.agentId,
           clientTurnId: options.clientTurnId,
+          planMode: options.planMode === true,
         })
         .catch(error => {
           console.error('[Cowork] session error:', error);

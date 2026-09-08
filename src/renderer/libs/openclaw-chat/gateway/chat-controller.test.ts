@@ -2088,6 +2088,45 @@ test('replaces truncated OpenClaw history previews with complete messages', asyn
   });
 });
 
+test('loads every closed transcript segment page without switching the live session', async () => {
+  const closedKey = 'agent:main:justdo:session-1';
+  const request = vi.fn().mockImplementation((method: string, params: unknown) => {
+    if (method !== 'chat.history') return Promise.resolve({});
+    const offset = (params as { offset?: number }).offset;
+    return offset === undefined
+      ? Promise.resolve({
+          messages: [{ role: 'assistant', id: 'newer', content: 'newer planning message' }],
+          hasMore: true,
+          nextOffset: 1,
+        })
+      : Promise.resolve({
+          messages: [{ role: 'user', id: 'older', content: 'older planning message' }],
+          hasMore: false,
+        });
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1:execution:plan-1';
+
+  await expect(controller.loadTranscriptSegment(closedKey)).resolves.toMatchObject([
+    { id: 'older', content: 'older planning message' },
+    { id: 'newer', content: 'newer planning message' },
+  ]);
+  expect(controller.state.sessionKey).toBe('agent:main:justdo:session-1:execution:plan-1');
+  expect(request).toHaveBeenNthCalledWith(1, 'chat.history', {
+    sessionKey: closedKey,
+    limit: 250,
+    maxChars: 500_000,
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
+    sessionKey: closedKey,
+    limit: 250,
+    maxChars: 500_000,
+    offset: 1,
+  });
+});
+
 test('keeps a truncated history preview when the complete message is unavailable', async () => {
   const request = vi.fn().mockImplementation((method: string) => {
     if (method === 'chat.history') {

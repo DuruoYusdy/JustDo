@@ -126,6 +126,11 @@ export type CoworkInteractionResult =
       message: string;
       interrupt?: boolean;
       toolUseID?: string;
+    }
+  | {
+      behavior: 'plan';
+      decision: 'implement' | 'revise' | 'cancel';
+      feedback?: string;
     };
 
 // Cowork extension interaction response
@@ -156,6 +161,7 @@ export interface CoworkStartOptions {
   attachments?: CoworkAttachmentPayload[];
   clientTurnId?: string;
   startedAt?: number;
+  planMode?: boolean;
 }
 
 export type { SessionRunTiming };

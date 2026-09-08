@@ -10,6 +10,8 @@ import packageJson from './package.json';
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
 const isProductionBuild = process.env.NODE_ENV !== 'development';
+const projectRoot = path.resolve(__dirname);
+const dependencyRoot = fs.realpathSync(path.join(projectRoot, 'node_modules'));
 const escapedProductName = packageJson.productName.replace(
   /[&<>"']/g,
   character =>
@@ -138,6 +140,12 @@ export default defineConfig({
     port: devPort,
     strictPort: true,
     host: true,
+    fs: {
+      // Git worktrees may share dependencies through a directory junction.
+      // Vite validates resolved paths, so allow only that dependency tree in
+      // addition to this worktree instead of allowing the junction's parent.
+      allow: [projectRoot, dependencyRoot],
+    },
     hmr: {
       port: devPort,
     },

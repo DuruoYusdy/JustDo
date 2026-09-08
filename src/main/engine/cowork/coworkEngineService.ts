@@ -1,3 +1,4 @@
+import { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import type { SessionTitleFetch } from '../../cowork/sessionTitleGenerator';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
@@ -8,6 +9,7 @@ type CoworkEngineServiceDeps = {
   getCoworkStore: () => CoworkStore;
   getOpenClawEngineManager: () => OpenClawEngineManager;
   fetchSessionTitle?: SessionTitleFetch;
+  getUserDataPath: () => string;
 };
 
 export class CoworkEngineService {
@@ -34,6 +36,7 @@ export class CoworkEngineService {
           this.deps.getCoworkStore(),
           this.deps.getOpenClawEngineManager(),
           this.deps.fetchSessionTitle,
+          new ApprovedPlanArtifactStore(this.deps.getUserDataPath()),
         );
       }
       this.router = new CoworkEngineRouter({

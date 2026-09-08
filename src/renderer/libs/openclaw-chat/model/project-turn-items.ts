@@ -1,3 +1,5 @@
+import { isPresentPlanToolName } from '@shared/cowork/planPreview';
+
 import type {
   AssistantTurn,
   ContentItem,
@@ -36,6 +38,12 @@ export interface ProgressReceiptTimelineItem {
   item: ToolItem;
 }
 
+export interface PlanPresentationTimelineItem {
+  kind: 'plan-presentation';
+  key: string;
+  item: ToolItem;
+}
+
 export interface TerminalTimelineItem {
   kind: 'terminal';
   key: string;
@@ -57,6 +65,7 @@ export type ActiveTurnTimelineItem =
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
   | ProgressReceiptTimelineItem
+  | PlanPresentationTimelineItem
   | ContentTimelineItem
   | TerminalTimelineItem
   | WaitingTimelineItem
@@ -118,9 +127,6 @@ export function projectTurnItems(
   const failedTools: ToolItem[] = [];
   let summarySegment = 0;
 
-  const isProgressCardUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
-    item.type === 'tool' && item.name.trim().toLowerCase() === 'progress_card';
-
   const flushSummary = () => {
     if (archived.length === 0) return;
     const first = archived[0];
@@ -143,12 +149,21 @@ export function projectTurnItems(
   for (const item of turn.items) {
     if (item.type === 'content' && !item.text.trim()) continue;
     if (item.type === 'thinking' || item.type === 'tool') {
-      if (item.type === 'tool' && item.status === 'failed') failedTools.push(item);
-      if (isProgressCardUpdate(item)) {
-        flushSummary();
-        projected.push({ kind: 'progress-receipt', key: `progress:${item.id}`, item });
-        summarySegment += 1;
-        continue;
+      if (item.type === 'tool') {
+        if (item.status === 'failed') failedTools.push(item);
+        const normalizedName = item.name.trim().toLowerCase();
+        if (isPresentPlanToolName(item.name)) {
+          flushSummary();
+          projected.push({ kind: 'plan-presentation', key: `plan:${item.id}`, item });
+          summarySegment += 1;
+          continue;
+        }
+        if (normalizedName === 'progress_card') {
+          flushSummary();
+          projected.push({ kind: 'progress-receipt', key: `progress:${item.id}`, item });
+          summarySegment += 1;
+          continue;
+        }
       }
       if (item.status === 'running') {
         flushSummary();

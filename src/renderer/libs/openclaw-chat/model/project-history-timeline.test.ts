@@ -136,6 +136,40 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
+  test('projects an implementation phase boundary without joining tool lifecycles across it', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        runId: 'planning-run',
+        content: [{ type: 'toolcall', toolCallId: 'shared-call', name: 'read' }],
+      },
+      {
+        role: 'justdo-phase-boundary',
+        id: 'implementation-start',
+        content: 'Plan approved · Implementation started',
+      },
+      {
+        role: 'tool',
+        runId: 'implementation-run',
+        toolCallId: 'shared-call',
+        name: 'write',
+        content: 'done',
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toEqual([
+      'live-process',
+      'phase-boundary',
+      'process-summary',
+    ]);
+    expect(result[1]).toMatchObject({
+      kind: 'phase-boundary',
+      label: 'Plan approved · Implementation started',
+    });
+    expect(result[0]).toMatchObject({ item: { name: 'read', status: 'running' } });
+    expect(result[2]).toMatchObject({ items: [{ name: 'write', status: 'completed' }] });
+  });
+
   test('flattens mixed persisted assistant content around hard Content boundaries', () => {
     const result = projectPersistedTimeline([
       { role: 'user', content: 'go', id: 'user-1' },
@@ -897,6 +931,35 @@ describe('projectPersistedTimeline', () => {
       'progress-receipt',
     ]);
     expect(result.filter(item => item.kind === 'progress-receipt')).toHaveLength(2);
+  });
+
+  test('restores PresentPlan as a standalone plan card', () => {
+    const result = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        id: 'assistant-1',
+        content: [
+          { type: 'thinking', thinking: 'planning' },
+          {
+            type: 'tool_use',
+            id: 'plan-1',
+            name: 'PresentPlan',
+            input: { title: 'Ship it', plan: '# Plan\n\n1. Implement' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'plan-1',
+        name: 'PresentPlan',
+        content: 'Plan approved.',
+      },
+    ]);
+
+    expect(result.map(item => item.kind)).toContain('plan-presentation');
+    expect(result.find(item => item.kind === 'plan-presentation')).toMatchObject({
+      item: { name: 'PresentPlan', input: { title: 'Ship it' } },
+    });
   });
 
   test('keeps a failed persisted Tool only inside its process summary', () => {

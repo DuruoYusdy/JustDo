@@ -202,6 +202,42 @@ describe('SessionRpc model coordination', () => {
     expect(session.modelRef).toBe('hdp/Glm-5.1');
   });
 
+  test('routes model reads and patches through the injected active segment key', async () => {
+    const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
+    const activeKey = 'agent:main:justdo:session-1:execution:plan_1';
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.describe') {
+        return { session: { modelProvider: 'openai', model: 'gpt-4o' } };
+      }
+      if (method === 'sessions.patch') {
+        return { resolved: { provider: 'openai', model: 'gpt-5' } };
+      }
+      return {};
+    });
+    const rpc = new SessionRpc({
+      getGatewayClient: () => ({ request } as unknown as GatewayClientLike),
+      store: {
+        getSession: () => session,
+        getAgent: () => ({ model: session.modelRef }),
+        updateSession: vi.fn(),
+      } as unknown as CoworkStore,
+      resolveSessionKey: () => activeKey,
+    });
+
+    await expect(rpc.getModel(session.id)).resolves.toMatchObject({
+      ok: true,
+      modelRef: 'openai/gpt-4o',
+      source: 'gateway',
+    });
+    await expect(rpc.patchModel(session.id, 'openai/gpt-5')).resolves.toMatchObject({ ok: true });
+
+    expect(request).toHaveBeenNthCalledWith(1, 'sessions.describe', { key: activeKey });
+    expect(request).toHaveBeenNthCalledWith(2, 'sessions.patch', {
+      key: activeKey,
+      model: 'openai/gpt-5',
+    });
+  });
+
   test('reads the selected identity from the public session row without fetching transcripts', async () => {
     const session = { id: 'session-1', agentId: 'main', modelRef: 'openai/gpt-4o' };
     const request = vi.fn(async (method: string) =>

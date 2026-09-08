@@ -21,5 +21,8 @@ export const AUTHOR_NAME = author.name;
 /** Visible per-user application data directory, for example `%APPDATA%/<productName>`. */
 export const USER_DATA_DIRECTORY_NAME = PRODUCT_NAME;
 
+/** Lowercase product-scoped directory name used inside user-selected workspaces. */
+export const PRODUCT_NAME_LOWERCASE = PRODUCT_NAME.toLocaleLowerCase('en-US');
+
 /** Visible default workspace root. Keep the existing lowercase directory convention. */
-export const DEFAULT_WORKSPACE_DIRECTORY_NAME = PRODUCT_NAME.toLocaleLowerCase('en-US');
+export const DEFAULT_WORKSPACE_DIRECTORY_NAME = PRODUCT_NAME_LOWERCASE;

@@ -3,13 +3,19 @@ import { BrowserWindow, ipcMain } from 'electron';
 import {
   type AskUserInteractionEnvelope,
   CoworkInteractionIpc,
+  type PlanModeInteractionEnvelope,
 } from '../../../shared/openclaw/extensions';
 
 type AskUserRuntime = {
-  listPendingAskUserInteractions: () => Promise<AskUserInteractionEnvelope[]>;
+  listPendingAskUserInteractions: () => Promise<
+    Array<AskUserInteractionEnvelope | PlanModeInteractionEnvelope>
+  >;
   resolveAskUserInteraction: (
     requestId: string,
-    response: { behavior: 'submit'; answers: unknown } | { behavior: 'cancel' },
+    response:
+      | { behavior: 'submit'; answers: unknown }
+      | { behavior: 'cancel' }
+      | { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
   ) => Promise<{ sessionId: string }>;
 };
 
@@ -28,6 +34,11 @@ type CoworkInteractionResult =
       message: string;
       interrupt?: boolean;
       toolUseID?: string;
+    }
+  | {
+      behavior: 'plan';
+      decision: 'implement' | 'revise' | 'cancel';
+      feedback?: string;
     };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -37,13 +48,28 @@ const parseInteractionResponse = (
   value: unknown,
 ): {
   requestId: string;
-  response: { behavior: 'submit'; answers: unknown } | { behavior: 'cancel' };
+  response:
+    | { behavior: 'submit'; answers: unknown }
+    | { behavior: 'cancel' }
+    | { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string };
 } | null => {
   if (!isRecord(value) || typeof value.requestId !== 'string' || !value.requestId.trim()) {
     return null;
   }
   if (!isRecord(value.result)) return null;
   const result = value.result as CoworkInteractionResult;
+  if (result.behavior === 'plan') {
+    if (!['implement', 'revise', 'cancel'].includes(result.decision)) return null;
+    if (result.feedback !== undefined && typeof result.feedback !== 'string') return null;
+    return {
+      requestId: value.requestId.trim(),
+      response: {
+        behavior: 'plan',
+        decision: result.decision,
+        ...(result.feedback?.trim() ? { feedback: result.feedback.trim() } : {}),
+      },
+    };
+  }
   if (result.behavior === 'cancel') {
     return { requestId: value.requestId.trim(), response: { behavior: 'cancel' } };
   }
@@ -76,7 +102,7 @@ export const registerCoworkInteractionHandlers = ({ getRuntime }: Dependencies):
       const runtime = getRuntime();
       if (!runtime) throw new Error('OpenClaw Gateway is unavailable.');
       const response = await runtime.resolveAskUserInteraction(parsed.requestId, parsed.response);
-      if (response.sessionId && response.sessionId !== '__askuser__') {
+      if (response.sessionId && !response.sessionId.startsWith('__')) {
         BrowserWindow.getAllWindows().forEach(window => {
           if (!window.isDestroyed()) {
             window.webContents.send('cowork:session:activity', {

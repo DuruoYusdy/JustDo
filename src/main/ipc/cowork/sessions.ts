@@ -611,11 +611,23 @@ export const registerCoworkSessionHandlers = ({
       terminalOutcomes.delete(sessionId);
       finalizedOutcomes.delete(sessionId);
       revisions.delete(sessionId);
-      const agentId = store.getSession(sessionId)?.agentId || 'main';
+      const persistedSession = store.getSession(sessionId);
+      const agentId = persistedSession?.agentId || 'main';
       unknownAdmissions.delete(sessionId);
+      const planWorkspaceRoots = store
+        .listPlanHandoffs(sessionId)
+        .map(handoff => handoff.artifact.workspaceRoot)
+        .filter((root): root is string => typeof root === 'string');
+      if (persistedSession?.cwd) planWorkspaceRoots.push(persistedSession.cwd);
+      const segmentKeys = store.listSessionSegments(sessionId).map(segment => segment.sessionKey);
       store.deleteSession(sessionId);
       try {
-        getCoworkEngineRouter().onSessionDeleted(sessionId, agentId);
+        getCoworkEngineRouter().onSessionDeleted(
+          sessionId,
+          agentId,
+          segmentKeys,
+          planWorkspaceRoots,
+        );
       } catch {
         // The persisted deletion succeeded; cache cleanup is best effort.
       }
@@ -635,6 +647,24 @@ export const registerCoworkSessionHandlers = ({
       const agentIds = new Map(
         sessionIds.map(sessionId => [sessionId, store.getSession(sessionId)?.agentId || 'main']),
       );
+      const planWorkspaceRoots = new Map(
+        sessionIds.map(sessionId => [
+          sessionId,
+          [
+            ...store
+              .listPlanHandoffs(sessionId)
+              .map(handoff => handoff.artifact.workspaceRoot)
+              .filter((root): root is string => typeof root === 'string'),
+            ...(store.getSession(sessionId)?.cwd ? [store.getSession(sessionId)!.cwd] : []),
+          ],
+        ]),
+      );
+      const segmentKeys = new Map(
+        sessionIds.map(sessionId => [
+          sessionId,
+          store.listSessionSegments(sessionId).map(segment => segment.sessionKey),
+        ]),
+      );
       await Promise.all(
         sessionIds.map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
       );
@@ -642,7 +672,12 @@ export const registerCoworkSessionHandlers = ({
       sessionIds.forEach(sessionId => {
         unknownAdmissions.delete(sessionId);
         try {
-          router.onSessionDeleted(sessionId, agentIds.get(sessionId) || 'main');
+          router.onSessionDeleted(
+            sessionId,
+            agentIds.get(sessionId) || 'main',
+            segmentKeys.get(sessionId),
+            planWorkspaceRoots.get(sessionId),
+          );
         } catch {
           // The persisted deletion succeeded; cache cleanup is best effort.
         }

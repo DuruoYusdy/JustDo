@@ -1540,7 +1540,9 @@ export class ChatController {
               ? [item.item]
               : item.kind === 'progress-receipt'
                 ? [item.item]
-                : [],
+                : item.kind === 'plan-presentation'
+                  ? [item.item]
+                  : [],
         )
         .map(tool => [tool.toolCallId, tool] as const),
     );
@@ -1885,6 +1887,39 @@ export class ChatController {
   /** Materialize every loaded page only for explicit whole-history consumers such as export. */
   getLoadedMessages(): unknown[] {
     return this.currentMessageHistory.toArray();
+  }
+
+  /** Load a closed transcript segment without changing the selected live session. */
+  async loadTranscriptSegment(sessionKey: string): Promise<unknown[]> {
+    const normalizedKey = sessionKey.trim();
+    const client = this.state.client;
+    if (!normalizedKey) throw new Error('Transcript segment session key is required');
+    if (!client || !this.state.connected) {
+      throw new Error('OpenClaw gateway is not connected');
+    }
+
+    const pages: unknown[][] = [];
+    const seenOffsets = new Set<number>();
+    let offset: number | undefined;
+    for (;;) {
+      const page = parseChatHistoryPage(
+        await client.request('chat.history', {
+          sessionKey: normalizedKey,
+          limit: CHAT_HISTORY_OLDER_PAGE_LIMIT,
+          maxChars: CHAT_HISTORY_MAX_CHARS,
+          ...(offset === undefined ? {} : { offset }),
+        }),
+      );
+      pages.unshift(page.messages);
+      if (!page.hasMore || !page.nextCursor) break;
+      const nextOffset = decodeHistoryOffsetCursor(page.nextCursor);
+      if (seenOffsets.has(nextOffset) || nextOffset <= (offset ?? -1)) {
+        throw new Error('OpenClaw chat.history pagination cursor did not advance');
+      }
+      seenOffsets.add(nextOffset);
+      offset = nextOffset;
+    }
+    return this.normalizeHistoryPage(pages.flat(), normalizedKey);
   }
 
   private ensureTranscriptSessionIdentity(): void {

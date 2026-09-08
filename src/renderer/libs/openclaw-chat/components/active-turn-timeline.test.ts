@@ -397,6 +397,36 @@ describe('active turn timeline', () => {
     expect(rendered).not.toContain('role="status"');
   });
 
+  test('renders PresentPlan as a compact button without embedding the plan body', () => {
+    const rendered = flatten(
+      renderTimelineItem({
+        kind: 'plan-presentation',
+        key: 'plan:tool-plan',
+        item: {
+          id: 'tool-plan',
+          runId: 'run-1',
+          firstSeq: 1,
+          lastSeq: 1,
+          startedAt: 1,
+          updatedAt: 1,
+          type: 'tool',
+          status: 'completed',
+          toolCallId: 'call-plan',
+          name: 'PresentPlan',
+          input: { title: 'Ship it', plan: '# Secret plan body' },
+        },
+      }),
+    );
+
+    expect(rendered).toContain('data-plan-presentation-id');
+    expect(rendered).toContain('plan-presentation-card');
+    expect(rendered).toContain('Ship it');
+    expect(rendered).not.toContain('查看计划');
+    expect(rendered).not.toContain('View plan');
+    expect(rendered).not.toContain('Secret plan body');
+    expect(rendered).not.toContain('<details');
+  });
+
   test('does not put archived details or Tool input into the main timeline DOM', () => {
     const rendered = flatten(renderTimelineItem(summary()));
 

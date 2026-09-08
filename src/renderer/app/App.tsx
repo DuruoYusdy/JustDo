@@ -84,7 +84,6 @@ const App: React.FC = () => {
   const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const pendingInteractions = useSelector(selectPendingInteractions);
-  const pendingInteraction = pendingInteractions[0] ?? null;
   const isWindows = window.electron.platform === 'win32';
 
   const dismissApproval = useCallback((approval: Pick<ApprovalRequest, 'id' | 'kind'>) => {
@@ -651,8 +650,11 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [handleNewChat]);
 
-  const isStructuredQuestionInteraction =
-    pendingInteraction?.interactionKind === CoworkInteractionKind.STRUCTURED_QUESTION;
+  const activePlanInteraction = pendingInteractions.find(
+    interaction =>
+      interaction.interactionKind === CoworkInteractionKind.PLAN_APPROVAL &&
+      interaction.sessionId === currentSessionId,
+  );
   const structuredQuestionInteractions = useMemo(
     () =>
       pendingInteractions.filter(
@@ -669,6 +671,15 @@ const App: React.FC = () => {
   );
   const activeQuestionRequestId = activeQuestionInteraction?.requestId ?? null;
   const isQuestionWindowVisible = activeQuestionRequestId !== null;
+  const displayedPlanInteraction = isQuestionWindowVisible ? undefined : activePlanInteraction;
+  const modalInteraction =
+    displayedPlanInteraction || isQuestionWindowVisible
+      ? undefined
+      : pendingInteractions.find(
+          interaction =>
+            interaction.interactionKind !== CoworkInteractionKind.STRUCTURED_QUESTION &&
+            interaction.interactionKind !== CoworkInteractionKind.PLAN_APPROVAL,
+        );
 
   const questionWindows = useMemo(() => {
     return structuredQuestionInteractions.map(interaction => (
@@ -682,17 +693,16 @@ const App: React.FC = () => {
   }, [structuredQuestionInteractions, activeQuestionRequestId, handleInteractionResponse]);
 
   const interactionModal = useMemo(() => {
-    if (!pendingInteraction) return null;
-    if (isStructuredQuestionInteraction) return null;
+    if (!modalInteraction) return null;
 
     return (
       <CoworkInteractionModal
-        key={pendingInteraction.requestId}
-        interaction={pendingInteraction}
-        onRespond={result => handleInteractionResponse(pendingInteraction.requestId, result)}
+        key={modalInteraction.requestId}
+        interaction={modalInteraction}
+        onRespond={result => handleInteractionResponse(modalInteraction.requestId, result)}
       />
     );
-  }, [pendingInteraction, isStructuredQuestionInteraction, handleInteractionResponse]);
+  }, [modalInteraction, handleInteractionResponse]);
 
   const activeApproval = pendingApprovals[0] ?? null;
   const isOverlayActive = interactionModal !== null || activeApproval !== null;
@@ -850,10 +860,21 @@ const App: React.FC = () => {
                   <CoworkView
                     ref={coworkViewRef}
                     onRequestAppSettings={handleShowSettings}
-                    isQuestionInputBlocked={isQuestionWindowVisible}
+                    isQuestionInputBlocked={
+                      isQuestionWindowVisible || displayedPlanInteraction !== undefined
+                    }
+                    inputBlockedMessage={
+                      displayedPlanInteraction ? i18nService.t('coworkPlanInputBlocked') : undefined
+                    }
                     isSidebarCollapsed={isSidebarCollapsed}
                     onToggleSidebar={handleToggleSidebar}
                     onNewChat={handleNewChat}
+                    planInteraction={displayedPlanInteraction}
+                    onPlanRespond={result =>
+                      displayedPlanInteraction
+                        ? handleInteractionResponse(displayedPlanInteraction.requestId, result)
+                        : Promise.resolve(false)
+                    }
                   />
                 )}
               </div>

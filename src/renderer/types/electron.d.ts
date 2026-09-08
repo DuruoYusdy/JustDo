@@ -221,6 +221,11 @@ type CoworkInteractionResult =
       message: string;
       interrupt?: boolean;
       toolUseID?: string;
+    }
+  | {
+      behavior: 'plan';
+      decision: 'implement' | 'revise' | 'cancel';
+      feedback?: string;
     };
 
 interface McpServerConfigIPC {
@@ -643,6 +648,7 @@ interface IElectronAPI {
       attachments?: CoworkAttachmentPayload[];
       clientTurnId?: string;
       startedAt?: number;
+      planMode?: boolean;
     }) => Promise<{
       success: boolean;
       session?: CoworkSession;
@@ -756,6 +762,18 @@ interface IElectronAPI {
     getSessionGoal: (sessionId: string) => Promise<{
       success: boolean;
       goal?: import('@shared/sessionGoal').SessionGoal;
+      error?: string;
+    }>;
+    getPlanMode: (
+      sessionId: string,
+    ) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+    setPlanMode: (
+      sessionId: string,
+      enabled: boolean,
+    ) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+    listSessionSegments: (sessionId: string) => Promise<{
+      success: boolean;
+      segments?: import('@shared/cowork/sessionSegment').CoworkSessionSegment[];
       error?: string;
     }>;
     mutateSessionGoal: (

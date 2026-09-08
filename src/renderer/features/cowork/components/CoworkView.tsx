@@ -8,15 +8,25 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
+import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
+import { CoworkInteractionKind, OpenClawToolName } from '@shared/openclaw/extensions';
 import {
   type ProgressCard,
   progressCardIsComplete,
   type ProgressCardViewState,
 } from '@shared/openclaw/progressCard';
 import { isGoalEditCommand } from '@shared/slashCommands';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
@@ -35,6 +45,12 @@ import FilePreviewDrawer, {
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
 import { isCurrentFilePreviewRequest } from '@/features/cowork/components/preview/filePreviewNavigation';
+import PlanApprovalDrawer from '@/features/cowork/components/preview/PlanApprovalDrawer';
+import {
+  initialPlanPreviewState,
+  planPreviewReducer,
+  retainedPlanForSession,
+} from '@/features/cowork/components/preview/planPreviewState';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
@@ -63,11 +79,14 @@ import {
 import { coworkService } from '@/features/cowork/coworkService';
 import {
   setCurrentSession,
+  setPlanMode,
   setStreaming,
   updateSessionStatus,
 } from '@/features/cowork/coworkSlice';
 import type {
   CoworkAttachmentPayload,
+  CoworkInteractionRequest,
+  CoworkInteractionResult,
   CoworkSession,
   OpenClawEngineStatus,
 } from '@/features/cowork/coworkTypes';
@@ -85,7 +104,7 @@ import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
-import { RootState } from '@/store';
+import { type RootState, store } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
 
 import logoUrl from '../../../../../resources/logo.png';
@@ -131,9 +150,12 @@ function debugLog(...args: unknown[]): void {
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
   isQuestionInputBlocked?: boolean;
+  inputBlockedMessage?: string;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
+  planInteraction?: CoworkInteractionRequest | null;
+  onPlanRespond?: (result: CoworkInteractionResult) => Promise<boolean>;
 }
 
 export interface CoworkViewHandle {
@@ -147,9 +169,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const {
     onRequestAppSettings,
     isQuestionInputBlocked = false,
+    inputBlockedMessage,
     isSidebarCollapsed,
     onToggleSidebar,
     onNewChat,
+    planInteraction = null,
+    onPlanRespond,
   } = props;
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
@@ -173,6 +198,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [isSubtaskListOpen, setIsSubtaskListOpen] = useState(false);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [planPreviewState, dispatchPlanPreview] = useReducer(
+    planPreviewReducer,
+    initialPlanPreviewState,
+  );
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
   const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
   const [progressCardState, setProgressCardState] = useState<ProgressCardViewState | null>(null);
@@ -216,6 +245,40 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  const retainedPlanInteraction = retainedPlanForSession(planPreviewState, currentSessionId);
+  const visiblePlanInteraction = planInteraction ?? retainedPlanInteraction;
+  const planPreviewReadOnly = planInteraction === null && visiblePlanInteraction !== null;
+  const pendingPlanRequestId = planInteraction?.requestId ?? null;
+  const pendingPlanSessionId = planInteraction?.sessionId ?? null;
+
+  useEffect(() => {
+    if (!pendingPlanRequestId || !pendingPlanSessionId) return;
+    dispatchPlanPreview({ type: 'pending-shown', sessionId: pendingPlanSessionId });
+  }, [pendingPlanRequestId, pendingPlanSessionId]);
+
+  const handlePlanRespond = useCallback(
+    async (result: CoworkInteractionResult): Promise<boolean> => {
+      if (!planInteraction || !onPlanRespond) return false;
+      const sessionId = planInteraction.sessionId;
+      const retainForImplementation = result.behavior === 'plan' && result.decision === 'implement';
+      if (retainForImplementation) {
+        dispatchPlanPreview({ type: 'implementation-started', interaction: planInteraction });
+      }
+
+      const success = await onPlanRespond(result);
+      if (!success && retainForImplementation) {
+        dispatchPlanPreview({
+          type: 'implementation-failed',
+          sessionId,
+          requestId: planInteraction.requestId,
+        });
+      } else if (success && !retainForImplementation) {
+        dispatchPlanPreview({ type: 'resolved-without-implementation', sessionId });
+      }
+      return success;
+    },
+    [onPlanRespond, planInteraction],
+  );
   useEffect(() => {
     if (currentSessionId) return;
     const next = pickHomeGreeting(getGreetingPeriod(new Date().getHours()), lastHomeGreeting);
@@ -260,9 +323,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     : isStreaming;
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
-  const currentGatewaySessionKey = currentSession
+  const canonicalGatewaySessionKey = currentSession
     ? `agent:${currentSession.agentId?.trim() || 'main'}:justdo:${currentSession.id}`
     : null;
+  const [reportedGatewaySessionKey, setReportedGatewaySessionKey] = useState<{
+    sessionId: string;
+    sessionKey: string;
+  } | null>(null);
+  const currentGatewaySessionKey =
+    reportedGatewaySessionKey?.sessionId === currentSessionId
+      ? reportedGatewaySessionKey.sessionKey
+      : canonicalGatewaySessionKey;
   const currentGatewaySessionKeyRef = useRef(currentGatewaySessionKey);
   currentGatewaySessionKeyRef.current = currentGatewaySessionKey;
   const handleGoalResumeAccepted = useCallback((sessionId: string, runId: string) => {
@@ -420,6 +491,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       }
 
       // Create a temporary session with user message to show immediately
+      const startInPlanMode = store.getState().cowork.newSessionPlanMode;
       const tempSessionId = `temp-${Date.now()}`;
       if (pendingStartRef.current?.requestId === requestId)
         pendingStartRef.current.temporarySessionId = tempSessionId;
@@ -450,6 +522,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
       // Immediately show the session detail page with user message
       dispatch(setCurrentSession(tempSession));
+      dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
       dispatch(setStreaming(true));
 
       // Buffer the pending user message until the temporary session render has
@@ -477,6 +550,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           attachments,
           clientTurnId,
           startedAt: now,
+          planMode: startInPlanMode,
         },
         {
           beforeSessionSelected: session => {
@@ -846,6 +920,29 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
     window.addEventListener('cowork:preview-file', handlePreviewFile);
     return () => window.removeEventListener('cowork:preview-file', handlePreviewFile);
+  }, []);
+
+  useEffect(() => {
+    const handlePreviewPlan = (event: Event) => {
+      if (!(event instanceof CustomEvent) || !isCoworkPlanPreview(event.detail)) return;
+      const sessionId = currentSessionIdRef.current;
+      if (!sessionId) return;
+      const preview = event.detail;
+      const interaction: CoworkInteractionRequest = {
+        sessionId,
+        requestId: `plan-preview:${preview.sourceId}`,
+        toolName: OpenClawToolName.PRESENT_PLAN,
+        interactionKind: CoworkInteractionKind.PLAN_APPROVAL,
+        toolInput: {
+          plan: preview.plan,
+          ...(preview.title ? { title: preview.title } : {}),
+        },
+      };
+      dispatchPlanPreview({ type: 'preview-opened', interaction });
+      setSelectedSubagent(null);
+    };
+    window.addEventListener(COWORK_PLAN_PREVIEW_EVENT, handlePreviewPlan);
+    return () => window.removeEventListener(COWORK_PLAN_PREVIEW_EVENT, handlePreviewPlan);
   }, []);
 
   useEffect(() => {
@@ -1409,6 +1506,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onActivityChange={setGoalRunProgress}
               onContextUsageChange={setContextUsage}
               onProgressCardChange={setProgressCardState}
+              onSessionKeyChange={sessionKey =>
+                setReportedGatewaySessionKey({ sessionId: currentSession.id, sessionKey })
+              }
               runTimings={sessionRunTimings[currentSession.id] ?? []}
             />
             {/* Input */}
@@ -1445,7 +1545,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       aria-live="polite"
                     >
                       <span className="rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs font-medium text-secondary shadow-subtle">
-                        {i18nService.t('coworkQuestionInputBlocked')}
+                        {inputBlockedMessage ?? i18nService.t('coworkQuestionInputBlocked')}
                       </span>
                     </div>
                   )}
@@ -1482,7 +1582,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           />
           <SubagentMessageDrawer
             parentSessionId={currentSession.id}
-            subagent={selectedSubagent}
+            subagent={visiblePlanInteraction ? null : selectedSubagent}
             onClose={() => setSelectedSubagent(null)}
           />
           {filePreview && (
@@ -1490,6 +1590,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               ref={filePreviewDrawerRef}
               preview={filePreview}
               onClose={() => setFilePreview(null)}
+              isObscured={visiblePlanInteraction !== null}
+            />
+          )}
+          {visiblePlanInteraction && (
+            <PlanApprovalDrawer
+              key={`${visiblePlanInteraction.requestId}:${planPreviewReadOnly ? 'readonly' : 'approval'}`}
+              interaction={visiblePlanInteraction}
+              onRespond={planPreviewReadOnly ? undefined : handlePlanRespond}
+              readOnly={planPreviewReadOnly}
+              onClose={
+                planPreviewReadOnly ? () => dispatchPlanPreview({ type: 'closed' }) : undefined
+              }
             />
           )}
           <ExportSessionModal

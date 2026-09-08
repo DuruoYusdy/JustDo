@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { expect, test, vi } from 'vitest';
 
 const { sendToRenderer } = vi.hoisted(() => ({ sendToRenderer: vi.fn() }));
@@ -29,7 +30,9 @@ import {
 import {
   AskUserQuestionGateway,
   CoworkInteractionIpc,
+  PlanModeGateway,
 } from '../../../shared/openclaw/extensions';
+import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { GatewayClientCtor, GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -56,14 +59,26 @@ function createEmptyStore() {
     permissionMode: 'full' as const,
     activeSkillIds: [],
     agentId: 'main',
+    modelRef: 'openai/gpt-5',
     messages: [] as Array<Record<string, unknown>>,
     createdAt: 1,
     updatedAt: 1,
   };
   let persistedGoalExecution: Record<string, unknown> | null = null;
+  let activeSegment: Record<string, unknown> | undefined;
+  const planHandoffs = new Map<string, Record<string, unknown>>();
+  let segmentOrdinal = 0;
+
+  const createSegment = (input: Record<string, unknown>) => ({
+    ...input,
+    ordinal: segmentOrdinal++,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
 
   return {
     session,
+    planHandoffs,
     store: {
       getAgentRuntimeSettings: () => createDefaultAgentRuntimeSettings(),
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
@@ -87,6 +102,81 @@ function createEmptyStore() {
       },
       clearGoalExecutionSnapshot: () => {
         persistedGoalExecution = null;
+      },
+      getActiveSessionSegment: (sessionId: string) =>
+        activeSegment?.sessionId === sessionId ? activeSegment : undefined,
+      beginSessionSegment: (input: Record<string, unknown>) => {
+        activeSegment = createSegment(input);
+        return activeSegment;
+      },
+      transitionSessionSegment: (input: Record<string, unknown>) => {
+        activeSegment = createSegment(input);
+        return activeSegment;
+      },
+      bindSessionSegmentGatewaySession: (id: string, gatewaySessionId: string) => {
+        if (activeSegment?.id === id) {
+          activeSegment = { ...activeSegment, gatewaySessionId, updatedAt: Date.now() };
+        }
+        return activeSegment;
+      },
+      createPlanHandoff: (input: Record<string, unknown>) => {
+        const existing = planHandoffs.get(input.planId as string);
+        if (existing) return existing;
+        const handoff = {
+          ...input,
+          state: 'presented',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        planHandoffs.set(input.planId as string, handoff);
+        return handoff;
+      },
+      migratePlanHandoffArtifact: (planId: string, artifact: Record<string, unknown>) => {
+        const existing = planHandoffs.get(planId);
+        if (!existing) throw new Error('Plan handoff not found.');
+        const migrated = { ...existing, artifact, updatedAt: Date.now() };
+        planHandoffs.set(planId, migrated);
+        return migrated;
+      },
+      getPlanHandoff: (planId: string) => planHandoffs.get(planId),
+      listRecoverablePlanHandoffs: () =>
+        [...planHandoffs.values()].filter(handoff => handoff.state !== 'resolved'),
+      transitionPlanHandoff: (input: Record<string, unknown>) => {
+        const existing = planHandoffs.get(input.planId as string);
+        if (!existing) throw new Error('Plan handoff not found.');
+        const updated = {
+          ...existing,
+          state: input.nextState,
+          ...(input.implementationSessionKey
+            ? { implementationSessionKey: input.implementationSessionKey }
+            : {}),
+          ...(input.implementationGatewaySessionId
+            ? { implementationGatewaySessionId: input.implementationGatewaySessionId }
+            : {}),
+          ...(input.implementationRunId
+            ? { implementationRunId: input.implementationRunId }
+            : {}),
+          updatedAt: Date.now(),
+        };
+        planHandoffs.set(input.planId as string, updated);
+        return updated;
+      },
+      admitPlanHandoffAndTransitionSegment: (input: Record<string, unknown>) => {
+        const implementationSegment = input.implementationSegment as Record<string, unknown>;
+        activeSegment = createSegment({
+          ...implementationSegment,
+          gatewaySessionId: input.implementationGatewaySessionId,
+        });
+        const existing = planHandoffs.get(input.planId as string)!;
+        const handoff = {
+          ...existing,
+          state: 'admitted',
+          implementationGatewaySessionId: input.implementationGatewaySessionId,
+          implementationRunId: input.implementationRunId,
+          updatedAt: Date.now(),
+        };
+        planHandoffs.set(input.planId as string, handoff);
+        return { handoff, segment: activeSegment };
       },
     },
   };
@@ -129,6 +219,43 @@ const createAskUserRequest = () => ({
   waitPolicy: { mode: 'required' as const },
 });
 
+const createPlanModeRequest = () => ({
+  requestId: 'plan_0123456789abcdef',
+  sessionKey: 'agent:main:justdo:session-1',
+  title: 'Implementation plan',
+  plan: '1. Inspect\n2. Implement\n3. Verify',
+});
+
+const createApprovedPlanArtifactStore = (
+  verifiedMarkdown = '1. Inspect\n2. Implement\n3. Verify',
+) => ({
+  publish: vi.fn((input: { workspaceRoot: string; sessionId: string; planId: string; markdown: string }) => ({
+    sessionId: input.sessionId,
+    planId: input.planId,
+    workspaceRoot: input.workspaceRoot,
+    relativePath: `.${PRODUCT_NAME_LOWERCASE}/plans/${input.sessionId}/${input.planId}.md`,
+    sha256: createHash('sha256')
+      .update(input.markdown.replace(/\r\n?/g, '\n'))
+      .digest('hex'),
+    byteLength: Buffer.byteLength(input.markdown),
+  })),
+  readVerified: vi.fn(() => verifiedMarkdown),
+});
+
+const seedPresentedPlan = (
+  adapter: OpenClawRuntimeAdapter,
+  request: ReturnType<typeof createPlanModeRequest>,
+) => {
+  const internals = adapter as unknown as {
+    ensurePlanningSessionSegment: (sessionId: string, sessionKey: string) => void;
+    persistAndVerifyPresentedPlan: (sessionId: string, request: unknown) => unknown;
+    pendingPlanModeRequests: Map<string, unknown>;
+  };
+  internals.ensurePlanningSessionSegment('session-1', request.sessionKey);
+  internals.persistAndVerifyPresentedPlan('session-1', request);
+  internals.pendingPlanModeRequests.set(request.requestId, request);
+};
+
 test('forwards AskUserQuestion extension events through the renderer interaction channel', () => {
   sendToRenderer.mockClear();
   const { store } = createEmptyStore();
@@ -156,6 +283,1213 @@ test('forwards AskUserQuestion extension events through the renderer interaction
   expect(sendToRenderer).toHaveBeenCalledWith(CoworkInteractionIpc.Dismiss, {
     requestId: request.requestId,
   });
+});
+
+test('migrates an existing AppData plan handoff into the product-scoped workspace path', () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const planRequest = createPlanModeRequest();
+  const artifactStore = createApprovedPlanArtifactStore(planRequest.plan);
+  planHandoffs.set(planRequest.requestId, {
+    planId: planRequest.requestId,
+    sessionId: 'session-1',
+    planningSessionKey: planRequest.sessionKey,
+    artifact: {
+      sessionId: 'session-1',
+      planId: planRequest.requestId,
+      relativePath: `plans/v1/session-1/${planRequest.requestId}.md`,
+      sha256: 'a'.repeat(64),
+      byteLength: Buffer.byteLength(planRequest.plan),
+    },
+    state: 'presented',
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const persist = (
+    adapter as unknown as {
+      persistAndVerifyPresentedPlan: (
+        sessionId: string,
+        request: ReturnType<typeof createPlanModeRequest>,
+      ) => { handoff: { artifact: { workspaceRoot?: string; relativePath: string } } };
+    }
+  ).persistAndVerifyPresentedPlan.bind(adapter);
+
+  const result = persist('session-1', planRequest);
+
+  expect(result.handoff.artifact).toMatchObject({
+    workspaceRoot: process.cwd(),
+    relativePath: `.${PRODUCT_NAME_LOWERCASE}/plans/session-1/${planRequest.requestId}.md`,
+  });
+  expect(artifactStore.readVerified).toHaveBeenCalledTimes(2);
+});
+
+test('hands an approved plan to a distinct child session before ending the planning run', async () => {
+  sendToRenderer.mockClear();
+  const { store, session } = createEmptyStore();
+  const verifiedPlan = 'Verified approved plan';
+  const artifactStore = createApprovedPlanArtifactStore(verifiedPlan);
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const planRequest = createPlanModeRequest();
+  planRequest.plan = verifiedPlan;
+  seedPresentedPlan(adapter, planRequest);
+  session.cwd = `${process.cwd()}-changed-after-planning`;
+  let planModeEnabled = true;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.pluginPatch') {
+      planModeEnabled = (params?.value as { enabled?: boolean } | undefined)?.enabled ?? true;
+      return { ok: true };
+    }
+    if (method === 'sessions.create') {
+      return {
+        key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+        sessionId: 'implementation-session-1',
+        entry: {
+          sessionId: 'implementation-session-1',
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          providerOverride: 'openai',
+          modelOverride: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') return { runId: 'implementation-run-1' };
+    if (method === PlanModeGateway.RESOLVE) {
+      if (planModeEnabled) throw new Error('Disable Plan mode before approving implementation.');
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+
+  expect(artifactStore.publish).toHaveBeenCalledWith({
+    workspaceRoot: process.cwd(),
+    sessionId: 'session-1',
+    planId: planRequest.requestId,
+    markdown: planRequest.plan,
+  });
+  expect(artifactStore.readVerified).toHaveBeenCalledTimes(2);
+  expect(store.getActiveSessionSegment('session-1')).toMatchObject({
+    sessionKey: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+    gatewaySessionId: 'implementation-session-1',
+    phase: 'implementation',
+    planId: planRequest.requestId,
+  });
+
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.create',
+    'chat.send',
+    'sessions.pluginPatch',
+    PlanModeGateway.RESOLVE,
+    'sessions.pluginPatch',
+  ]);
+  expect(request).toHaveBeenNthCalledWith(
+    3,
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      pluginId: 'plan-mode',
+      namespace: 'state',
+      value: expect.objectContaining({
+        enabled: false,
+        awaitingReview: expect.objectContaining({ requestId: planRequest.requestId }),
+      }),
+    }),
+  );
+  const implementationMessage = request.mock.calls.find(
+    ([method]) => method === 'chat.send',
+  )?.[1]?.message;
+  expect(implementationMessage).toBe(
+    [
+      'Implement the plan.',
+      '',
+      `Plan file: .${PRODUCT_NAME_LOWERCASE}/plans/session-1/${planRequest.requestId}.md`,
+      '',
+      '<plan>',
+      verifiedPlan,
+      '</plan>',
+    ].join('\n'),
+  );
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.create', {
+    key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+    parentSessionKey: planRequest.sessionKey,
+    cwd: process.cwd(),
+    permissionMode: 'full',
+    model: 'openai/gpt-5',
+  });
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    'chat.send',
+    expect.objectContaining({
+      sessionKey: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+      sessionId: 'implementation-session-1',
+      message: expect.stringContaining(verifiedPlan),
+      idempotencyKey: `justdo-plan-implementation-${planRequest.requestId}`,
+      justdoHideUserMessage: true,
+    }),
+  );
+  expect(request).toHaveBeenNthCalledWith(4, PlanModeGateway.RESOLVE, {
+    requestId: planRequest.requestId,
+    decision: 'implement',
+  });
+  expect(request).toHaveBeenNthCalledWith(
+    5,
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      value: expect.objectContaining({ enabled: false }),
+    }),
+  );
+  expect(request.mock.calls[4]?.[1]?.value).not.toHaveProperty('awaitingReview');
+});
+
+test('disables Plan mode before resolving an admitted implementation during recovery', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  const planRequest = createPlanModeRequest();
+  const firstAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(firstAdapter, planRequest);
+  store.transitionPlanHandoff({
+    planId: planRequest.requestId,
+    expectedState: 'presented',
+    nextState: 'admitted',
+    transitionedAt: Date.now(),
+    implementationSessionKey:
+      `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+    implementationGatewaySessionId: 'implementation-session-1',
+    implementationRunId: 'implementation-run-1',
+  });
+
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  let planModeEnabled = true;
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === AskUserQuestionGateway.LIST) return { requests: [] };
+    if (method === PlanModeGateway.LIST) return { requests: [planRequest] };
+    if (method === 'sessions.pluginPatch') {
+      planModeEnabled = (params?.value as { enabled?: boolean } | undefined)?.enabled ?? true;
+      return { ok: true };
+    }
+    if (method === PlanModeGateway.RESOLVE) {
+      if (planModeEnabled) throw new Error('Disable Plan mode before approving implementation.');
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([]);
+
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    AskUserQuestionGateway.LIST,
+    PlanModeGateway.LIST,
+    'sessions.pluginPatch',
+    PlanModeGateway.RESOLVE,
+    'sessions.pluginPatch',
+  ]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+});
+
+test('does not expose a plan approval when durable artifact publication fails', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  artifactStore.publish.mockImplementation(() => {
+    throw new Error('disk full');
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const planRequest = createPlanModeRequest();
+  const request = vi.fn().mockResolvedValue({
+    requestId: planRequest.requestId,
+    decision: 'cancel',
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  adapter.handleGatewayEvent({ event: PlanModeGateway.REQUESTED_EVENT, payload: planRequest });
+
+  await vi.waitFor(() => {
+    expect(request).toHaveBeenCalledWith(PlanModeGateway.RESOLVE, {
+      requestId: planRequest.requestId,
+      decision: 'cancel',
+    });
+  });
+  expect(sendToRenderer).not.toHaveBeenCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({ requestId: planRequest.requestId }),
+    }),
+  );
+});
+
+test('persists the plan review recovery marker before exposing the side panel', async () => {
+  sendToRenderer.mockClear();
+  const { store } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const planRequest = createPlanModeRequest();
+  let finishPatch!: (value: { ok: true }) => void;
+  const patchPending = new Promise<{ ok: true }>(resolve => {
+    finishPatch = resolve;
+  });
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return patchPending;
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  adapter.handleGatewayEvent({ event: PlanModeGateway.REQUESTED_EVENT, payload: planRequest });
+
+  await vi.waitFor(() => expect(artifactStore.publish).toHaveBeenCalledOnce());
+  expect(sendToRenderer).not.toHaveBeenCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({ requestId: planRequest.requestId }),
+    }),
+  );
+  expect(request).toHaveBeenCalledWith(
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      key: planRequest.sessionKey,
+      value: expect.objectContaining({
+        enabled: true,
+        awaitingReview: {
+          version: 1,
+          requestId: planRequest.requestId,
+          persistedAt: expect.any(Number),
+        },
+      }),
+    }),
+  );
+
+  finishPatch({ ok: true });
+  await vi.waitFor(() => {
+    expect(sendToRenderer).toHaveBeenCalledWith(
+      CoworkInteractionIpc.Stream,
+      expect.objectContaining({
+        request: expect.objectContaining({ requestId: planRequest.requestId }),
+      }),
+    );
+  });
+});
+
+test('keeps a plan handoff recoverable when its rejected marker cannot be cleared', async () => {
+  sendToRenderer.mockClear();
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') throw new Error('state unavailable');
+    if (method === PlanModeGateway.RESOLVE) {
+      return { requestId: planRequest.requestId, decision: 'cancel' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+
+  adapter.handleGatewayEvent({ event: PlanModeGateway.REQUESTED_EVENT, payload: planRequest });
+
+  await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.pluginPatch',
+    PlanModeGateway.RESOLVE,
+    'sessions.pluginPatch',
+  ]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('presented');
+  expect(sendToRenderer).not.toHaveBeenCalledWith(
+    CoworkInteractionIpc.Stream,
+    expect.objectContaining({
+      request: expect.objectContaining({ requestId: planRequest.requestId }),
+    }),
+  );
+});
+
+test('rebuilds a dispatching plan approval from its verified artifact when Gateway pending is empty', async () => {
+  const { store } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore('Canonical persisted plan');
+  const planRequest = createPlanModeRequest();
+  const firstAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(firstAdapter, planRequest);
+  store.transitionPlanHandoff({
+    planId: planRequest.requestId,
+    expectedState: 'presented',
+    nextState: 'dispatching',
+    transitionedAt: Date.now(),
+    implementationSessionKey: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+  });
+
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === AskUserQuestionGateway.LIST || method === PlanModeGateway.LIST) {
+      return { requests: [] };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([
+    expect.objectContaining({
+      sessionId: 'session-1',
+      request: expect.objectContaining({
+        requestId: planRequest.requestId,
+        toolInput: expect.objectContaining({ plan: 'Canonical persisted plan' }),
+      }),
+    }),
+  ]);
+  expect(request).toHaveBeenCalledWith(
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      key: planRequest.sessionKey,
+      value: expect.objectContaining({
+        enabled: true,
+        awaitingReview: expect.objectContaining({ requestId: planRequest.requestId }),
+      }),
+    }),
+  );
+});
+
+test('restores a missing workspace plan from the matching Gateway pending request', async () => {
+  const { store } = createEmptyStore();
+  const planRequest = createPlanModeRequest();
+  const artifactStore = createApprovedPlanArtifactStore(planRequest.plan);
+  const firstAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(firstAdapter, planRequest);
+  artifactStore.publish.mockClear();
+  artifactStore.readVerified
+    .mockImplementationOnce(() => {
+      throw new Error('missing artifact');
+    })
+    .mockImplementation(() => planRequest.plan);
+
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === AskUserQuestionGateway.LIST) return { requests: [] };
+    if (method === PlanModeGateway.LIST) return { requests: [planRequest] };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([
+    expect.objectContaining({
+      sessionId: 'session-1',
+      request: expect.objectContaining({ requestId: planRequest.requestId }),
+    }),
+  ]);
+  expect(artifactStore.publish).toHaveBeenCalledWith({
+    workspaceRoot: process.cwd(),
+    sessionId: 'session-1',
+    planId: planRequest.requestId,
+    markdown: planRequest.plan,
+  });
+});
+
+test('reuses the implementation session and chat admission after an ambiguous response and adapter restart', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  let adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  let sendAttempts = 0;
+  const createdSessionKeys = new Set<string>();
+  let actualRunAdmissions = 0;
+  const request = vi.fn(async (method: string, params?: unknown) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === 'sessions.create') {
+      const sessionKey = (params as { key: string }).key;
+      createdSessionKeys.add(sessionKey);
+      return {
+        key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+        sessionId: 'implementation-session-1',
+        entry: {
+          sessionId: 'implementation-session-1',
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          providerOverride: 'openai',
+          modelOverride: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') {
+      sendAttempts += 1;
+      if (sendAttempts === 1) {
+        actualRunAdmissions += 1;
+        throw new Error('admission failed');
+      }
+      return { runId: 'implementation-run-1' };
+    }
+    if (method === PlanModeGateway.RESOLVE) {
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).rejects.toThrow('admission failed');
+
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.create',
+    'chat.send',
+  ]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('dispatching');
+
+  adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(adapter, planRequest);
+  const restartedInternals = getSessionPreparationInternals(adapter);
+  restartedInternals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  restartedInternals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+  const chatSendCalls = request.mock.calls.filter(([method]) => method === 'chat.send');
+  expect(chatSendCalls).toHaveLength(2);
+  expect(chatSendCalls[0]?.[1]).toMatchObject({
+    idempotencyKey: `justdo-plan-implementation-${planRequest.requestId}`,
+  });
+  expect(chatSendCalls[1]?.[1]).toMatchObject({
+    idempotencyKey: `justdo-plan-implementation-${planRequest.requestId}`,
+  });
+  expect(createdSessionKeys).toEqual(
+    new Set([`agent:main:justdo:session-1:execution:${planRequest.requestId}`]),
+  );
+  expect(actualRunAdmissions).toBe(1);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+});
+
+test.each(['revise', 'cancel'] as const)(
+  'rejects %s while implementation dispatch admission is ambiguous',
+  async decision => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(
+      store,
+      {},
+      undefined,
+      createApprovedPlanArtifactStore(),
+    );
+    const planRequest = createPlanModeRequest();
+    seedPresentedPlan(adapter, planRequest);
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.pluginPatch') return { ok: true };
+      if (method === 'sessions.create') {
+        return {
+          key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+          sessionId: 'implementation-session-1',
+          entry: {
+            permissionMode: 'full',
+            sessionRoot: process.cwd(),
+            providerOverride: 'openai',
+            modelOverride: 'gpt-5',
+          },
+        };
+      }
+      if (method === 'chat.send') throw new Error('response lost');
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const internals = getSessionPreparationInternals(adapter);
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      adapter.resolveAskUserInteraction(planRequest.requestId, {
+        behavior: 'plan',
+        decision: 'implement',
+      }),
+    ).rejects.toThrow('response lost');
+    request.mockClear();
+
+    await expect(
+      adapter.resolveAskUserInteraction(planRequest.requestId, {
+        behavior: 'plan',
+        decision,
+      }),
+    ).rejects.toThrow('awaiting confirmation');
+    expect(request).not.toHaveBeenCalled();
+  },
+);
+
+test('restores Plan mode when implementation session preparation fails', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === 'sessions.create') throw new Error('create failed');
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).rejects.toThrow('create failed');
+
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.create',
+    'sessions.pluginPatch',
+  ]);
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      key: planRequest.sessionKey,
+      value: expect.objectContaining({
+        enabled: true,
+        awaitingReview: expect.objectContaining({ requestId: planRequest.requestId }),
+      }),
+    }),
+  );
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('failed');
+});
+
+test('rejects an implementation session that did not persist the inherited model', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    assertPreparedSessionEntry: (
+      entry: Record<string, unknown>,
+      permissionMode: string,
+      workspaceRoot: string,
+      expectedModelRef: string,
+    ) => void;
+  };
+
+  expect(() =>
+    internals.assertPreparedSessionEntry(
+      {
+        permissionMode: 'full',
+        sessionRoot: process.cwd(),
+        providerOverride: 'anthropic',
+        modelOverride: 'claude-sonnet-4',
+      },
+      'full',
+      process.cwd(),
+      'openai/gpt-5',
+    ),
+  ).toThrow('did not persist the requested session model');
+});
+
+test('verifies an elided default model before admitting a plan implementation', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  const implementationSessionKey =
+    `agent:main:justdo:session-1:execution:${planRequest.requestId}`;
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.create') {
+      return {
+        key: implementationSessionKey,
+        sessionId: 'implementation-session-1',
+        entry: {
+          sessionId: 'implementation-session-1',
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+        },
+      };
+    }
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          sessionId: 'implementation-session-1',
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          modelProvider: 'openai',
+          model: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') return { runId: 'implementation-run-1' };
+    if (method === PlanModeGateway.RESOLVE) {
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.create',
+    'sessions.describe',
+    'chat.send',
+    'sessions.pluginPatch',
+    PlanModeGateway.RESOLVE,
+    'sessions.pluginPatch',
+  ]);
+  expect(request).toHaveBeenNthCalledWith(2, 'sessions.describe', {
+    key: implementationSessionKey,
+  });
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+});
+
+test('retries only Plan mode resolution after the implementation run is admitted', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  let resolveAttempts = 0;
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === 'sessions.create') {
+      return {
+        key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+        sessionId: 'implementation-session-1',
+        entry: {
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          providerOverride: 'openai',
+          modelOverride: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') return { runId: 'implementation-run-1' };
+    if (method === PlanModeGateway.RESOLVE) {
+      resolveAttempts += 1;
+      if (resolveAttempts === 1) throw new Error('resolve response lost');
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    if (method === PlanModeGateway.LIST) return { requests: [planRequest] };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).rejects.toThrow('resolve response lost');
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('admitted');
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.create')).toHaveLength(1);
+  expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+});
+
+test('retries Plan mode disable without dispatching a second implementation run', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  let patchAttempts = 0;
+  let planModeEnabled = true;
+  const patchedStates: Array<{ enabled?: boolean; awaitingReview?: unknown }> = [];
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.create') {
+      return {
+        key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+        sessionId: 'implementation-session-1',
+        entry: {
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          providerOverride: 'openai',
+          modelOverride: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') return { runId: 'implementation-run-1' };
+    if (method === 'sessions.pluginPatch') {
+      patchAttempts += 1;
+      if (patchAttempts === 1) throw new Error('state temporarily unavailable');
+      const state = params?.value as { enabled?: boolean; awaitingReview?: unknown };
+      patchedStates.push(state);
+      planModeEnabled = state.enabled ?? true;
+      return { ok: true };
+    }
+    if (method === PlanModeGateway.RESOLVE) {
+      if (planModeEnabled) throw new Error('Disable Plan mode before approving implementation.');
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).rejects.toThrow('state temporarily unavailable');
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('admitted');
+  expect(request.mock.calls.some(([method]) => method === PlanModeGateway.RESOLVE)).toBe(false);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.create')).toHaveLength(1);
+  expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+  expect(patchedStates).toEqual([
+    expect.objectContaining({
+      enabled: false,
+      awaitingReview: expect.objectContaining({ requestId: planRequest.requestId }),
+    }),
+    expect.objectContaining({ enabled: false }),
+  ]);
+  expect(patchedStates[1]).not.toHaveProperty('awaitingReview');
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+});
+
+test('recovers after resolving implementation but failing to clear the review marker', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  const planRequest = createPlanModeRequest();
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(adapter, planRequest);
+  let patchAttempts = 0;
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.create') {
+      return {
+        key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+        sessionId: 'implementation-session-1',
+        entry: {
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          providerOverride: 'openai',
+          modelOverride: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') return { runId: 'implementation-run-1' };
+    if (method === 'sessions.pluginPatch') {
+      patchAttempts += 1;
+      if (patchAttempts === 2) throw new Error('marker cleanup interrupted');
+      return { ok: true };
+    }
+    if (method === PlanModeGateway.RESOLVE) {
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).rejects.toThrow('marker cleanup interrupted');
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('admitted');
+
+  const recoveredAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const recoveryRequest = vi.fn(async (method: string) => {
+    if (method === AskUserQuestionGateway.LIST || method === PlanModeGateway.LIST) {
+      return { requests: [] };
+    }
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const recoveredInternals = getSessionPreparationInternals(recoveredAdapter);
+  recoveredInternals.gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: recoveryRequest,
+  };
+  recoveredInternals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(recoveredAdapter.listPendingAskUserInteractions()).resolves.toEqual([]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+  expect(recoveryRequest.mock.calls.filter(([method]) => method === 'sessions.create')).toHaveLength(
+    0,
+  );
+  expect(recoveryRequest.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(0);
+  expect(
+    recoveryRequest.mock.calls.filter(([method]) => method === PlanModeGateway.RESOLVE),
+  ).toHaveLength(0);
+});
+
+test('keeps an admitted recovery disabled when Plan mode resolution is transiently unavailable', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  const planRequest = createPlanModeRequest();
+  const firstAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(firstAdapter, planRequest);
+  store.transitionPlanHandoff({
+    planId: planRequest.requestId,
+    expectedState: 'presented',
+    nextState: 'admitted',
+    transitionedAt: Date.now(),
+    implementationSessionKey:
+      `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+  });
+
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  let resolveAttempts = 0;
+  const patchedStates: Array<{ enabled?: boolean; awaitingReview?: unknown }> = [];
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === AskUserQuestionGateway.LIST) return { requests: [] };
+    if (method === PlanModeGateway.LIST) return { requests: [planRequest] };
+    if (method === 'sessions.pluginPatch') {
+      patchedStates.push(params?.value as { enabled?: boolean; awaitingReview?: unknown });
+      return { ok: true };
+    }
+    if (method === PlanModeGateway.RESOLVE) {
+      resolveAttempts += 1;
+      if (resolveAttempts === 1) throw new Error('temporary resolve failure');
+      return { requestId: planRequest.requestId, decision: 'implement' };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('admitted');
+  expect(patchedStates).toEqual([
+    expect.objectContaining({
+      enabled: false,
+      awaitingReview: expect.objectContaining({ requestId: planRequest.requestId }),
+    }),
+  ]);
+
+  await expect(adapter.listPendingAskUserInteractions()).resolves.toEqual([]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+  expect(patchedStates.every(state => state.enabled === false)).toBe(true);
+  expect(patchedStates.at(-1)).not.toHaveProperty('awaitingReview');
+});
+
+test('keeps the review marker intact when revising a still-pending plan fails', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  const patchedStates: unknown[] = [];
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.pluginPatch') {
+      patchedStates.push(params?.value);
+      return { ok: true };
+    }
+    if (method === PlanModeGateway.RESOLVE) throw new Error('temporary resolve failure');
+    if (method === PlanModeGateway.LIST) return { requests: [planRequest] };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'revise',
+      feedback: 'Keep the existing API.',
+    }),
+  ).rejects.toThrow('temporary resolve failure');
+
+  expect(patchedStates).toEqual([]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('presented');
+});
+
+test('treats a missing planning request as resolved after implementation admission', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(
+    store,
+    {},
+    undefined,
+    createApprovedPlanArtifactStore(),
+  );
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === 'sessions.create') {
+      return {
+        key: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+        sessionId: 'implementation-session-1',
+        entry: {
+          permissionMode: 'full',
+          sessionRoot: process.cwd(),
+          providerOverride: 'openai',
+          modelOverride: 'gpt-5',
+        },
+      };
+    }
+    if (method === 'chat.send') return { runId: 'implementation-run-1' };
+    if (method === PlanModeGateway.RESOLVE) throw new Error('request not found');
+    if (method === PlanModeGateway.LIST) return { requests: [] };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'implement',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+  expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+});
+
+test('locally resolves a recovered failed-plan cancellation when Gateway lost the pending request', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore('Persisted plan');
+  const planRequest = createPlanModeRequest();
+  const firstAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(firstAdapter, planRequest);
+  store.transitionPlanHandoff({
+    planId: planRequest.requestId,
+    expectedState: 'presented',
+    nextState: 'failed',
+    transitionedAt: Date.now(),
+    error: 'implementation setup failed',
+  });
+
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === AskUserQuestionGateway.LIST || method === PlanModeGateway.LIST) {
+      return { requests: [] };
+    }
+    if (method === PlanModeGateway.RESOLVE) throw new Error('request not found');
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  await adapter.listPendingAskUserInteractions();
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'cancel',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+  expect(request).toHaveBeenCalledWith(PlanModeGateway.LIST, {});
+});
+
+test('revises a recovered failed plan whose Gateway request was lost', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore('Persisted original plan');
+  const planRequest = createPlanModeRequest();
+  const firstAdapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  seedPresentedPlan(firstAdapter, planRequest);
+  store.transitionPlanHandoff({
+    planId: planRequest.requestId,
+    expectedState: 'presented',
+    nextState: 'failed',
+    transitionedAt: Date.now(),
+    error: 'implementation setup failed',
+  });
+
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === AskUserQuestionGateway.LIST || method === PlanModeGateway.LIST) {
+      return { requests: [] };
+    }
+    if (method === PlanModeGateway.RESOLVE) throw new Error('request not found');
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  const startSession = vi.spyOn(adapter, 'startSession').mockResolvedValue(undefined);
+  await adapter.listPendingAskUserInteractions();
+
+  await expect(
+    adapter.resolveAskUserInteraction(planRequest.requestId, {
+      behavior: 'plan',
+      decision: 'revise',
+      feedback: 'Add rollback verification.',
+    }),
+  ).resolves.toEqual({ sessionId: 'session-1' });
+
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('resolved');
+  expect(startSession).toHaveBeenCalledWith(
+    'session-1',
+    expect.stringContaining('Add rollback verification.'),
+    expect.objectContaining({
+      planMode: true,
+      clientTurnId: `justdo-plan-revision-${planRequest.requestId}`,
+    }),
+  );
+  expect(startSession.mock.calls[0]?.[1]).toContain('Persisted original plan');
+});
+
+test('reads Plan mode with the closed sessions.describe request shape', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.describe') {
+      return {
+        session: {
+          pluginExtensions: [
+            {
+              pluginId: 'plan-mode',
+              namespace: 'state',
+              value: { enabled: true, updatedAt: 1 },
+            },
+          ],
+        },
+      };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  adapter.rememberSessionKey(
+    session.id,
+    'agent:main:openai-user:telegram:__default__:2459325231940374',
+  );
+
+  await expect(adapter.getPlanMode(session.id)).resolves.toEqual({ enabled: true });
+  expect(request).toHaveBeenCalledWith('sessions.describe', {
+    key: 'agent:main:justdo:session-1',
+  });
+});
+
+test('rejects a Plan mode toggle when a turn starts during Gateway readiness', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  let finishReadiness: (() => void) | undefined;
+  const readiness = new Promise<void>(resolve => {
+    finishReadiness = resolve;
+  });
+  const request = vi.fn().mockResolvedValue({ ok: true });
+  const internals = adapter as unknown as SessionPreparationInternals & {
+    pendingTurnStarts: Map<string, unknown>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn(() => readiness);
+
+  const toggling = adapter.setPlanMode(session.id, true);
+  internals.pendingTurnStarts.set(session.id, {});
+  finishReadiness?.();
+
+  await expect(toggling).rejects.toThrow('cannot be changed while the session is running');
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('disables Plan mode without stopping an active turn', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({ ok: true });
+  const internals = adapter as unknown as SessionPreparationInternals & {
+    pendingTurnStarts: Map<string, unknown>;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.pendingTurnStarts.set(session.id, {});
+
+  await expect(adapter.setPlanMode(session.id, false)).resolves.toEqual({ enabled: false });
+
+  expect(request).toHaveBeenCalledWith(
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      key: 'agent:main:justdo:session-1',
+      pluginId: 'plan-mode',
+      value: expect.objectContaining({ enabled: false }),
+    }),
+  );
+});
+
+test('writes Plan mode to the canonical JustDo key when a channel key is also known', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({ ok: true });
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  adapter.rememberSessionKey(
+    session.id,
+    'agent:main:openai-user:telegram:__default__:2459325231940374',
+  );
+
+  await expect(adapter.setPlanMode(session.id, true)).resolves.toEqual({ enabled: true });
+
+  expect(request).toHaveBeenCalledWith(
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      key: 'agent:main:justdo:session-1',
+      pluginId: 'plan-mode',
+      value: expect.objectContaining({ enabled: true }),
+    }),
+  );
 });
 
 test('does not reopen an AskUserQuestion after its terminal event', () => {
@@ -265,6 +1599,66 @@ test('does not authorize requests returned by a stale Gateway reconciliation', a
   expect(newClient.request).not.toHaveBeenCalled();
 });
 
+test('does not resolve an admitted handoff from a stale Gateway pending response', async () => {
+  const { store, planHandoffs } = createEmptyStore();
+  const artifactStore = createApprovedPlanArtifactStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {}, undefined, artifactStore);
+  const planRequest = createPlanModeRequest();
+  seedPresentedPlan(adapter, planRequest);
+  store.transitionPlanHandoff({
+    planId: planRequest.requestId,
+    expectedState: 'presented',
+    nextState: 'dispatching',
+    transitionedAt: Date.now(),
+    implementationSessionKey: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+  });
+  store.admitPlanHandoffAndTransitionSegment({
+    planId: planRequest.requestId,
+    expectedState: 'dispatching',
+    implementationGatewaySessionId: 'implementation-session-1',
+    implementationRunId: 'implementation-run-1',
+    admittedAt: Date.now(),
+    implementationSegment: {
+      id: `implementation-${planRequest.requestId}`,
+      sessionId: 'session-1',
+      sessionKey: `agent:main:justdo:session-1:execution:${planRequest.requestId}`,
+      phase: 'implementation',
+      planId: planRequest.requestId,
+      startedAt: Date.now(),
+    },
+  });
+  let resolvePlanList!: (value: unknown) => void;
+  const oldClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request: vi.fn((method: string) => {
+      if (method === AskUserQuestionGateway.LIST) return Promise.resolve({ requests: [] });
+      if (method === PlanModeGateway.LIST) {
+        return new Promise<unknown>(resolve => {
+          resolvePlanList = resolve;
+        });
+      }
+      return Promise.reject(new Error(`Unexpected method: ${method}`));
+    }),
+  };
+  const newClient = { start: vi.fn(), stop: vi.fn(), request: vi.fn() };
+  const internals = adapter as unknown as SessionPreparationInternals & {
+    gatewayClientGeneration: number;
+  };
+  internals.gatewayClient = oldClient;
+  internals.gatewayClientGeneration = 1;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  const pending = adapter.listPendingAskUserInteractions();
+  await vi.waitFor(() => expect(oldClient.request).toHaveBeenCalledWith(PlanModeGateway.LIST, {}));
+  internals.gatewayClient = newClient;
+  internals.gatewayClientGeneration = 2;
+  resolvePlanList({ requests: [] });
+
+  await expect(pending).resolves.toEqual([]);
+  expect(planHandoffs.get(planRequest.requestId)?.state).toBe('admitted');
+});
+
 test('rejects forged answers before calling the extension resolve RPC', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -326,6 +1720,59 @@ test('prepares the native OpenClaw session root and permission mode', async () =
     cwd: workspace,
     permissionMode: 'workspace',
   });
+});
+
+test('persists enabled Plan mode before sending the first turn', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.pluginPatch') return { ok: true };
+    if (method === 'chat.send') return { runId: 'gateway-run-1' };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+    runTurn: (
+      sessionId: string,
+      prompt: string,
+      options: { agentId: string; planMode: boolean },
+    ) => Promise<void>;
+    resolveTurn: (sessionId: string) => void;
+    cleanupSessionTurn: (sessionId: string) => void;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
+
+  const running = internals.runTurn(session.id, 'inspect this repository', {
+    agentId: 'main',
+    planMode: true,
+  });
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.send', expect.anything()));
+
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.pluginPatch',
+    'chat.send',
+  ]);
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'sessions.pluginPatch',
+    expect.objectContaining({
+      key: 'agent:main:justdo:session-1',
+      pluginId: 'plan-mode',
+      namespace: 'state',
+      value: expect.objectContaining({ enabled: true }),
+    }),
+  );
+
+  internals.resolveTurn(session.id);
+  await running;
+  internals.cleanupSessionTurn(session.id);
 });
 
 test('rejects a session response that did not persist the permission mode', async () => {
@@ -2698,6 +4145,30 @@ test('sessions.changed prevents an in-flight runtime snapshot from becoming auth
     running: false,
   });
   expect(request).toHaveBeenCalledTimes(2);
+});
+
+test('does not settle a planning turn from a newly created implementation session snapshot', () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const planningTurn = createSessionTurn();
+  const internals = adapter as unknown as {
+    activeTurns: Map<string, SessionTurn>;
+    pendingTurns: Map<string, { resolve: () => void; reject: (error: Error) => void }>;
+    handleSessionsChangedEvent: (payload: unknown) => void;
+  };
+  const resolve = vi.fn();
+  internals.activeTurns.set('session-1', planningTurn);
+  internals.pendingTurns.set('session-1', { resolve, reject: vi.fn() });
+
+  internals.handleSessionsChangedEvent({
+    key: 'agent:main:justdo:session-1:execution:plan_1',
+    reason: 'create',
+    hasActiveRun: false,
+    status: 'completed',
+  });
+
+  expect(internals.activeTurns.get('session-1')).toBe(planningTurn);
+  expect(resolve).not.toHaveBeenCalled();
 });
 
 test('getSessionRuntimeStatus can bypass a cached running snapshot after completion', async () => {

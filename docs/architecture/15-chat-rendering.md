@@ -46,7 +46,9 @@ CLI 转写；返回文本只写入可编辑 draft，不会自动发送消息。
 
 ## 3. 状态模型
 
-`ChatTranscriptState`：当前 session key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
+`ChatTranscriptState`：当前 active segment 的 session key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
+
+Plan mode 可以让一个产品会话包含多个 Gateway transcript segment。Controller 只订阅 active implementation segment；`loadTranscriptSegment` 通过同一 Renderer Gateway 连接完整分页读取已结束的 planning segment，不改变当前订阅。Lit 在一个滚动容器中依次投影规划消息、阶段分割线和实施消息。分割线会重置 Tool/Thinking 配对 epoch，避免不同 transcript 恰好复用 callId/runId 时串卡；搜索、导出和滚动锚点都覆盖组合后的时间线。SQLite 只保存 segment key、顺序和阶段，不保存消息数组。
 
 `AssistantTurn`绑定 run/session/lifecycle generation，状态 `running|final|aborted|error`，保存 last agent seq、时间、modelRef和有序items。Item分：
 

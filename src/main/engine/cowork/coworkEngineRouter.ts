@@ -81,8 +81,13 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     return this.runtime.getSessionConfirmationMode(sessionId);
   }
 
-  onSessionDeleted(sessionId: string, agentId?: string): void {
-    this.runtime.onSessionDeleted?.(sessionId, agentId);
+  onSessionDeleted(
+    sessionId: string,
+    agentId?: string,
+    sessionKeys?: string[],
+    workspaceRoots?: string[],
+  ): void {
+    this.runtime.onSessionDeleted?.(sessionId, agentId, sessionKeys, workspaceRoots);
   }
 
   async generateTitle(

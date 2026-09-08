@@ -8,10 +8,14 @@ import coworkReducer, {
   confirmCurrentSessionModelSelection,
   confirmDefaultModelSelection,
   confirmManualModelSelection,
+  deleteSession,
+  deleteSessions,
+  enqueuePendingInteraction,
   hydrateDraftImageAttachment,
   rollbackManualModelSelection,
   setConfig,
   setCurrentSession,
+  setPlanMode,
   setSessionRuntimeSnapshot,
   setSessionRunTimings,
   setSessions,
@@ -50,6 +54,42 @@ describe('cowork session permissions', () => {
     const newSession = coworkReducer(restricted, clearCurrentSession());
 
     expect(newSession.config.permissionMode).toBe('ask');
+  });
+});
+
+describe('cowork Plan mode state', () => {
+  test('removes per-session state when sessions are deleted', () => {
+    let state = coworkReducer(undefined, setPlanMode({ sessionId: 'session-1', enabled: true }));
+    state = coworkReducer(state, setPlanMode({ sessionId: 'session-2', enabled: true }));
+    state = coworkReducer(
+      state,
+      enqueuePendingInteraction({
+        sessionId: 'session-1',
+        requestId: 'plan-1',
+        toolName: 'PresentPlan',
+        interactionKind: 'plan-approval',
+        toolInput: { plan: 'First plan' },
+      }),
+    );
+    state = coworkReducer(
+      state,
+      enqueuePendingInteraction({
+        sessionId: 'session-2',
+        requestId: 'plan-2',
+        toolName: 'PresentPlan',
+        interactionKind: 'plan-approval',
+        toolInput: { plan: 'Second plan' },
+      }),
+    );
+
+    state = coworkReducer(state, deleteSession('session-1'));
+    expect(state.planModeBySession['session-1']).toBeUndefined();
+    expect(state.planModeBySession['session-2']).toBe(true);
+    expect(state.pendingInteractions.map(interaction => interaction.requestId)).toEqual(['plan-2']);
+
+    state = coworkReducer(state, deleteSessions(['session-2']));
+    expect(state.planModeBySession['session-2']).toBeUndefined();
+    expect(state.pendingInteractions).toEqual([]);
   });
 });
 

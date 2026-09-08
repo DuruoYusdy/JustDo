@@ -13,11 +13,11 @@
 | approvals               | request 生命周期、挂起、恢复和终态清理                           | policy sync、modal、session grant                                                    | 原生；删除旧 022–025                                              |
 | compaction/context      | safeguard、overflow、budget、precheck                            | 配置、进度与 detail 展示                                                             | 原生；只保留 purpose metadata patch                               |
 | cron                    | job/run scheduler                                                | isolated agent、receipt、显式 `delivery: { mode: 'none' }`                           | 原生；删除旧默认 delivery patch                                   |
-| progress                | run/task/compaction 事实                                         | bounded runtime services 投影与 UI                                                     | 迁入 `runtime-services`                                      |
-| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `runtime-services`                                      |
+| progress                | run/task/compaction 事实                                         | bounded runtime services 投影与 UI                                                   | 迁入 `runtime-services`                                           |
+| embeddings              | provider 调用与 memory index                                     | loopback provider、代理与凭证边界                                                    | 迁入 `runtime-services`                                           |
 | Windows/Chrome MCP      | MCP/Browser runtime                                              | bundled runner、Chrome 管理与设置                                                    | 保留 002–003 两个窄补丁                                           |
 | host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                                                 | 保留 006–007                                                      |
-| app-start recovery      | durable task recovery                                            | JustDo app-start epoch                                                               | 保留 008                                                          |
+| app-start recovery      | main session 与 durable task recovery                            | JustDo app-start epoch                                                               | 保留 008                                                          |
 | manual reindex          | memory index/cache                                               | 一次性用户意图                                                                       | 保留 009                                                          |
 | exec approval timeout   | 原生 approval request/wait                                       | 用户选择的等待时限                                                                   | 保留 010                                                          |
 | plugin approval detail  | before-tool approval dispatch                                    | reviewer-only 完整变更内容                                                           | 保留 011                                                          |
@@ -25,17 +25,17 @@
 
 窗口、tray、update、主题、i18n、session 分组/cwd、SQLite 产品数据、Marketplace、文件 preview 和代理 UI 都属于 JustDo，不应要求 Gateway patch。
 
-## 2. 十四个保留补丁
+## 2. 二十个保留补丁
 
 | 编号 | 能力                                              | 移除条件                                               |
 | ---- | ------------------------------------------------- | ------------------------------------------------------ |
 | 001  | value-bound managed Python 环境注入               | 上游提供可信 host Python 环境 API                      |
 | 002  | Windows 通用 npm/npx MCP runner                   | 上游 runner 在 Electron/Windows 下等价可靠             |
-| 003  | Chrome MCP Windows Electron-safe package runner  | 上游提供等价 Windows 启动                              |
+| 003  | Chrome MCP Windows Electron-safe package runner   | 上游提供等价 Windows 启动                              |
 | 005  | 最终 system-prompt-only replacements              | 上游提供 final、cache-safe prompt hook                 |
 | 006  | agent session/parent/user-initiated metadata      | 上游提供等价 provider metadata                         |
 | 007  | compaction/reviewer purpose metadata              | 上游为两类请求提供等价 metadata                        |
-| 008  | JustDo app-start task recovery boundary           | 上游 durable task 支持 host-instance epoch             |
+| 008  | JustDo app-start session/task recovery boundary   | 上游 durable session/task 支持 host-instance epoch     |
 | 009  | forced CLI memory reindex 绕过 embedding cache    | 上游 forced CLI 原生包含 cache bypass                  |
 | 010  | 原生 exec approval 可配置等待时限                 | 上游提供 exec approval timeout 设置                    |
 | 011  | trusted-policy plugin approval detail 转发        | 上游 before-tool approval 原生转发 `detail`            |
@@ -43,20 +43,27 @@
 | 013  | 暂停中止后的原生 Goal resume 准入                 | 上游原生接受空闲 paused session 的该状态               |
 | 014  | provider replay 排除 display-only assistant block | 上游 provider replay 过滤非 provider assistant content |
 | 015  | trusted local generic MEDIA 与原始引用保留        | 上游支持 trusted generic MEDIA 并暴露原始引用          |
+| 016  | 离线官方插件目录                                  | 上游目录读取无需网络或可由 host 注入                   |
+| 017  | 分段 live progress snapshot                       | 上游提供等价的有界分段快照                             |
+| 018  | mixed tool/commentary 顺序                        | 上游稳定保留交错内容块顺序                             |
+| 019  | 禁止配置驱动的插件自动安装                        | 上游提供等价的 host 安装策略                           |
+| 020  | OpenAI realtime transcription 自定义 base URL     | 上游原生支持兼容 provider 的 realtime URL              |
+| 021  | OpenAI-compatible 媒体 provider 隔离              | 上游按能力隔离语言、图像与视频配置                     |
 
 当前目录只对 pristine `openclaw@2026.9.2` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
 
 ## 3. Gateway API 与 wire 边界
 
-| 域             | 当前方法/事件                                                           | JustDo 稳定化                                                                           |
-| -------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Chat           | `chat.send`、`chat.history`、chat/agent/tool/lifecycle events           | session/run/generation、history takeover、thinking/tool timeline                        |
-| Sessions       | `sessions.subscribe/list/get/describe/resolve/patch/abort/delete`       | managed identity、model patch、分页与终态映射                                           |
-| Tasks          | `tasks.list`、`tasks.get`、`task` event                                 | `pending/running/done/failed/killed/timeout` DTO；`taskName` 是机器标识，`label` 是标题 |
-| Approvals      | `exec.approval.*`、`plugin.approval.*`、`exec.approvals.get/set`        | fail-closed policy、交互 modal、session grant                                           |
-| Skills         | `skills.status`、`skills.update`                                        | manifest、用户文件和 UI                                                                 |
-| Cron           | `cron.get/list/add/update/remove/run/runs`、config revision、cron event | account policy 隔离、management 分类、增量事件、enqueue receipt、readAt/catch-up        |
-| Runtime services | `runtimeServices.historyDetails` 与扩展事件/provider                | 有界 `operator.read`、progress、embeddings                                              |
+| 域               | 当前方法/事件                                                           | JustDo 稳定化                                                                           |
+| ---------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Chat             | `chat.send`、`chat.history`、chat/agent/tool/lifecycle events           | session/run/generation、history takeover、thinking/tool timeline                        |
+| Sessions         | `sessions.subscribe/list/get/describe/resolve/patch/abort/delete`       | managed identity、model patch、分页与终态映射                                           |
+| Tasks            | `tasks.list`、`tasks.get`、`task` event                                 | `pending/running/done/failed/killed/timeout` DTO；`taskName` 是机器标识，`label` 是标题 |
+| Approvals        | `exec.approval.*`、`plugin.approval.*`、`exec.approvals.get/set`        | fail-closed policy、交互 modal、session grant                                           |
+| Skills           | `skills.status`、`skills.update`                                        | manifest、用户文件和 UI                                                                 |
+| Cron             | `cron.get/list/add/update/remove/run/runs`、config revision、cron event | account policy 隔离、management 分类、增量事件、enqueue receipt、readAt/catch-up        |
+| Runtime services | `runtimeServices.historyDetails` 与扩展事件/provider                    | 有界 `operator.read`、progress、embeddings                                              |
+| Plan mode        | `planMode.list/resolve`、`plugin.plan-mode.requested/resolved`          | pending 交互恢复、批准前持久化关闭模式                                                  |
 
 所有 v2026.9.2 专用响应先经过 `src/main/engine/openclaw/wire/v2026_9_2.ts`。Adapter 对 Renderer 只暴露稳定 DTO，不把上游内部的 `succeeded`、`lost`、cursor shape 或 bundle 类型泄漏到 shared contract。
 

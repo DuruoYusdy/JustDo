@@ -5,6 +5,7 @@ import {
   AUTHOR_NAME,
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   PRODUCT_NAME,
+  PRODUCT_NAME_LOWERCASE,
   USER_DATA_DIRECTORY_NAME,
   validateProductName,
 } from './productMetadata';
@@ -14,6 +15,7 @@ describe('product metadata', () => {
     expect(PRODUCT_NAME).toBe(packageJson.productName);
     expect(AUTHOR_NAME).toBe(packageJson.author.name);
     expect(USER_DATA_DIRECTORY_NAME).toBe(packageJson.productName);
+    expect(PRODUCT_NAME_LOWERCASE).toBe(packageJson.productName.toLocaleLowerCase('en-US'));
     expect(DEFAULT_WORKSPACE_DIRECTORY_NAME).toBe(
       packageJson.productName.toLocaleLowerCase('en-US'),
     );
@@ -38,12 +40,9 @@ describe('product metadata', () => {
     'CON',
     'LPT1.txt',
     'A'.repeat(65),
-  ])(
-    'rejects an unsafe cross-platform path segment: %j',
-    value => {
-      expect(() => validateProductName(value)).toThrow(/productName/);
-    },
-  );
+  ])('rejects an unsafe cross-platform path segment: %j', value => {
+    expect(() => validateProductName(value)).toThrow(/productName/);
+  });
 
   it.each(['JustDo', 'Company', 'INTERNAL', 'assistant'])(
     'accepts a single English word: %s',

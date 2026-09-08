@@ -181,6 +181,64 @@ export class SqliteStore {
     this.ensureColumn('cowork_session_runs', 'accepted_at', 'INTEGER');
 
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cowork_session_segments (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        session_key TEXT NOT NULL UNIQUE,
+        gateway_session_id TEXT,
+        phase TEXT NOT NULL,
+        plan_id TEXT,
+        ordinal INTEGER NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE,
+        UNIQUE (session_id, ordinal)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cowork_session_segments_session_ordinal
+        ON cowork_session_segments(session_id, ordinal);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_session_segments_active
+        ON cowork_session_segments(session_id)
+        WHERE ended_at IS NULL;
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cowork_plan_handoffs (
+        plan_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        planning_session_key TEXT NOT NULL,
+        artifact_workspace_root TEXT,
+        artifact_relative_path TEXT NOT NULL UNIQUE,
+        artifact_sha256 TEXT NOT NULL,
+        artifact_byte_length INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (
+          state IN ('presented', 'dispatching', 'admitted', 'resolved', 'failed')
+        ),
+        implementation_session_key TEXT UNIQUE,
+        implementation_gateway_session_id TEXT,
+        implementation_run_id TEXT,
+        error TEXT,
+        presented_at INTEGER NOT NULL,
+        dispatch_started_at INTEGER,
+        admitted_at INTEGER,
+        resolved_at INTEGER,
+        failed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cowork_plan_handoffs_session_presented
+        ON cowork_plan_handoffs(session_id, presented_at, plan_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_plan_handoffs_active
+        ON cowork_plan_handoffs(session_id)
+        WHERE state IN ('presented', 'dispatching', 'admitted');
+    `);
+    this.ensureColumn('cowork_plan_handoffs', 'artifact_workspace_root', 'TEXT');
+
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_config (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,

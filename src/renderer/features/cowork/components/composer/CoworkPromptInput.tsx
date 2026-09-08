@@ -14,6 +14,7 @@ import {
   isGoalClearCommand,
   isGoalSlashCommand,
   parseGoalStartObjective,
+  parsePlanSlashCommandPrompt,
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/slashCommands';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,6 +38,7 @@ import {
   getHiddenCommandCount,
   getSlashCommandByName,
   getSlashCommandCompletions,
+  mergeAppSlashCommands,
   SLASH_COMMANDS,
   type SlashCommandCategory,
   SlashCommandCategoryLabels,
@@ -394,6 +396,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     );
     const isRunActive = isStopping || isCoworkRunActive(isStreaming, goalRunProgress);
     const canStopRun = canStopCoworkRun(isStreaming, goalRunProgress);
+    const submissionAvailabilityRef = useRef({ disabled, isRunActive });
+    submissionAvailabilityRef.current = { disabled, isRunActive };
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const slashMenuRef = useRef<HTMLDivElement>(null);
@@ -622,9 +626,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           .then(result => {
             if (seq !== slashCommandRefreshSeqRef.current) return;
             if (!result.success || !result.commands?.length) return;
-            setSlashCommands(result.commands);
+            const commands = mergeAppSlashCommands(result.commands);
+            setSlashCommands(commands);
             updateSlashMenu(latestValueRef.current, {
-              commandsOverride: result.commands,
+              commandsOverride: commands,
               keepExpanded: slashMenuExpanded,
             });
           })
@@ -760,8 +765,42 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handleSubmit = useCallback(
       async (promptOverride?: string) => {
-        const promptValue = promptOverride ?? value;
-        const trimmedValue = promptValue.trim();
+        let promptValue = promptOverride ?? value;
+        let trimmedValue = promptValue.trim();
+        const planPrompt = parsePlanSlashCommandPrompt(trimmedValue);
+        const submittedViaPlanCommand = planPrompt !== null;
+        if (planPrompt !== null) {
+          if (
+            submissionAvailabilityRef.current.isRunActive ||
+            isStopPending() ||
+            submissionAvailabilityRef.current.disabled
+          )
+            return;
+          if (submittedDraftsRef.current.has(draftKey)) return;
+          submittedDraftsRef.current.add(draftKey);
+          try {
+            const success = await coworkService.setPlanMode(sessionId, true);
+            if (!success) {
+              window.dispatchEvent(
+                new CustomEvent('app:showToast', {
+                  detail: i18nService.t('planModeSaveFailed'),
+                }),
+              );
+              return;
+            }
+            promptValue = planPrompt;
+            trimmedValue = planPrompt;
+            if (renderedSessionIdRef.current === sessionId) {
+              latestValueRef.current = planPrompt;
+              setValue(planPrompt);
+            }
+            dispatch(setDraftPrompt({ sessionId: draftKey, draft: planPrompt }));
+            resetSlashMenuState();
+          } finally {
+            submittedDraftsRef.current.delete(draftKey);
+          }
+          if (!planPrompt) return;
+        }
         if (rejectBlockedSlashCommand(trimmedValue)) return;
 
         if (showFolderSelector && !workingDirectory?.trim()) {
@@ -806,6 +845,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               goalForResume.status === SessionGoalStatus.UsageLimited ||
               goalForResume.status === SessionGoalStatus.BudgetLimited ||
               executionAwaitsInputForGoal) &&
+            !submittedViaPlanCommand &&
             !isGoalSlashCommand(trimmedValue);
           if (resumeWithInput && attachments.length > 0) {
             window.dispatchEvent(
@@ -912,7 +952,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           };
           const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
           const feedback = submittedCompletionFeedback;
-          if (feedback && sessionId && !trimmedValue.startsWith('/')) {
+          if (feedback && sessionId && !submittedViaPlanCommand && !trimmedValue.startsWith('/')) {
             const outcome = await submitGoalCompletionFeedback({
               completedGoalId: feedback.completedGoalId,
               preparedObjective: feedback.preparedObjective,
@@ -1000,8 +1040,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             clearSubmittedInput();
             return;
           }
-          const goalObjective = parseGoalStartObjective(trimmedValue);
-          const goalClear = isGoalClearCommand(trimmedValue);
+          const goalObjective = submittedViaPlanCommand
+            ? null
+            : parseGoalStartObjective(trimmedValue);
+          const goalClear = !submittedViaPlanCommand && isGoalClearCommand(trimmedValue);
           if (goalObjective) {
             cancelGoalClear();
             setPendingGoalObjective(goalObjective);
@@ -1010,7 +1052,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             beginGoalClear();
           }
 
-          const clearBeforeSubmit = shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
+          const clearBeforeSubmit = submittedViaPlanCommand
+            ? false
+            : shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
           if (clearBeforeSubmit) {
             clearSubmittedInput();
           }
@@ -1081,6 +1125,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         mutateGoal,
         runGoalAction,
         updateCompletionFeedback,
+        resetSlashMenuState,
       ],
     );
 
@@ -2547,7 +2592,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         >
                           /
                         </button>
-                        <PermissionModeSelector disabled={disabled} />
+                        <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
                         {contextUsageBadge}
                       </>
                     )}
@@ -2756,7 +2801,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     >
                       /
                     </button>
-                    <PermissionModeSelector disabled={disabled} />
+                    <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
                     {contextUsageBadge}
                   </div>
                 )}

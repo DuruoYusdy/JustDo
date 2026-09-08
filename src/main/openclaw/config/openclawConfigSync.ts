@@ -490,6 +490,22 @@ export const sanitizeOpenClawV2026_9_2Config = (
     next.models = models;
   }
 
+  if (isRecord(config.browser)) {
+    const browser = { ...config.browser };
+    delete browser.color;
+    if (isRecord(browser.profiles)) {
+      browser.profiles = Object.fromEntries(
+        Object.entries(browser.profiles).map(([profileId, rawProfile]) => {
+          if (!isRecord(rawProfile)) return [profileId, rawProfile];
+          const profile = { ...rawProfile };
+          delete profile.color;
+          return [profileId, profile];
+        }),
+      );
+    }
+    next.browser = browser;
+  }
+
   if (isRecord(config.mcp)) {
     const mcp = { ...config.mcp };
     if (isRecord(mcp.servers)) {

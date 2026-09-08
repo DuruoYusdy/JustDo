@@ -1,5 +1,4 @@
 # Agent Engine 与 OpenClaw 集成
-
 本文描述 JustDo 如何安装、配置、启动、连接和监督 OpenClaw `v2026.9.2`。当前唯一 Cowork engine 是 OpenClaw；`CoworkEngineRouter` 只是稳定接口层，不再提供多引擎选择。
 
 ## 1. 组件分工
@@ -112,7 +111,7 @@ Adapter 延迟建立 Gateway client，并维护 generation 防止旧 socket 回�
 - proxy 改变先 dispose client，再 restart Gateway；成功后创建新 client。
 - disconnect 不自动宣告业务终态；active turns 由 Gateway runtime/history 恢复或明确超时/abort。
 - subscription、ready promise、timer 和 caches 都绑定 generation，disconnect 时清理。
-- Manager 在 Electron Main 模块加载时捕获一次稳定的 app-start 时间，并传给该软件进程启动的每个 Gateway。原生 restart recovery 保留同一 JustDo 进程内的 Gateway 重启；补丁 `008` 在 durable task maintenance 的恢复副作用前取消早于 app-start 的 queued/running task，防止完整软件重启后旧 subagent/cron/detached task 复活。
+- Manager 在 Electron Main 模块加载时捕获一次稳定的 app-start 时间，并传给该软件进程启动的每个 Gateway。原生 restart recovery 保留同一 JustDo 进程内的 Gateway 重启；补丁 `008` 在恢复副作用前中断早于 app-start 的 main session，并取消对应的 queued/running durable task，防止完整软件重启后旧工作复活。
 
 ## 9. Managed session key
 
@@ -136,7 +135,7 @@ Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready �
 
 ## 11. Slash commands
 
-命令列表来自 Gateway，再应用 JustDo policy 的 blacklist、category、tier、execution type 和 before-send hook。本地命令和 Gateway 命令分开；UI 不应把未知 `/...` 默认为本地执行，也不能绕开 policy 直接 RPC。用户手工输入的 Gateway slash command仍可走命令处理，但 Goal 卡片生命周期操作使用原生 structured Goal RPC，不依赖命令文本和控制 run。
+命令列表来自 Gateway，再应用 JustDo policy 的 blacklist、category、tier、execution type 和 before-send hook。本地命令和 Gateway 命令分开；UI 不应把未知 `/...` 默认为本地执行，也不能绕开 policy 直接 RPC。App-owned `/plan` 只切换模式，`/plan <task>` 切换后把去掉命令前缀的任务作为规划消息提交；冒号形式 `/plan: ...` 按普通消息发送。用户手工输入的 Gateway slash command仍可走命令处理，但 Goal 卡片生命周期操作使用原生 structured Goal RPC，不依赖命令文本和控制 run。
 
 ## 12. Goal continuation
 
@@ -166,13 +165,25 @@ Shared contract 对 delegation mode、命令审批等待时限、全局及单 Se
 
 Exec 和 plugin approval API 分开，pending list 在连接后恢复。session grant 仅对满足 shared predicate 的 exec request 有效，并在 session terminal/stop/delete 清除。scheduler agent 使用固定无人值守 policy，不能弹 UI，也不能借 cron 修改升级普通交互会话。
 
-## 15. Runtime patches
+## 15. Plan mode
 
-当前补丁目录为 `scripts/patches/v2026.9.2/`，仅保留十四个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows package runner、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start task boundary、forced memory reindex cache bypass、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发、暂停中止后的原生 Goal resume 准入、assistant display block replay 过滤，以及 trusted local generic MEDIA。Chrome connect 前 stderr 捕获已由上游承担。权威处置与删除条件以该目录 README 为准。
+Plan mode 是独立于 ask/auto/full 执行权限的会话工作流。Renderer 对新会话保存临时选择；创建 Gateway session 后，Adapter 通过原生 `sessions.pluginPatch` 把 `{enabled, updatedAt}` 写入 `plan-mode/state` session extension。计划文件和 handoff 成功持久化后，Adapter 在展示侧栏前把同一 state 扩展为带版本和 request id 的 `awaitingReview` 标记。`justdoPlanMode` 是 OpenClaw session row 的只读投影，JustDo 不新增消息缓存。
+
+内置 `plan-mode` extension 在 turn prepare 时读取该投影并注入规划规则，要求 Agent 先检查上下文、只做只读研究，最终调用 `PresentPlan`。trusted tool policy 复用 OpenClaw 的公开 replay-safe 分类处理原生复合工具，并拒绝文件写入、会产生副作用的 shell/code execution 和名称可判定的 mutation 工具；`rg` 等经过保守语法校验的只读命令仍可用于代码检索。提示约束覆盖无法可靠静态分类的第三方工具。活动规划 run 中可以从输入栏关闭 Plan mode 并切换权限，Gateway 原子更新 session extension 和权限期望值，不停止或重启当前会话；活动 run 中仍不能开启 Plan mode。
+
+`PresentPlan` 使用与 AskUserQuestion 相同的 plugin Gateway event/RPC 桥接模式，但拥有独立 pending 状态。Renderer 在当前会话的右侧预览区域自动展示非模态计划审核面板：批准、要求修改或取消；切换会话只隐藏面板，不会解决后台会话的 pending 请求。批准实施后面板保留为可关闭的只读预览，操作按钮全部隐藏且不再阻塞输入。实时流和历史记录都把 `PresentPlan` 投影为独立计划卡片，点击卡片可重新打开相同的只读侧栏，因此应用重启后无需另建 Renderer 消息缓存也能查看计划。计划面板与文件预览共用侧栏视觉，但没有文件路径、编辑、保存或文件授权能力。计划出现时，Main 先把规范化 Markdown 原子发布到 `<workspace>/.<productName lowercase>/plans/<sessionId>/<planId>.md` 并写入 handoff，再写 `awaitingReview`，最后才显示侧栏；这是 Plan 阶段唯一由产品执行的受控 workspace 写入。目标不可覆盖，批准和注入前均校验长度与 SHA-256，handoff 还持久化创建计划时的 workspace root，避免会话 cwd 后续变化导致恢复读错位置。批准后的新实施上下文得到 `Implement the plan.`、workspace 相对路径和完整正文；Gateway 将该实施指令持久化为 `display:false`，供模型上下文和恢复使用，但不投影为用户消息。Plan 不再改变 Gateway 的恢复状态机：完整应用重启按通用 app-start boundary 中断旧 run，同一应用进程内的 Gateway 重启沿用 OpenClaw 原生恢复；Main 可从计划文件和 handoff 恢复仍待处理的侧栏。
+
+批准实施不会让等待中的规划 Agent 在原上下文继续写代码。Adapter 创建不 fork transcript 的独立 implementation session；新 key 由 plan id 确定并关联 planning parent，重复创建通过 OpenClaw 对既有显式 key 的 adoption 语义收敛，不向仅有 token 身份的 Main Gateway client 发送需要 principal/device identity 的 `sessions.create.idempotencyKey`。完整的已核验计划作为新 session 第一条实施消息，`chat.send` 使用稳定 idempotency key。Gateway 接受新 run 后，SQLite 原子结束 planning segment 并登记 active implementation segment，随后 `planMode.resolve(implement)` 通知旧规划 run 结束，再关闭父 session 的 Plan mode。`awaitingReview` 在 resolve 成功或确认请求已丢失前保持不变，覆盖步骤间重启。创建或发送失败时 active segment 仍是 planning，Plan mode 保持可恢复，用户可重试。后续普通消息、权限同步和运行状态均跟随 active segment。
+
+这条链路使用 OpenClaw v2026.9.2 的 session extension、turn hook、trusted tool policy、plugin tool、Gateway events 与 scoped RPC，不拥有 Plan 专用恢复补丁。完整应用重启由通用 Patch 008 中断旧 planning run；同一应用进程内的 Gateway 重启继续使用原生恢复，持久 artifact、handoff 与 session extension state 用于恢复待审核侧栏。
+
+## 16. Runtime patches
+
+当前补丁目录为 `scripts/patches/v2026.9.2/`，仅保留二十个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows package runner、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start session/task boundary、forced memory reindex cache bypass、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发、暂停中止后的原生 Goal resume 准入、assistant display block replay 过滤、trusted local generic MEDIA、离线官方插件目录、分段 live progress snapshot、mixed tool/commentary 顺序、禁止配置驱动的插件自动安装、OpenAI realtime transcription 自定义 base URL，以及 OpenAI-compatible 媒体 provider 隔离。Chrome connect 前 stderr 捕获已由上游承担。权威处置与删除条件以该目录 README 为准。
 
 补丁不是传统数据库 migration：每次 runtime 都从锁定的 pristine npm tarball 构建，source lock 同时验证 registry integrity 与 tarball SHA-256。安装、source/worker、esbuild bundle 和 prune 后均验证当前 patch shape；旧 marker 或部分应用状态 fail closed，禁止对旧 JustDo runtime 原地升级。开发态 Electron 会在系统临时目录持有按仓库隔离、带心跳的进程租约；已有开发会话未退出时，新的 runtime prepare 必须在下载或目录替换前失败，避免 Windows 对正在执行的 runtime 进行 rename 而产生延迟 `EPERM`。
 
-## 16. 网络环境
+## 17. 网络环境
 
 Manager 通过 `OutboundHeaderProxy.buildGatewayEnvironment` 为 Gateway child 构造环境，并允许
 需要远端模型访问的 OpenClaw one-shot CLI 显式 opt-in 同一环境。当前 memory index CLI
@@ -204,7 +215,7 @@ embedding 请求层负责。OutboundHeader 的用户值继续只存在于代理 
 Main 通用 fetch、Electron session proxy 与受管 OpenClaw child environment 是不同作用域；修改一个
 不能假定其他两个自动同步。
 
-## 17. 日志与诊断
+## 18. 日志与诊断
 
 优先顺序：
 

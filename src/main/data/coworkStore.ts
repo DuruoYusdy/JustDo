@@ -3,11 +3,25 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import {
+  type AdmitCoworkPlanHandoffInput,
+  type AdmittedCoworkPlanHandoff,
+  type CoworkPlanArtifactReference,
+  type CoworkPlanHandoff,
+  CoworkPlanHandoffState,
+  type CreateCoworkPlanHandoffInput,
+  type TransitionCoworkPlanHandoffInput,
+} from '../../shared/cowork/planHandoff';
 import type {
   BeginSessionRunInput,
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
+import type {
+  BeginCoworkSessionSegmentInput,
+  CoworkSessionSegment,
+  CoworkSessionSegmentPhase,
+} from '../../shared/cowork/sessionSegment';
 import {
   type AgentRuntimeSettings,
   parseAgentRuntimeSettings,
@@ -149,6 +163,42 @@ interface SessionRunRow {
   ended_at: number | null;
 }
 
+interface SessionSegmentRow {
+  id: string;
+  session_id: string;
+  session_key: string;
+  gateway_session_id: string | null;
+  phase: CoworkSessionSegmentPhase;
+  plan_id: string | null;
+  ordinal: number;
+  started_at: number;
+  ended_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface PlanHandoffRow {
+  plan_id: string;
+  session_id: string;
+  planning_session_key: string;
+  artifact_workspace_root: string | null;
+  artifact_relative_path: string;
+  artifact_sha256: string;
+  artifact_byte_length: number;
+  state: CoworkPlanHandoffState;
+  implementation_session_key: string | null;
+  implementation_gateway_session_id: string | null;
+  implementation_run_id: string | null;
+  error: string | null;
+  presented_at: number;
+  dispatch_started_at: number | null;
+  admitted_at: number | null;
+  resolved_at: number | null;
+  failed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
   id: row.id,
   sessionId: row.session_id,
@@ -159,6 +209,50 @@ const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
   ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
   ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
   state: row.state,
+});
+
+const mapSessionSegment = (row: SessionSegmentRow): CoworkSessionSegment => ({
+  id: row.id,
+  sessionId: row.session_id,
+  sessionKey: row.session_key,
+  ...(row.gateway_session_id ? { gatewaySessionId: row.gateway_session_id } : {}),
+  phase: row.phase,
+  ...(row.plan_id ? { planId: row.plan_id } : {}),
+  ordinal: row.ordinal,
+  startedAt: row.started_at,
+  ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapPlanHandoff = (row: PlanHandoffRow): CoworkPlanHandoff => ({
+  planId: row.plan_id,
+  sessionId: row.session_id,
+  planningSessionKey: row.planning_session_key,
+  artifact: {
+    sessionId: row.session_id,
+    planId: row.plan_id,
+    ...(row.artifact_workspace_root ? { workspaceRoot: row.artifact_workspace_root } : {}),
+    relativePath: row.artifact_relative_path,
+    sha256: row.artifact_sha256,
+    byteLength: row.artifact_byte_length,
+  },
+  state: row.state,
+  ...(row.implementation_session_key
+    ? { implementationSessionKey: row.implementation_session_key }
+    : {}),
+  ...(row.implementation_gateway_session_id
+    ? { implementationGatewaySessionId: row.implementation_gateway_session_id }
+    : {}),
+  ...(row.implementation_run_id ? { implementationRunId: row.implementation_run_id } : {}),
+  ...(row.error ? { error: row.error } : {}),
+  presentedAt: row.presented_at,
+  ...(row.dispatch_started_at === null ? {} : { dispatchStartedAt: row.dispatch_started_at }),
+  ...(row.admitted_at === null ? {} : { admittedAt: row.admitted_at }),
+  ...(row.resolved_at === null ? {} : { resolvedAt: row.resolved_at }),
+  ...(row.failed_at === null ? {} : { failedAt: row.failed_at }),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
 });
 
 export class CoworkStore {
@@ -281,6 +375,406 @@ export class CoworkStore {
       )
       .run(interruptedAt, interruptedAt, interruptedAt, interruptedAt);
     return result.changes;
+  }
+
+  beginSessionSegment(input: BeginCoworkSessionSegmentInput): CoworkSessionSegment {
+    return this.db.transaction(() => this.insertSessionSegment(input, false))();
+  }
+
+  transitionSessionSegment(
+    input: BeginCoworkSessionSegmentInput,
+    transitionedAt: number = input.startedAt,
+  ): CoworkSessionSegment {
+    return this.db.transaction(() => {
+      const existing = this.getSessionSegment(input.id);
+      if (existing) return this.assertMatchingSessionSegment(existing, input);
+
+      this.db
+        .prepare(
+          `UPDATE cowork_session_segments
+           SET ended_at = ?, updated_at = ?
+           WHERE session_id = ? AND ended_at IS NULL`,
+        )
+        .run(transitionedAt, transitionedAt, input.sessionId);
+      return this.insertSessionSegment(input, true);
+    })();
+  }
+
+  getSessionSegment(id: string): CoworkSessionSegment | undefined {
+    const row = this.getOne<SessionSegmentRow>(
+      'SELECT * FROM cowork_session_segments WHERE id = ?',
+      [id],
+    );
+    return row ? mapSessionSegment(row) : undefined;
+  }
+
+  getActiveSessionSegment(sessionId: string): CoworkSessionSegment | undefined {
+    const row = this.getOne<SessionSegmentRow>(
+      `SELECT * FROM cowork_session_segments
+       WHERE session_id = ? AND ended_at IS NULL
+       ORDER BY ordinal DESC LIMIT 1`,
+      [sessionId],
+    );
+    return row ? mapSessionSegment(row) : undefined;
+  }
+
+  listSessionSegments(sessionId: string): CoworkSessionSegment[] {
+    return this.getAll<SessionSegmentRow>(
+      `SELECT * FROM cowork_session_segments
+       WHERE session_id = ? ORDER BY ordinal, id`,
+      [sessionId],
+    ).map(mapSessionSegment);
+  }
+
+  bindSessionSegmentGatewaySession(
+    id: string,
+    gatewaySessionId: string,
+    updatedAt: number = Date.now(),
+  ): CoworkSessionSegment | undefined {
+    const existing = this.getSessionSegment(id);
+    const normalizedGatewaySessionId = gatewaySessionId.trim();
+    if (!existing) return undefined;
+    if (
+      existing.gatewaySessionId &&
+      normalizedGatewaySessionId &&
+      existing.gatewaySessionId !== normalizedGatewaySessionId
+    ) {
+      throw new Error('This execution segment is already bound to another Gateway session.');
+    }
+    this.db
+      .prepare(
+        `UPDATE cowork_session_segments
+         SET gateway_session_id = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(normalizedGatewaySessionId || null, updatedAt, id);
+    return this.getSessionSegment(id);
+  }
+
+  endSessionSegment(id: string, endedAt: number): CoworkSessionSegment | undefined {
+    this.db
+      .prepare(
+        `UPDATE cowork_session_segments
+         SET ended_at = ?, updated_at = ?
+         WHERE id = ? AND ended_at IS NULL`,
+      )
+      .run(endedAt, endedAt, id);
+    return this.getSessionSegment(id);
+  }
+
+  private insertSessionSegment(
+    input: BeginCoworkSessionSegmentInput,
+    activeAlreadyClosed: boolean,
+  ): CoworkSessionSegment {
+    const existing = this.getSessionSegment(input.id);
+    if (existing) return this.assertMatchingSessionSegment(existing, input);
+    if (!activeAlreadyClosed && this.getActiveSessionSegment(input.sessionId)) {
+      throw new Error('This session already has an active execution segment.');
+    }
+    const ordinal =
+      this.getOne<{ next_ordinal: number }>(
+        `SELECT COALESCE(MAX(ordinal), -1) + 1 AS next_ordinal
+         FROM cowork_session_segments WHERE session_id = ?`,
+        [input.sessionId],
+      )?.next_ordinal ?? 0;
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO cowork_session_segments
+          (id, session_id, session_key, gateway_session_id, phase, plan_id, ordinal,
+           started_at, ended_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.sessionId,
+        input.sessionKey,
+        input.gatewaySessionId?.trim() || null,
+        input.phase,
+        input.planId?.trim() || null,
+        ordinal,
+        input.startedAt,
+        now,
+        now,
+      );
+    return this.getSessionSegment(input.id)!;
+  }
+
+  private assertMatchingSessionSegment(
+    existing: CoworkSessionSegment,
+    input: BeginCoworkSessionSegmentInput,
+  ): CoworkSessionSegment {
+    if (
+      existing.sessionId !== input.sessionId ||
+      existing.sessionKey !== input.sessionKey ||
+      existing.phase !== input.phase ||
+      (existing.planId ?? undefined) !== (input.planId?.trim() || undefined)
+    ) {
+      throw new Error('This execution segment already belongs to another session.');
+    }
+    return existing;
+  }
+
+  createPlanHandoff(input: CreateCoworkPlanHandoffInput): CoworkPlanHandoff {
+    const existing = this.getPlanHandoff(input.planId);
+    if (existing) {
+      if (
+        existing.sessionId !== input.sessionId ||
+        existing.planningSessionKey !== input.planningSessionKey ||
+        existing.artifact.workspaceRoot !== input.artifact.workspaceRoot ||
+        existing.artifact.relativePath !== input.artifact.relativePath ||
+        existing.artifact.sha256 !== input.artifact.sha256 ||
+        existing.artifact.byteLength !== input.artifact.byteLength
+      ) {
+        throw new Error('This plan handoff already refers to different immutable content.');
+      }
+      return existing;
+    }
+    if (
+      input.artifact.sessionId !== input.sessionId ||
+      input.artifact.planId !== input.planId ||
+      !input.planningSessionKey.trim() ||
+      !input.artifact.workspaceRoot?.trim() ||
+      !path.isAbsolute(input.artifact.workspaceRoot) ||
+      !input.artifact.relativePath.trim() ||
+      !/^[a-f0-9]{64}$/.test(input.artifact.sha256) ||
+      !Number.isSafeInteger(input.artifact.byteLength) ||
+      input.artifact.byteLength <= 0
+    ) {
+      throw new Error('Invalid plan handoff artifact metadata.');
+    }
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO cowork_plan_handoffs
+          (plan_id, session_id, planning_session_key, artifact_workspace_root,
+           artifact_relative_path, artifact_sha256, artifact_byte_length, state,
+           presented_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'presented', ?, ?, ?)`,
+      )
+      .run(
+        input.planId,
+        input.sessionId,
+        input.planningSessionKey.trim(),
+        input.artifact.workspaceRoot,
+        input.artifact.relativePath,
+        input.artifact.sha256,
+        input.artifact.byteLength,
+        input.presentedAt,
+        now,
+        now,
+      );
+    return this.getPlanHandoff(input.planId)!;
+  }
+
+  migratePlanHandoffArtifact(
+    planId: string,
+    artifact: CoworkPlanArtifactReference,
+  ): CoworkPlanHandoff {
+    if (
+      artifact.planId !== planId ||
+      !artifact.workspaceRoot?.trim() ||
+      !path.isAbsolute(artifact.workspaceRoot) ||
+      !artifact.relativePath.trim() ||
+      !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+      !Number.isSafeInteger(artifact.byteLength) ||
+      artifact.byteLength <= 0
+    ) {
+      throw new Error('Invalid migrated plan handoff artifact metadata.');
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE cowork_plan_handoffs
+         SET artifact_workspace_root = ?, artifact_relative_path = ?, artifact_sha256 = ?,
+             artifact_byte_length = ?, updated_at = ?
+         WHERE plan_id = ? AND session_id = ? AND artifact_workspace_root IS NULL`,
+      )
+      .run(
+        artifact.workspaceRoot,
+        artifact.relativePath,
+        artifact.sha256,
+        artifact.byteLength,
+        Date.now(),
+        planId,
+        artifact.sessionId,
+      );
+    if (result.changes !== 1) {
+      throw new Error('Plan handoff artifact migration lost its expected state.');
+    }
+    return this.getPlanHandoff(planId)!;
+  }
+
+  getPlanHandoff(planId: string): CoworkPlanHandoff | undefined {
+    const row = this.getOne<PlanHandoffRow>(
+      'SELECT * FROM cowork_plan_handoffs WHERE plan_id = ?',
+      [planId],
+    );
+    return row ? mapPlanHandoff(row) : undefined;
+  }
+
+  listPlanHandoffs(sessionId: string): CoworkPlanHandoff[] {
+    return this.getAll<PlanHandoffRow>(
+      `SELECT * FROM cowork_plan_handoffs
+       WHERE session_id = ? ORDER BY presented_at, plan_id`,
+      [sessionId],
+    ).map(mapPlanHandoff);
+  }
+
+  listRecoverablePlanHandoffs(): CoworkPlanHandoff[] {
+    return this.getAll<PlanHandoffRow>(
+      `SELECT handoff.* FROM cowork_plan_handoffs AS handoff
+       WHERE handoff.state IN ('presented', 'dispatching', 'admitted')
+          OR (
+            handoff.state = 'failed'
+            AND NOT EXISTS (
+              SELECT 1 FROM cowork_plan_handoffs AS newer
+              WHERE newer.session_id = handoff.session_id
+                AND (
+                  newer.presented_at > handoff.presented_at
+                  OR (newer.presented_at = handoff.presented_at AND newer.plan_id > handoff.plan_id)
+                )
+            )
+          )
+       ORDER BY handoff.updated_at, handoff.plan_id`,
+    ).map(mapPlanHandoff);
+  }
+
+  transitionPlanHandoff(input: TransitionCoworkPlanHandoffInput): CoworkPlanHandoff {
+    const allowed: Record<CoworkPlanHandoffState, CoworkPlanHandoffState[]> = {
+      [CoworkPlanHandoffState.Presented]: [
+        CoworkPlanHandoffState.Dispatching,
+        CoworkPlanHandoffState.Resolved,
+        CoworkPlanHandoffState.Failed,
+      ],
+      [CoworkPlanHandoffState.Dispatching]: [
+        CoworkPlanHandoffState.Admitted,
+        CoworkPlanHandoffState.Failed,
+      ],
+      [CoworkPlanHandoffState.Admitted]: [
+        CoworkPlanHandoffState.Resolved,
+        CoworkPlanHandoffState.Failed,
+      ],
+      [CoworkPlanHandoffState.Resolved]: [],
+      [CoworkPlanHandoffState.Failed]: [
+        CoworkPlanHandoffState.Dispatching,
+        CoworkPlanHandoffState.Resolved,
+      ],
+    };
+    if (!allowed[input.expectedState]?.includes(input.nextState)) {
+      throw new Error('Invalid plan handoff state transition.');
+    }
+
+    const implementationSessionKey = input.implementationSessionKey?.trim();
+    const implementationGatewaySessionId = input.implementationGatewaySessionId?.trim();
+    const implementationRunId = input.implementationRunId?.trim();
+    const setClauses = ['state = ?', 'updated_at = ?'];
+    const values: Array<string | number | null> = [input.nextState, input.transitionedAt];
+    if (input.nextState === CoworkPlanHandoffState.Dispatching) {
+      if (!implementationSessionKey) {
+        throw new Error('Dispatching a plan handoff requires an implementation session key.');
+      }
+      setClauses.push(
+        'implementation_session_key = ?',
+        'dispatch_started_at = ?',
+        'implementation_gateway_session_id = NULL',
+        'implementation_run_id = NULL',
+        'admitted_at = NULL',
+        'resolved_at = NULL',
+        'error = NULL',
+        'failed_at = NULL',
+      );
+      values.push(implementationSessionKey, input.transitionedAt);
+    } else if (input.nextState === CoworkPlanHandoffState.Admitted) {
+      if (!implementationGatewaySessionId || !implementationRunId) {
+        throw new Error('Admitting a plan handoff requires Gateway session and run identities.');
+      }
+      setClauses.push(
+        'implementation_gateway_session_id = ?',
+        'implementation_run_id = ?',
+        'admitted_at = ?',
+      );
+      values.push(implementationGatewaySessionId, implementationRunId, input.transitionedAt);
+    } else if (input.nextState === CoworkPlanHandoffState.Resolved) {
+      setClauses.push('resolved_at = ?');
+      values.push(input.transitionedAt);
+    } else if (input.nextState === CoworkPlanHandoffState.Failed) {
+      setClauses.push('error = ?', 'failed_at = ?');
+      values.push(
+        input.error?.trim().slice(0, 2_000) || 'Plan handoff failed',
+        input.transitionedAt,
+      );
+    }
+    values.push(input.planId, input.expectedState);
+    const result = this.db
+      .prepare(
+        `UPDATE cowork_plan_handoffs SET ${setClauses.join(', ')}
+         WHERE plan_id = ? AND state = ?`,
+      )
+      .run(...values);
+    const handoff = this.getPlanHandoff(input.planId);
+    if (!handoff) throw new Error('Plan handoff not found.');
+    if (result.changes === 0) {
+      const replayMatches =
+        handoff.state === input.nextState &&
+        (!implementationSessionKey ||
+          handoff.implementationSessionKey === implementationSessionKey) &&
+        (!implementationGatewaySessionId ||
+          handoff.implementationGatewaySessionId === implementationGatewaySessionId) &&
+        (!implementationRunId || handoff.implementationRunId === implementationRunId);
+      if (replayMatches) return handoff;
+      throw new Error(`Plan handoff state changed from ${input.expectedState}.`);
+    }
+    return handoff;
+  }
+
+  admitPlanHandoffAndTransitionSegment(
+    input: AdmitCoworkPlanHandoffInput,
+  ): AdmittedCoworkPlanHandoff {
+    return this.db.transaction(() => {
+      const handoff = this.getPlanHandoff(input.planId);
+      if (!handoff) throw new Error('Plan handoff not found.');
+      if (
+        input.implementationSegment.sessionId !== handoff.sessionId ||
+        input.implementationSegment.sessionKey !== handoff.implementationSessionKey
+      ) {
+        throw new Error('Implementation segment does not match the plan handoff.');
+      }
+      if (handoff.state === CoworkPlanHandoffState.Admitted) {
+        const segment = this.getSessionSegment(input.implementationSegment.id);
+        if (
+          !segment ||
+          handoff.implementationGatewaySessionId !== input.implementationGatewaySessionId ||
+          handoff.implementationRunId !== input.implementationRunId
+        ) {
+          throw new Error('Admitted plan handoff does not match the replayed identities.');
+        }
+        return { handoff, segment };
+      }
+      if (handoff.state !== input.expectedState) {
+        throw new Error(`Plan handoff state changed from ${input.expectedState}.`);
+      }
+      const segment = this.transitionSessionSegment(
+        {
+          ...input.implementationSegment,
+          gatewaySessionId: input.implementationGatewaySessionId,
+        },
+        input.admittedAt,
+      );
+      this.bindSessionSegmentGatewaySession(
+        segment.id,
+        input.implementationGatewaySessionId,
+        input.admittedAt,
+      );
+      const admitted = this.transitionPlanHandoff({
+        planId: input.planId,
+        expectedState: CoworkPlanHandoffState.Dispatching,
+        nextState: CoworkPlanHandoffState.Admitted,
+        implementationGatewaySessionId: input.implementationGatewaySessionId,
+        implementationRunId: input.implementationRunId,
+        transitionedAt: input.admittedAt,
+      });
+      return { handoff: admitted, segment: this.getSessionSegment(segment.id)! };
+    })();
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {

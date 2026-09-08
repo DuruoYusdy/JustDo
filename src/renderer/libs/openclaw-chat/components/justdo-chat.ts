@@ -116,6 +116,10 @@ export class JustDoChatElement extends LitElement {
   @property({ type: Array, attribute: false })
   declare messages: GatewayMessage[];
 
+  /** Read-only transcript segments that precede the active controller session. */
+  @property({ type: Array, attribute: false })
+  declare historyPrefixMessages: GatewayMessage[];
+
   @property({ type: String, attribute: false })
   declare stream: string | null;
 
@@ -177,6 +181,13 @@ export class JustDoChatElement extends LitElement {
     this.publishStreamFrame(),
   );
   private readonly persistedTimelineCache = new PersistedTimelineCache();
+  private projectedActiveHistorySource: GatewayMessage[] | null = null;
+  private projectedActiveTurnKey = '';
+  private projectedActiveMessages: GatewayMessage[] = [];
+  private combinedHistoryPrefix: GatewayMessage[] | null = null;
+  private combinedActiveHistory: GatewayMessage[] | null = null;
+  private combinedPersistedMessages: GatewayMessage[] = [];
+  private historyPrefixRevision = 0;
   private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
@@ -202,6 +213,7 @@ export class JustDoChatElement extends LitElement {
   constructor() {
     super();
     this.messages = [];
+    this.historyPrefixMessages = [];
     this.stream = null;
     this.streamStartedAt = null;
     this.isStreaming = false;
@@ -414,6 +426,25 @@ export class JustDoChatElement extends LitElement {
         box-sizing: border-box;
         margin: 0 auto;
         padding: 16px 0;
+      }
+
+      .phase-boundary {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 28px 0;
+        color: var(--justdo-chat-muted, #737373);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .phase-boundary::before,
+      .phase-boundary::after {
+        height: 1px;
+        flex: 1;
+        content: '';
+        background: var(--justdo-chat-border, rgba(148, 163, 184, 0.35));
       }
 
       .chat-minimap {
@@ -1922,6 +1953,83 @@ export class JustDoChatElement extends LitElement {
       .chat-group--progress-receipt {
         margin-bottom: 2px;
       }
+      .chat-group--plan-presentation {
+        margin: 3px 0 6px;
+      }
+      .plan-presentation-card {
+        display: grid;
+        width: min(100%, 460px);
+        grid-template-columns: 32px minmax(0, 1fr) 16px;
+        align-items: center;
+        gap: 9px;
+        border: 1px solid var(--justdo-chat-border, rgba(148, 163, 184, 0.32));
+        border-radius: 12px;
+        padding: 9px 11px;
+        background: var(--justdo-chat-process-bg, rgba(248, 250, 252, 0.72));
+        color: var(--justdo-chat-text, #1e293b);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition:
+          border-color 120ms ease,
+          background 120ms ease,
+          box-shadow 120ms ease;
+      }
+      .plan-presentation-card:hover,
+      .plan-presentation-card:focus-visible {
+        border-color: var(--justdo-chat-accent, #2563eb);
+        background: rgba(59, 130, 246, 0.07);
+        box-shadow: 0 5px 18px rgba(15, 23, 42, 0.07);
+        outline: none;
+      }
+      .plan-presentation-card:disabled {
+        cursor: default;
+        opacity: 0.65;
+      }
+      .plan-presentation-card__icon {
+        display: grid;
+        width: 32px;
+        height: 32px;
+        place-items: center;
+        border-radius: 10px;
+        background: rgba(59, 130, 246, 0.1);
+        color: var(--justdo-chat-accent, #2563eb);
+      }
+      .plan-presentation-card__icon svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.45;
+      }
+      .plan-presentation-card__copy {
+        display: block;
+        min-width: 0;
+      }
+      .plan-presentation-card__copy strong {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .plan-presentation-card__arrow {
+        display: grid;
+        width: 16px;
+        height: 16px;
+        place-items: center;
+        color: var(--justdo-chat-muted, #64748b);
+      }
+      .plan-presentation-card__arrow svg {
+        width: 14px;
+        height: 14px;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.8;
+      }
       .chat-group--timeline .chat-group__content {
         padding-top: 0;
       }
@@ -2568,16 +2676,48 @@ export class JustDoChatElement extends LitElement {
       this.pacedTerminalProjection?.sessionIdentity === this.assistantStreamSessionIdentityFor(ctrl)
         ? this.pacedTerminalProjection
         : null;
-    const persistedMessages = ctrl
+    const activePersistedMessages = ctrl
       ? (terminalProjection?.persistedMessages ??
         (ctrl.state.visibleChatMessages as GatewayMessage[]))
       : this.messages;
     const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
-    let messages = projectPersistedMessagesForActiveTurn(
-      persistedMessages,
-      activeTurn,
-      pendingMessage,
-    );
+    const activeTurnHistoryKey = activeTurn
+      ? `${activeTurn.runId}:${activeTurn.status}:${[...activeTurn.toolById.keys()].join(
+          ',',
+        )}:${pendingMessage === null ? 'settled' : 'pending'}`
+      : 'idle';
+    if (
+      this.projectedActiveHistorySource !== activePersistedMessages ||
+      this.projectedActiveTurnKey !== activeTurnHistoryKey
+    ) {
+      this.projectedActiveHistorySource = activePersistedMessages;
+      this.projectedActiveTurnKey = activeTurnHistoryKey;
+      this.projectedActiveMessages = projectPersistedMessagesForActiveTurn(
+        activePersistedMessages,
+        activeTurn,
+        pendingMessage,
+      );
+    }
+    let messages = this.projectedActiveMessages;
+    if (ctrl && this.historyPrefixMessages.length > 0) {
+      if (
+        this.combinedHistoryPrefix !== this.historyPrefixMessages ||
+        this.combinedActiveHistory !== this.projectedActiveMessages
+      ) {
+        this.combinedHistoryPrefix = this.historyPrefixMessages;
+        this.combinedActiveHistory = this.projectedActiveMessages;
+        this.combinedPersistedMessages = [
+          ...this.historyPrefixMessages,
+          ...this.projectedActiveMessages,
+        ];
+      }
+      messages = this.combinedPersistedMessages;
+    } else {
+      this.combinedHistoryPrefix = null;
+      this.combinedActiveHistory = null;
+      this.combinedPersistedMessages = [];
+    }
+    const persistedMessages = messages;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
 
     // Merge the optimistic prompt in turn order during session transitions.
@@ -2883,6 +3023,7 @@ export class JustDoChatElement extends LitElement {
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
     traceTimelineDom(this._controller?.state.sessionKey ?? '', this.shadowRoot);
+    if (changedProperties?.has('historyPrefixMessages')) this.historyPrefixRevision += 1;
     this.syncActiveTurnClock();
     if (changedProperties?.has('processSummariesExpanded')) {
       this.openProcessSummaryKey = null;
@@ -2933,7 +3074,7 @@ export class JustDoChatElement extends LitElement {
       this.activeSearchIndex = -1;
       this.clearSearchMarks();
     }
-    const searchEnhancementKey = `${this.searchQuery}:${this.searchCaseSensitive}:${transcriptRevision}:${activeContentDisplaySignature}`;
+    const searchEnhancementKey = `${this.searchQuery}:${this.searchCaseSensitive}:${transcriptRevision}:${this.historyPrefixRevision}:${activeContentDisplaySignature}`;
     if (searchEnhancementKey !== this.lastSearchEnhancementKey) {
       this.lastSearchEnhancementKey = searchEnhancementKey;
       requestAnimationFrame(() => this.emitSearchMatchCount());
@@ -3550,6 +3691,13 @@ export class JustDoChatElement extends LitElement {
     showAvatar: boolean,
     showFooter: boolean,
   ): TemplateResult | typeof nothing {
+    if (item.kind === 'phase-boundary') {
+      return html`
+        <div class="phase-boundary" data-history-key=${item.key} role="separator">
+          <span>${item.label || i18nService.t('planModeImplementationDivider')}</span>
+        </div>
+      `;
+    }
     if (item.kind === 'history-message') {
       if (isFailedRunMessage(item.message)) {
         return html`

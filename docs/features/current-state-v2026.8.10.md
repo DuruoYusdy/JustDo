@@ -64,7 +64,7 @@ Redux挂载6个slice：model、cowork、skill、mcp、scheduledTask、agent。
 
 ## 4. 当前Runtime Patch
 
-`scripts/patches/v2026.9.2/` 只保留十四个产品缺口：managed Python、Windows 通用 MCP runner、Chrome Windows runner、最终 system prompt replacement、agent request metadata、compaction/reviewer purpose metadata、app-start task recovery boundary、手动 memory reindex no-cache、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发、暂停中止后的原生 Goal resume 准入、assistant display block provider replay 过滤，以及可信本地通用 MEDIA 交付。Thinking/history、tool directory、大部分 goal、task queue/join、approval 状态机、compaction/context budget 和 Chrome MCP 早期 stderr 都使用 v2026.9.2 原生能力；progress、embedding 和受限 history detail 迁入 `runtime-services`。
+`scripts/patches/v2026.9.2/` 保留二十个产品缺口：基础的 managed Python、Windows MCP runner、metadata、app-start session/task boundary、approval、Goal resume、display replay、MEDIA 和离线插件目录能力，以及 segmented live progress snapshot、mixed commentary order、禁止配置驱动的插件自动安装、OpenAI realtime transcription 自定义 base URL、OpenAI-compatible 媒体 provider 隔离。Thinking/history、tool directory、大部分 goal、task queue/join、approval 状态机、compaction/context budget 和 Chrome MCP 早期 stderr 都使用 v2026.9.2 原生能力；progress、embedding 和受限 history detail 迁入 `runtime-services`。
 
 ## 5. 尚未完整交付/明确限制
 

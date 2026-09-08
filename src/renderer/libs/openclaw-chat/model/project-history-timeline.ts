@@ -1,3 +1,4 @@
+import { isPresentPlanToolName } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { normalizeToolTerminalStatus } from '@shared/openclaw/messageDomain';
 import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
@@ -11,6 +12,7 @@ import { isFailedRunMessage } from './failed-run-message';
 import { deterministicHistoryKey } from './history-reconciler';
 import type {
   LiveProcessTimelineItem,
+  PlanPresentationTimelineItem,
   ProcessSummaryTimelineItem,
   ProgressReceiptTimelineItem,
 } from './project-turn-items';
@@ -41,8 +43,14 @@ export type PersistedTimelineItem =
       completedAt?: number;
       modelRef?: string;
     }
+  | {
+      kind: 'phase-boundary';
+      key: string;
+      label: string;
+    }
   | ProcessSummaryTimelineItem
   | LiveProcessTimelineItem
+  | PlanPresentationTimelineItem
   | ProgressReceiptTimelineItem;
 
 const THINKING_TYPES = new Set(['thinking', 'reasoning']);
@@ -300,9 +308,6 @@ export function projectPersistedTimeline(
     return undefined;
   };
 
-  const isProgressCardUpdate = (item: ThinkingItem | ToolItem): item is ToolItem =>
-    item.type === 'tool' && item.name.trim().toLowerCase() === 'progress_card';
-
   const flushSummary = () => {
     if (archived.length === 0) return;
     let summaryItems: Array<ThinkingItem | ToolItem> = [];
@@ -325,7 +330,15 @@ export function projectPersistedTimeline(
       segment += 1;
     };
     for (const item of archived) {
-      if (isProgressCardUpdate(item)) {
+      if (item.type === 'tool' && isPresentPlanToolName(item.name)) {
+        flushSummaryItems();
+        projected.push({
+          kind: 'plan-presentation',
+          key: `history-plan:${segment}:${item.id}`,
+          item,
+        });
+        segment += 1;
+      } else if (item.type === 'tool' && item.name.trim().toLowerCase() === 'progress_card') {
         flushSummaryItems();
         projected.push({
           kind: 'progress-receipt',
@@ -537,6 +550,20 @@ export function projectPersistedTimeline(
     if (runId === messageKey) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
+    if (role === 'justdo-phase-boundary') {
+      flushSummary();
+      const label = typeof message.content === 'string' ? message.content.trim() : '';
+      projected.push({
+        kind: 'phase-boundary',
+        key: `history-phase:${messageKey}`,
+        label,
+      });
+      toolEpoch += 1;
+      activeTiming = null;
+      lastTimedMessage = null;
+      segment += 1;
+      return;
+    }
     // A subsequent explicit assistant run cannot still be executing tools
     // from the previous run. Missing results remain interrupted, not successful.
     if (

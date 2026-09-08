@@ -34,6 +34,10 @@ export function prepareVisibleTimelineRows(
 ) {
   let assistantTurnOpen = options?.initialAssistantTurnOpen ?? false;
   const rows = items.map<VisibleTimelineRow>(item => {
+    if (item.kind === 'phase-boundary') {
+      assistantTurnOpen = false;
+      return { item, showAvatar: false, showFooter: false };
+    }
     if (item.kind !== 'history-message') {
       const showAvatar = !assistantTurnOpen;
       assistantTurnOpen = true;

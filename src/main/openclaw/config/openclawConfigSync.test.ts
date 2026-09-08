@@ -278,6 +278,19 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
         pricing: { enabled: false },
         mode: 'replace',
       },
+      browser: {
+        color: '#00AA00',
+        enabled: true,
+        profiles: {
+          chrome: {
+            driver: 'extension',
+            color: '#FF4500',
+          },
+          remote: {
+            cdpUrl: 'http://127.0.0.1:9222',
+          },
+        },
+      },
       mcp: {
         servers: {
           docs: { url: 'https://example.com/mcp', timeout: 60 },
@@ -312,6 +325,13 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
       meta: { lastTouchedVersion: '2026.9.2' },
       diagnostics: { otel: { enabled: false } },
       models: { mode: 'replace' },
+      browser: {
+        enabled: true,
+        profiles: {
+          chrome: { driver: 'extension' },
+          remote: { cdpUrl: 'http://127.0.0.1:9222' },
+        },
+      },
       mcp: {
         servers: {
           docs: { url: 'https://example.com/mcp', requestTimeoutMs: 60_000 },
@@ -331,6 +351,8 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
     expect(config.meta).not.toHaveProperty('lastTouchedAt');
     expect(config.diagnostics).not.toHaveProperty('stuckSessionWarnMs');
     expect(config.models).not.toHaveProperty('pricing');
+    expect(config.browser).not.toHaveProperty('color');
+    expect(config.browser.profiles.chrome).not.toHaveProperty('color');
     expect(config.mcp.servers.docs).not.toHaveProperty('timeout');
     expect(config.tools).not.toHaveProperty('experimental');
     expect(config.agents).not.toHaveProperty('list');

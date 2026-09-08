@@ -111,15 +111,36 @@ describe('chat minimap projection', () => {
       message('user-2', 'user', 'Second'),
     ]);
 
-    const tail = projectChatMinimapTailEntry(
-      persisted[1] ?? null,
-      [content('content-1', 'Streaming answer')],
-    );
+    const tail = projectChatMinimapTailEntry(persisted[1] ?? null, [
+      content('content-1', 'Streaming answer'),
+    ]);
 
     expect(tail).toEqual({
       ...persisted[1],
       assistantText: 'Streaming answer',
     });
     expect(persisted[1]?.assistantText).toBe('');
+  });
+
+  test('does not attach implementation content to the planning minimap entry', () => {
+    const entries = projectChatMinimapEntries([
+      message('planning-user', 'user', 'Plan this change'),
+      message('planning-assistant', 'assistant', 'Here is the plan'),
+      {
+        kind: 'phase-boundary',
+        key: 'implementation-boundary',
+        label: 'Implementation started',
+      },
+      content('implementation-content', 'Implementing now'),
+    ]);
+
+    expect(entries).toEqual([
+      {
+        key: 'minimap:planning-user',
+        anchorKey: 'planning-user',
+        userText: 'Plan this change',
+        assistantText: 'Here is the plan',
+      },
+    ]);
   });
 });

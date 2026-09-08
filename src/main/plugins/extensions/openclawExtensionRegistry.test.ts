@@ -20,6 +20,9 @@ describe('openclawExtensionRegistry', () => {
       [OpenClawExtensionId.RUNTIME_SERVICES]: {
         enabled: true,
       },
+      [OpenClawExtensionId.PLAN_MODE]: {
+        enabled: true,
+      },
     });
   });
 });

@@ -1,0 +1,18 @@
+{
+  "id": "plan-mode",
+  "name": "Plan Mode",
+  "description": "Session-scoped planning workflow for the JustDo desktop application.",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool"]
+  },
+  "contracts": {
+    "tools": ["PresentPlan"],
+    "trustedToolPolicies": ["plan-mode-read-only"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -1,11 +1,14 @@
 'use strict';
 
-// Capability: attach stable agent session/parent metadata and one-shot human initiation evidence.
+// Capability: attach stable agent session/parent metadata, one-shot human initiation evidence,
+// and an internal chat.send user-turn visibility control.
 // Target: pristine openclaw@2026.9.2, which does not publish these fields to provider payloads.
-// Scope: chat.send admission plus the builtin_models/openai-completions provider boundary only.
+// Scope: chat.send schema/admission plus the builtin_models/openai-completions provider boundary.
 // Safety: parent identity is read through v9.2's SQLite session accessor. Third-party providers
-// receive no added metadata, and a human-run marker is consumed by its first model request only.
-// Remove when: upstream exposes equivalent authenticated provider request metadata.
+// receive no added metadata, a human-run marker is consumed by its first model request only, and
+// hidden user turns require a local authenticated backend owner, remain in model context, and are
+// omitted by OpenClaw's native display projection.
+// Remove when: upstream exposes equivalent request metadata and chat user-turn visibility controls.
 
 const fs = require('fs');
 const path = require('path');
@@ -18,9 +21,10 @@ const {
   writeIfChanged,
 } = require('./_patch-utils.js');
 
-const CONTRACT = 'JUSTDO_AGENT_REQUEST_METADATA_V2026_9_2';
+const CONTRACT = 'JUSTDO_AGENT_REQUEST_METADATA_AND_HIDDEN_TURNS_V2026_9_2';
 const SCHEMA_MARKER = `${CONTRACT}: chat send schema`;
 const ADMISSION_MARKER = `${CONTRACT}: human run admission`;
+const VISIBILITY_MARKER = `${CONTRACT}: hidden user turn`;
 const STREAM_MARKER = `${CONTRACT}: built-in model service payload only`;
 const ACCESSOR_ALIAS = 'loadJustDoSessionEntry';
 const TRANSPORT_FUNCTION = 'prepareEmbeddedAttemptTransport';
@@ -28,6 +32,8 @@ const SUPPORTED_APIS = 'new Set(["openai-completions"])';
 const SUPPORTED_PROVIDERS = 'new Set(["builtin_models"])';
 const HUMAN_RUN_ADMISSION_PATTERN =
   /if\s*\(\s*[A-Za-z_$][\w$]*\.justdoUserInitiated\s*===\s*true\s*\)\s*\{[\s\S]*?humanRuns\.add\(clientRunId\);[\s\S]*?\}/;
+const HIDDEN_USER_TURN_PATTERN =
+  /[A-Za-z_$][\w$]*\.justdoHideUserMessage\s*===\s*true\s*&&\s*[A-Za-z_$][\w$]*\?\.internal\?\.isLocalClient\s*===\s*true\s*&&\s*[A-Za-z_$][\w$]*\?\.connect\?\.client\?\.id\s*===\s*["']gateway-client["']\s*&&\s*[A-Za-z_$][\w$]*\?\.connect\?\.client\?\.mode\s*===\s*["']backend["']\s*&&\s*[A-Za-z_$][\w$]*\?\.connect\?\.scopes\?\.includes\(["']operator\.admin["']\)\s*\?\s*\{\s*\.\.\.[A-Za-z_$][\w$]*\?\.transcript,\s*display:\s*false\s*\}\s*:\s*[A-Za-z_$][\w$]*\?\.transcript/;
 
 const WRAPPER = `const justDoAgentMetadataApis = ${SUPPORTED_APIS};
 const justDoAgentMetadataProviders = ${SUPPORTED_PROVIDERS};
@@ -87,7 +93,11 @@ function expectedCounts(runtimeDir) {
 
 function patchSchema(content, filePath) {
   assertCurrentPatchContract(content, CONTRACT, filePath, false);
-  if (content.includes('justdoUserInitiated:')) {
+  const hasUserInitiated = content.includes('justdoUserInitiated:');
+  const hasHiddenUserMessage = content.includes('justdoHideUserMessage:');
+  if (hasUserInitiated || hasHiddenUserMessage) {
+    if (!hasUserInitiated || !hasHiddenUserMessage)
+      throw new Error(`${filePath}: historical or partial chat.send metadata schema`);
     if (!isGatewayBundlePath(filePath) && !content.includes(SCHEMA_MARKER))
       throw new Error(`${filePath}: historical or partial chat.send metadata schema`);
     return content;
@@ -99,7 +109,7 @@ function patchSchema(content, filePath) {
       content,
       objectPattern,
       (_match, prefix, typebox, suffix) =>
-        `${prefix}justdoUserInitiated: ${typebox}.Optional(${typebox}.Boolean()), // ${SCHEMA_MARKER}\n${suffix}`,
+        `${prefix}justdoUserInitiated: ${typebox}.Optional(${typebox}.Boolean()),\njustdoHideUserMessage: ${typebox}.Optional(${typebox}.Boolean()), // ${SCHEMA_MARKER}\n${suffix}`,
       `${filePath}: chat.send human initiation schema`,
     );
   }
@@ -107,29 +117,42 @@ function patchSchema(content, filePath) {
     content,
     /(systemInputProvenance:\s*([A-Za-z_$][\w$]*)\(InputProvenanceSchema\),\s*)(systemProvenanceReceipt:[\s\S]*?suppressCommandInterpretation:\s*\2\(([A-Za-z_$][\w$]*)\(\)\))/,
     (_match, prefix, optional, suffix, boolean) =>
-      `${prefix}justdoUserInitiated:${optional}(${boolean}()),/*${SCHEMA_MARKER}*/${suffix}`,
+      `${prefix}justdoUserInitiated:${optional}(${boolean}()),justdoHideUserMessage:${optional}(${boolean}()),/*${SCHEMA_MARKER}*/${suffix}`,
     `${filePath}: worker chat.send human initiation schema`,
   );
 }
 
 function patchChatRegistration(content, filePath) {
   assertCurrentPatchContract(content, CONTRACT, filePath, false);
-  if (HUMAN_RUN_ADMISSION_PATTERN.test(content)) {
+  let updated = content;
+  if (HUMAN_RUN_ADMISSION_PATTERN.test(updated)) {
     if (!isGatewayBundlePath(filePath) && !content.includes(ADMISSION_MARKER))
       throw new Error(`${filePath}: historical or partial human run admission`);
-    return content;
-  }
-  return replaceUniquePattern(
-    content,
-    /(\b[A-Za-z_$][\w$]*\.addChatRun\(clientRunId,\s*\{\s*sessionKey,)/,
-    `// ${CONTRACT}: human run admission
+  } else {
+    updated = replaceUniquePattern(
+      updated,
+      /(\b[A-Za-z_$][\w$]*\.addChatRun\(clientRunId,\s*\{\s*sessionKey,)/,
+      `// ${CONTRACT}: human run admission
 \t\tif (p.justdoUserInitiated === true) {
 \t\t\tconst humanRuns = globalThis[Symbol.for("justdo.builtin-models.human-runs")] ??= new Set();
 \t\t\thumanRuns.add(clientRunId);
 \t\t\tif (humanRuns.size > 4096) humanRuns.delete(humanRuns.values().next().value);
 \t\t}
 \t\t$1`,
-    `${filePath}: chat.send human run admission`,
+      `${filePath}: chat.send human run admission`,
+    );
+  }
+  if (HIDDEN_USER_TURN_PATTERN.test(updated)) {
+    if (!isGatewayBundlePath(filePath) && !updated.includes(VISIBILITY_MARKER))
+      throw new Error(`${filePath}: historical or partial hidden user turn`);
+    return updated;
+  }
+  return replaceUniquePattern(
+    updated,
+    /transcript:\s*([A-Za-z_$][\w$]*)\?\.transcript,/,
+    (_match, optionsName) =>
+      `transcript: p.justdoHideUserMessage === true && client?.internal?.isLocalClient === true && client?.connect?.client?.id === "gateway-client" && client?.connect?.client?.mode === "backend" && client?.connect?.scopes?.includes("operator.admin") ? { ...${optionsName}?.transcript, display: false } : ${optionsName}?.transcript, // ${VISIBILITY_MARKER}`,
+    `${filePath}: hidden chat.send user turn`,
   );
 }
 
@@ -289,6 +312,12 @@ function verifyPatch(runtimeDir) {
       )
     )
       throw new Error(`${filePath}: chat.send human initiation schema is missing`);
+    if (
+      !/justdoHideUserMessage:\s*(?:[A-Za-z_$][\w$]*\.Optional\([A-Za-z_$][\w$]*\.Boolean\(\)\)|[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\)\))/.test(
+        content,
+      )
+    )
+      throw new Error(`${filePath}: hidden chat.send user message schema is missing`);
   }
   for (const filePath of files.registration) {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -297,6 +326,10 @@ function verifyPatch(runtimeDir) {
       throw new Error(`${filePath}: current human run admission marker is missing`);
     if (!HUMAN_RUN_ADMISSION_PATTERN.test(content))
       throw new Error(`${filePath}: human run admission is missing`);
+    if (!HIDDEN_USER_TURN_PATTERN.test(content))
+      throw new Error(`${filePath}: hidden chat.send user turn is missing`);
+    if (!isGatewayBundlePath(filePath) && !content.includes(VISIBILITY_MARKER))
+      throw new Error(`${filePath}: current hidden user turn marker is missing`);
   }
   for (const filePath of files.stream) {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -338,6 +371,7 @@ module.exports = {
     CONTRACT,
     SCHEMA_MARKER,
     STREAM_MARKER,
+    VISIBILITY_MARKER,
     SUPPORTED_APIS,
     SUPPORTED_PROVIDERS,
     WRAPPER,

@@ -106,6 +106,7 @@ export type CoworkStartOptions = {
   attachments?: CoworkAttachmentPayload[];
   agentId?: string;
   clientTurnId?: string;
+  planMode?: boolean;
 };
 
 export type CoworkStopOptions = {
@@ -146,7 +147,12 @@ export interface CoworkRuntime {
   stopAllSessions(): Promise<void>;
   isSessionActive(sessionId: string): boolean;
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null;
-  onSessionDeleted?(sessionId: string, agentId?: string): void;
+  onSessionDeleted?(
+    sessionId: string,
+    agentId?: string,
+    sessionKeys?: string[],
+    workspaceRoots?: string[],
+  ): void;
   /**
    * Generate a session title using the configured model.
    * Optional: only implemented by OpenClawRuntimeAdapter which has Gateway access.

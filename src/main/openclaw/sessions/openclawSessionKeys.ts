@@ -1,7 +1,14 @@
 /** OpenClaw managed and cron session-key utilities. */
 
-const JUSTDO_SESSION_PREFIX = 'justdo:';
-export const DEFAULT_MANAGED_AGENT_ID = 'main';
+import {
+  buildCoworkExecutionSessionKey,
+  buildCoworkSessionKey,
+  DEFAULT_COWORK_AGENT_ID,
+  parseCoworkSessionKey,
+} from '../../../shared/cowork/sessionSegment';
+
+export const DEFAULT_MANAGED_AGENT_ID = DEFAULT_COWORK_AGENT_ID;
+export { buildCoworkExecutionSessionKey };
 
 export interface ManagedSessionKey {
   agentId: string | null;
@@ -12,38 +19,14 @@ export function buildManagedSessionKey(
   sessionId: string,
   agentId = DEFAULT_MANAGED_AGENT_ID,
 ): string {
-  const normalizedSessionId = sessionId.trim();
-  const normalizedAgentId = agentId.trim() || DEFAULT_MANAGED_AGENT_ID;
-  return `agent:${normalizedAgentId}:justdo:${normalizedSessionId}`;
+  return buildCoworkSessionKey(sessionId, agentId);
 }
 
 export function parseManagedSessionKey(
   sessionKey: string | undefined | null,
 ): ManagedSessionKey | null {
-  const raw = (sessionKey ?? '').trim();
-  if (!raw) return null;
-
-  if (raw.startsWith(JUSTDO_SESSION_PREFIX)) {
-    const sessionId = raw.slice(JUSTDO_SESSION_PREFIX.length).trim();
-    return sessionId ? { agentId: null, sessionId } : null;
-  }
-
-  if (!raw.startsWith('agent:')) {
-    return null;
-  }
-
-  const parts = raw.split(':');
-  if (parts.length < 4 || parts[0] !== 'agent' || parts[2] !== 'justdo') {
-    return null;
-  }
-
-  const agentId = parts[1]?.trim();
-  const sessionId = parts.slice(3).join(':').trim();
-  if (!agentId || !sessionId) {
-    return null;
-  }
-
-  return { agentId, sessionId };
+  const parsed = parseCoworkSessionKey(sessionKey);
+  return parsed ? { agentId: parsed.agentId, sessionId: parsed.sessionId } : null;
 }
 
 export function isManagedSessionKey(sessionKey: string | undefined | null): boolean {

@@ -647,6 +647,7 @@ const getCoworkEngineService = (): CoworkEngineService => {
       getCoworkStore,
       getOpenClawEngineManager,
       fetchSessionTitle: mainProcessTitleFetch,
+      getUserDataPath: () => app.getPath('userData'),
     });
   }
   return coworkEngineService;

@@ -488,6 +488,7 @@ describe('OpenClaw auth logout config sync', () => {
       'browser',
       'automation-permission',
       'runtime-services',
+      'plan-mode',
     ]);
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['ask-user-question']).toEqual({
@@ -580,6 +581,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'automation-permission',
       'runtime-services',
+      'plan-mode',
     ]);
     expect(config.plugins.deny).toBeUndefined();
   });
@@ -698,6 +700,7 @@ describe('OpenClaw auth logout config sync', () => {
       'ask-user-question',
       'automation-permission',
       'runtime-services',
+      'plan-mode',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();

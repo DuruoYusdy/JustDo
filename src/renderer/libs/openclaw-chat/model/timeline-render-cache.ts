@@ -48,6 +48,10 @@ function historyMessageRole(
 function endsWithOpenAssistantTurn(items: readonly PersistedTimelineItem[]): boolean {
   let assistantTurnOpen = false;
   for (const item of items) {
+    if (item.kind === 'phase-boundary') {
+      assistantTurnOpen = false;
+      continue;
+    }
     if (item.kind !== 'history-message') {
       assistantTurnOpen = true;
       continue;
@@ -129,9 +133,9 @@ export function projectIncrementalTimelineView(params: {
   const mergedSeam =
     lastPersisted && firstActive ? mergeProcessSummaries(lastPersisted, firstActive) : null;
   const seamRow = mergedSeam
-      ? prepareVisibleTimelineRows([mergedSeam], {
+    ? (prepareVisibleTimelineRows([mergedSeam], {
         initialAssistantTurnOpen: persisted.assistantTurnOpenBeforeLast,
-      })[0] ?? null
+      })[0] ?? null)
     : null;
   const activeTail = mergedSeam ? activeTimeline.slice(1) : activeTimeline;
   const activeRows = prepareVisibleTimelineRows(activeTail, {

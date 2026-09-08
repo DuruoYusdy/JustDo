@@ -22,6 +22,7 @@ export type SessionModelResult =
 export interface SessionRpcCallbacks {
   getGatewayClient(): GatewayClientLike | null;
   store: CoworkStore;
+  resolveSessionKey?(sessionId: string, agentId?: string): string;
 }
 
 function isAmbiguousModelPatchFailure(error: unknown): boolean {
@@ -46,6 +47,8 @@ export class SessionRpc {
   constructor(private readonly callbacks: SessionRpcCallbacks) {}
 
   private sessionKey(sessionId: string, agentId?: string): string {
+    const resolved = this.callbacks.resolveSessionKey?.(sessionId, agentId).trim();
+    if (resolved) return resolved;
     const session = this.callbacks.store.getSession(sessionId);
     const effectiveAgentId = agentId || session?.agentId || 'main';
     return `agent:${effectiveAgentId}:justdo:${sessionId}`;

@@ -32,6 +32,10 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.file-preview-shell.is-obscured {
+  visibility: hidden;
+}
+
 @keyframes file-preview-enter {
   from {
     opacity: 0;
@@ -366,6 +370,88 @@
     color-mix(in srgb, var(--justdo-background) 84%, var(--justdo-surface-raised));
 }
 
+.plan-approval-controls {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--justdo-surface) 96%, transparent);
+  border-top: 1px solid var(--justdo-border-subtle);
+  backdrop-filter: blur(18px);
+}
+
+.plan-approval-feedback {
+  width: 100%;
+  min-height: 76px;
+  max-height: 180px;
+  padding: 10px 12px;
+  resize: vertical;
+  color: var(--justdo-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--justdo-background);
+  border: 1px solid var(--justdo-border);
+  border-radius: 10px;
+  outline: none;
+}
+
+.plan-approval-feedback-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--justdo-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.plan-approval-feedback:focus {
+  border-color: var(--justdo-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--justdo-primary) 12%, transparent);
+}
+
+.plan-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.plan-approval-button {
+  min-height: 34px;
+  padding: 7px 12px;
+  color: var(--justdo-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--justdo-surface-raised) 78%, transparent);
+  border: 1px solid var(--justdo-border);
+  border-radius: 9px;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease,
+    opacity 120ms ease;
+}
+
+.plan-approval-button:hover:not(:disabled) {
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+}
+
+.plan-approval-button.is-primary {
+  color: var(--justdo-primary-foreground);
+  background: var(--justdo-primary);
+  border-color: var(--justdo-primary);
+  box-shadow: 0 3px 9px color-mix(in srgb, var(--justdo-primary) 20%, transparent);
+}
+
+.plan-approval-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .file-preview-preview-scroll {
   height: 100%;
   padding: 24px clamp(18px, 4vw, 42px) 48px;
@@ -626,6 +712,19 @@
 
   .file-preview-editor-stage {
     padding: 8px;
+  }
+
+  .plan-approval-controls {
+    padding: 12px;
+  }
+
+  .plan-approval-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .plan-approval-button.is-primary {
+    grid-column: 1 / -1;
   }
 }
 

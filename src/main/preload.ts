@@ -387,6 +387,7 @@ contextBridge.exposeInMainWorld('electron', {
       attachments?: CoworkAttachmentPayload[];
       clientTurnId?: string;
       startedAt?: number;
+      planMode?: boolean;
     }) => ipcRenderer.invoke('cowork:session:start', options),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
@@ -438,6 +439,12 @@ contextBridge.exposeInMainWorld('electron', {
     searchSessionMessages: (query: string) =>
       ipcRenderer.invoke(CoworkSessionSearchIpc.SearchMessages, query),
     getSessionGoal: (sessionId: string) => ipcRenderer.invoke('cowork:session:goal', sessionId),
+    getPlanMode: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:planMode:get', sessionId),
+    setPlanMode: (sessionId: string, enabled: boolean) =>
+      ipcRenderer.invoke('cowork:session:planMode:set', { sessionId, enabled }),
+    listSessionSegments: (sessionId: string) =>
+      ipcRenderer.invoke('cowork:session:segments:list', sessionId),
     mutateSessionGoal: (sessionId: string, request: SessionGoalMutationRequest) =>
       ipcRenderer.invoke(SessionGoalIpc.Mutate, sessionId, request),
     getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),

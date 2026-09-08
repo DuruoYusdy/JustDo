@@ -347,6 +347,23 @@ export const registerCoworkSessionRuntimeHandlers = ({
     SESSION_LOOKUP_CACHE_TTL_MS,
   );
 
+  ipcMain.handle('cowork:session:segments:list', (_event, sessionId: string) => {
+    try {
+      if (typeof sessionId !== 'string' || !sessionId.trim()) {
+        return { success: false, error: 'Session ID is required' };
+      }
+      return {
+        success: true,
+        segments: getCoworkStore().listSessionSegments(sessionId.trim()),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list session segments',
+      };
+    }
+  });
+
   ipcMain.handle(CoworkSessionDetailsIpc.Get, async (_event, sessionId: string) => {
     try {
       return await loadCoworkSessionDetails(
@@ -397,6 +414,45 @@ export const registerCoworkSessionRuntimeHandlers = ({
       };
     }
   });
+
+  ipcMain.handle('cowork:session:planMode:get', async (_event, sessionId: string) => {
+    try {
+      const runtime = getRuntime();
+      if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
+      return { success: true, ...(await runtime.getPlanMode(sessionId)) };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get Plan mode',
+      };
+    }
+  });
+
+  ipcMain.handle(
+    'cowork:session:planMode:set',
+    async (_event, options: { sessionId: string; enabled: boolean }) => {
+      try {
+        if (
+          !options ||
+          typeof options.sessionId !== 'string' ||
+          typeof options.enabled !== 'boolean'
+        ) {
+          return { success: false, error: 'Invalid Plan mode request' };
+        }
+        const runtime = getRuntime();
+        if (!runtime) return { success: false, error: 'OpenClaw runtime adapter not available' };
+        return {
+          success: true,
+          ...(await runtime.setPlanMode(options.sessionId, options.enabled)),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to update Plan mode',
+        };
+      }
+    },
+  );
 
   ipcMain.handle(SessionGoalIpc.Mutate, async (_event, sessionId: string, value: unknown) => {
     try {

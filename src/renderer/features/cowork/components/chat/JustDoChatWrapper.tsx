@@ -8,9 +8,11 @@
  * with a direct gateway connection, identical to OpenClaw's webchat.
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import type { CoworkSessionSegment } from '@shared/cowork/sessionSegment';
 import type { ProgressCardViewState } from '@shared/openclaw/progressCard';
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -31,6 +33,7 @@ import {
   type ChatContextUsageSnapshot,
   ChatController,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { i18nService } from '@/services/i18n';
 
 const DEBUG_CHAT_WRAPPER =
   typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEBUG_CHAT_WRAPPER === 'true';
@@ -54,8 +57,21 @@ interface JustDoChatWrapperProps {
   onActivityChange?: (progress: GoalRunProgress | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
+  onSessionKeyChange?: (sessionKey: string) => void;
   runTimings?: SessionRunTiming[];
 }
+
+type SegmentLoadState = {
+  logicalSessionId: string | null;
+  status: 'loading' | 'ready' | 'error';
+  sessionKey: string | null;
+};
+
+type HistoryPrefixState = {
+  logicalSessionId: string | null;
+  status: 'loading' | 'ready' | 'error';
+  messages: unknown[];
+};
 
 export interface JustDoChatWrapperRef {
   sendMessage: (
@@ -110,6 +126,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onActivityChange,
       onContextUsageChange,
       onProgressCardChange,
+      onSessionKeyChange,
       runTimings = [],
     },
     ref,
@@ -117,6 +134,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
     const currentSessionAgentId = currentSession?.agentId;
+    const canonicalSessionKey = currentSessionId
+      ? `agent:${currentSessionAgentId?.trim() || 'main'}:justdo:${currentSessionId}`
+      : null;
     const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
@@ -124,16 +144,242 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const onActivityChangeRef = useRef(onActivityChange);
     const onContextUsageChangeRef = useRef(onContextUsageChange);
     const onProgressCardChangeRef = useRef(onProgressCardChange);
+    const onSessionKeyChangeRef = useRef(onSessionKeyChange);
     const lastActivityKeyRef = useRef('');
     const lastContextUsageKeyRef = useRef('');
     const lastProgressCardKeyRef = useRef('');
     const [connectionError, setConnectionError] = useState<string | null>(null);
+    const [historyPrefix, setHistoryPrefix] = useState<HistoryPrefixState>({
+      logicalSessionId: currentSessionId ?? null,
+      status: 'loading',
+      messages: [],
+    });
+    const historyPrefixRef = useRef<HistoryPrefixState>(historyPrefix);
+    const segmentRoutingRef = useRef<SegmentLoadState>({
+      logicalSessionId: currentSessionId ?? null,
+      status: 'loading',
+      sessionKey: null,
+    });
+    const segmentRefreshGenerationRef = useRef(0);
+    const segmentRefreshRetryCountRef = useRef(new Map<string, number>());
+    const currentSessionIdentityRef = useRef({
+      sessionId: currentSessionId ?? null,
+      canonicalSessionKey,
+    });
+    if (currentSessionIdentityRef.current.sessionId !== (currentSessionId ?? null)) {
+      segmentRefreshGenerationRef.current += 1;
+      currentSessionIdentityRef.current = {
+        sessionId: currentSessionId ?? null,
+        canonicalSessionKey,
+      };
+      segmentRoutingRef.current = {
+        logicalSessionId: currentSessionId ?? null,
+        status: 'loading',
+        sessionKey: null,
+      };
+      historyPrefixRef.current = {
+        logicalSessionId: currentSessionId ?? null,
+        status: 'loading',
+        messages: [],
+      };
+    } else {
+      currentSessionIdentityRef.current.canonicalSessionKey = canonicalSessionKey;
+    }
+    const [activeSegment, setActiveSegment] = useState<{
+      logicalSessionId: string;
+      sessionKey: string;
+    } | null>(null);
     // Buffer for pending user message when the controller is not yet created
     const pendingUserMessageRef = useRef<{
       text: string;
       attachments: CoworkAttachmentPayload[];
     } | null>(null);
     const promotionSourceByTargetRef = useRef(new Map<string, string>());
+    const lastReportedSessionKeyRef = useRef('');
+
+    const refreshTranscriptSegments = useCallback(
+      async (controller: ChatController, sessionId: string): Promise<void> => {
+        if (currentSessionIdentityRef.current.sessionId !== sessionId) return;
+        const generation = ++segmentRefreshGenerationRef.current;
+        const loadingRoute: SegmentLoadState = {
+          logicalSessionId: sessionId,
+          status: 'loading',
+          sessionKey: null,
+        };
+        const loadingPrefix: HistoryPrefixState = {
+          logicalSessionId: sessionId,
+          status: 'loading',
+          messages: [],
+        };
+        segmentRoutingRef.current = loadingRoute;
+        historyPrefixRef.current = loadingPrefix;
+        setHistoryPrefix(loadingPrefix);
+        const scheduleSegmentRetry = () => {
+          const retryCount = segmentRefreshRetryCountRef.current.get(sessionId) ?? 0;
+          if (retryCount >= 2) return;
+          segmentRefreshRetryCountRef.current.set(sessionId, retryCount + 1);
+          window.setTimeout(() => {
+            if (
+              controllerRef.current === controller &&
+              connectedRef.current &&
+              currentSessionIdentityRef.current.sessionId === sessionId
+            ) {
+              void refreshTranscriptSegments(controller, sessionId);
+            }
+          }, 1_000);
+        };
+        const failSegmentLoad = () => {
+          if (
+            generation !== segmentRefreshGenerationRef.current ||
+            currentSessionIdentityRef.current.sessionId !== sessionId
+          ) {
+            return;
+          }
+          segmentRoutingRef.current = { ...loadingRoute, status: 'error' };
+          const failedPrefix = { ...loadingPrefix, status: 'error' as const };
+          historyPrefixRef.current = failedPrefix;
+          setHistoryPrefix(failedPrefix);
+          scheduleSegmentRetry();
+        };
+        const cowork = window.electron?.cowork as
+          | (typeof window.electron.cowork & {
+              listSessionSegments?: (sessionId: string) => Promise<{
+                success: boolean;
+                segments?: CoworkSessionSegment[];
+              }>;
+            })
+          | undefined;
+        const result = await cowork?.listSessionSegments?.(sessionId).catch(() => null);
+        if (
+          generation !== segmentRefreshGenerationRef.current ||
+          currentSessionIdentityRef.current.sessionId !== sessionId
+        ) {
+          return;
+        }
+        if (!result?.success) {
+          failSegmentLoad();
+          return;
+        }
+        const segments = (result.segments ?? [])
+          .slice()
+          .sort((left, right) => left.ordinal - right.ordinal);
+        if (segments.length === 0) {
+          const sessionKey = currentSessionIdentityRef.current.canonicalSessionKey;
+          if (!sessionKey || currentSessionIdentityRef.current.sessionId !== sessionId) return;
+          try {
+            if (controller.state.sessionKey !== sessionKey)
+              await controller.switchSession(sessionKey);
+          } catch {
+            failSegmentLoad();
+            return;
+          }
+          if (
+            generation !== segmentRefreshGenerationRef.current ||
+            currentSessionIdentityRef.current.sessionId !== sessionId
+          ) {
+            return;
+          }
+          segmentRoutingRef.current = {
+            logicalSessionId: sessionId,
+            status: 'ready',
+            sessionKey,
+          };
+          setActiveSegment(null);
+          const emptyPrefix: HistoryPrefixState = {
+            logicalSessionId: sessionId,
+            status: 'ready',
+            messages: [],
+          };
+          historyPrefixRef.current = emptyPrefix;
+          setHistoryPrefix(emptyPrefix);
+          return;
+        }
+
+        const active = [...segments].reverse().find(segment => segment.endedAt === undefined);
+        if (!active) {
+          failSegmentLoad();
+          return;
+        }
+        const closed = segments.filter(segment => segment.ordinal < active.ordinal);
+        if (controller.state.sessionKey !== active.sessionKey) {
+          const currentClosed = closed.find(
+            segment => segment.sessionKey === controller.state.sessionKey,
+          );
+          if (currentClosed) {
+            const immediatePrefix = [
+              ...(controller.getLoadedMessages() as unknown[]),
+              createPhaseBoundaryMessage(active),
+            ];
+            const immediateState: HistoryPrefixState = {
+              logicalSessionId: sessionId,
+              status: 'loading',
+              messages: immediatePrefix,
+            };
+            historyPrefixRef.current = immediateState;
+            setHistoryPrefix(immediateState);
+          }
+          try {
+            await controller.switchSession(active.sessionKey);
+          } catch {
+            failSegmentLoad();
+            return;
+          }
+        }
+        if (
+          generation !== segmentRefreshGenerationRef.current ||
+          currentSessionIdentityRef.current.sessionId !== sessionId
+        ) {
+          return;
+        }
+        segmentRoutingRef.current = {
+          logicalSessionId: sessionId,
+          status: 'ready',
+          sessionKey: active.sessionKey,
+        };
+        setActiveSegment({ logicalSessionId: sessionId, sessionKey: active.sessionKey });
+
+        const prefix: unknown[] = [];
+        try {
+          for (let index = 0; index < closed.length; index += 1) {
+            const segment = closed[index];
+            const messages = await controller.loadTranscriptSegment(segment.sessionKey);
+            const nextSegment = segments[index + 1];
+            prefix.push(...messages);
+            if (nextSegment) prefix.push(createPhaseBoundaryMessage(nextSegment));
+          }
+        } catch {
+          if (
+            generation !== segmentRefreshGenerationRef.current ||
+            currentSessionIdentityRef.current.sessionId !== sessionId
+          ) {
+            return;
+          }
+          const failedPrefix: HistoryPrefixState = {
+            logicalSessionId: sessionId,
+            status: 'error',
+            messages: prefix,
+          };
+          historyPrefixRef.current = failedPrefix;
+          setHistoryPrefix(failedPrefix);
+          scheduleSegmentRetry();
+          return;
+        }
+        if (
+          generation === segmentRefreshGenerationRef.current &&
+          currentSessionIdentityRef.current.sessionId === sessionId
+        ) {
+          const readyPrefix: HistoryPrefixState = {
+            logicalSessionId: sessionId,
+            status: 'ready',
+            messages: prefix,
+          };
+          historyPrefixRef.current = readyPrefix;
+          setHistoryPrefix(readyPrefix);
+          segmentRefreshRetryCountRef.current.delete(sessionId);
+        }
+      },
+      [],
+    );
 
     useEffect(() => {
       onActivityChangeRef.current = onActivityChange;
@@ -147,21 +393,53 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onProgressCardChangeRef.current = onProgressCardChange;
     }, [onProgressCardChange]);
 
+    useEffect(() => {
+      onSessionKeyChangeRef.current = onSessionKeyChange;
+    }, [onSessionKeyChange]);
+
     // Expose sendMessage and setPendingUserMessage to parent via ref
     useImperativeHandle(
       ref,
       () => ({
         getExportSnapshot: () => {
           const controller = controllerRef.current;
+          const sessionId = currentSessionIdentityRef.current.sessionId;
+          const routing = segmentRoutingRef.current;
+          const prefix = historyPrefixRef.current;
+          const lineageLoading =
+            !sessionId ||
+            routing.logicalSessionId !== sessionId ||
+            routing.status !== 'ready' ||
+            !routing.sessionKey ||
+            controller?.state.sessionKey !== routing.sessionKey ||
+            prefix.logicalSessionId !== sessionId ||
+            prefix.status !== 'ready';
           return {
-            messages: controller ? [...controller.getLoadedMessages()] : [],
+            messages: controller
+              ? [
+                  ...(prefix.logicalSessionId === sessionId ? prefix.messages : []),
+                  ...controller.getLoadedMessages(),
+                ]
+              : [],
             runtimeSessionId: controller?.state.currentSessionId ?? null,
-            isLoading: !controller?.state.connected || controller.state.chatLoading,
+            isLoading:
+              lineageLoading || !controller?.state.connected || controller.state.chatLoading,
           };
         },
         sendMessage: async (text: string, attachments = [], gatewayMessage, options) => {
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
+          const sessionId = currentSessionIdentityRef.current.sessionId;
+          const routing = segmentRoutingRef.current;
+          if (
+            !sessionId ||
+            routing.logicalSessionId !== sessionId ||
+            routing.status !== 'ready' ||
+            !routing.sessionKey ||
+            controller.state.sessionKey !== routing.sessionKey
+          ) {
+            throw new Error(i18nService.t('coworkSessionRoutingLoading'));
+          }
           await controller.sendMessage(text, attachments, gatewayMessage, options);
         },
         setPendingUserMessage: (text: string, attachments = []) => {
@@ -207,6 +485,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       setController(controller);
 
       const publishActivity = () => {
+        if (controller.state.sessionKey !== lastReportedSessionKeyRef.current) {
+          lastReportedSessionKeyRef.current = controller.state.sessionKey;
+          onSessionKeyChangeRef.current?.(controller.state.sessionKey);
+        }
         const progress = buildGoalRunProgress(controller.state);
         const key = goalRunProgressKey(progress);
         if (key !== lastActivityKeyRef.current) {
@@ -287,6 +569,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           if (success) {
             connectedRef.current = true;
             setConnectionError(null);
+            const sessionId = currentSessionIdentityRef.current.sessionId;
+            if (sessionId) void refreshTranscriptSegments(controller, sessionId);
           } else {
             setConnectionError('Failed to connect to OpenClaw gateway');
           }
@@ -303,6 +587,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         lastActivityKeyRef.current = '';
         lastContextUsageKeyRef.current = '';
         lastProgressCardKeyRef.current = '';
+        lastReportedSessionKeyRef.current = '';
         onActivityChangeRef.current?.(null);
         onContextUsageChangeRef.current?.(null);
         onProgressCardChangeRef.current?.(null);
@@ -316,7 +601,25 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         setController(null);
         connectedRef.current = false;
       };
-    }, []);
+    }, [refreshTranscriptSegments]);
+
+    useEffect(() => {
+      const refresh = (event: Event) => {
+        const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
+        const controller = controllerRef.current;
+        if (controller && sessionId && sessionId === currentSessionId) {
+          void refreshTranscriptSegments(controller, sessionId);
+        }
+      };
+      window.addEventListener('justdo:plan-implementation-started', refresh);
+      return () => window.removeEventListener('justdo:plan-implementation-started', refresh);
+    }, [currentSessionId, refreshTranscriptSegments]);
+
+    useEffect(() => {
+      const controller = controllerRef.current;
+      if (!controller || !connectedRef.current || !currentSessionId) return;
+      void refreshTranscriptSegments(controller, currentSessionId);
+    }, [currentSessionId, refreshTranscriptSegments]);
 
     // Synchronize the imperative controller before the browser paints the new
     // Redux session. A passive effect leaves one frame where the chat still
@@ -328,7 +631,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
 
       // Build the gateway session key (same format as the main-process session-key helpers).
       const agentId = currentSessionAgentId?.trim() || 'main';
-      const sessionKey = `agent:${agentId}:justdo:${currentSessionId}`;
+      const sessionKey =
+        activeSegment?.logicalSessionId === currentSessionId
+          ? activeSegment.sessionKey
+          : `agent:${agentId}:justdo:${currentSessionId}`;
 
       if (connectedRef.current && controller.state.sessionKey !== sessionKey) {
         const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
@@ -344,7 +650,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           controller.state.sessionKey = sessionKey;
         }
       }
-    }, [currentSessionAgentId, currentSessionId]);
+    }, [activeSegment, currentSessionAgentId, currentSessionId]);
 
     if (connectionError) {
       return (
@@ -362,8 +668,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
                 if (controller) {
                   connectToGateway(controller)
                     .then(success => {
-                      if (success) connectedRef.current = true;
-                      else setConnectionError('Retry failed');
+                      if (success) {
+                        connectedRef.current = true;
+                        const sessionId = currentSessionIdentityRef.current.sessionId;
+                        if (sessionId) void refreshTranscriptSegments(controller, sessionId);
+                      } else setConnectionError('Retry failed');
                     })
                     .catch(() => setConnectionError('Retry failed'));
                 }
@@ -390,10 +699,23 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         processSummariesExpanded={processSummariesExpanded}
         onSearchMatchCountChange={onSearchMatchCountChange}
         runTimings={runTimings}
+        historyPrefixMessages={
+          historyPrefix.logicalSessionId === currentSessionId
+            ? (historyPrefix.messages as import('@/libs/openclaw-chat/types').GatewayMessage[])
+            : []
+        }
       />
     );
   },
 );
+
+function createPhaseBoundaryMessage(segment: CoworkSessionSegment): unknown {
+  return {
+    role: 'justdo-phase-boundary',
+    id: `phase-boundary:${segment.id}`,
+    content: i18nService.t('planModeImplementationDivider'),
+  };
+}
 
 // ─── Gateway Connection ─────────────────────────────────────────────────────
 

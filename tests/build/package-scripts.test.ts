@@ -50,6 +50,8 @@ test('uses Vite native Monaco workers without emitting the legacy duplicate bund
   expect(viteConfig).not.toContain('vite-plugin-monaco-editor');
   expect(viteConfig).not.toContain('monacoEditorPlugin');
   expect(packageJson.devDependencies).not.toHaveProperty('vite-plugin-monaco-editor');
+  expect(viteConfig).toContain("fs.realpathSync(path.join(projectRoot, 'node_modules'))");
+  expect(viteConfig).toContain('allow: [projectRoot, dependencyRoot]');
 });
 
 test('uses supported npm target options for OpenClaw runtime dependencies', () => {

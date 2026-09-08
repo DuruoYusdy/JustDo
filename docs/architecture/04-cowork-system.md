@@ -38,6 +38,8 @@ Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话�
 
 `cowork_session_runs` 用唯一 `client_turn_id` 防止双击或 IPC 重试创建第二个 session；Gateway 接受后将真实 `root_run_id` 绑定到 receipt。事件优先按 run id 映射，必要时再按受管 session key 解析。任意远端 key 不得自动映射到本地 session。
 
+Plan mode 批准后，一个 local `sessionId` 会按顺序关联多个 `cowork_session_segments`。规划段使用原 canonical key；实施段使用 `agent:<agent>:justdo:<localSessionId>:execution:<planId>`。每段都有独立 Gateway session/transcript，active segment 决定后续发送目标；key parser 始终还原同一个 local sessionId。这样实施模型得到干净上下文，同时旧规划 transcript 仍可从 Gateway 分页读取。
+
 ## 4. Session 数据模型
 
 本地 session 包含：`id`、`title`、`status`、`pinned`、`cwd`、`executionMode`、`permissionMode`、`activeSkillIds`、`agentId`、`modelRef`、`groupId` 和时间戳。`permissionMode`/`cwd` 是产品的耐久期望投影；执行时权威是 OpenClaw session entry 的 `permissionMode`/`sessionRoot`。当前 engine 固定为 OpenClaw，历史 `container` execution mode 会迁移为 `local`。
@@ -105,7 +107,7 @@ Renderer 的发送准备、Gateway 受理和 Stop 共享会话级操作身份。
 
 发送明确拒绝会结算 Main receipt 并保留草稿。传输超时或断连只能证明受理结果未知，保留原操作身份，通过 Gateway 活动快照和 `agent.wait` 的权威终态恢复；不得把未知请求伪造为成功受理，也不得直接结算 failed。显式停止确认后可结算从未发出的 aborted receipt；已发出但受理未知的请求通过专用生命周期 IPC 保留取消意图，两个 `no-active-run` 也不能证明该请求以后不会被受理。`agent.wait` 的 yielded 证明已受理但不代表整项任务结束，应交回主任务／后代聚合；取消中的 yielded 先确认会话级清队列和子树停止。
 
-删除 session 的顺序包括停止活动、删除本地 row（级联 runs）、通知 adapter 清映射，并递归删除受管 subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
+删除 session 的顺序包括停止活动、删除本地 row（级联 runs 和 segment lineage）、通知 adapter 清映射，并递归删除受管 segment/subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
 
 业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。Renderer 在终态后直接刷新 Gateway history，以权威 final text、usage、thinking 和 tool 结果校正活动 timeline。
 

@@ -59,6 +59,10 @@ export function projectChatMinimapEntries(
   let activeEntry: ChatMinimapEntry | null = null;
 
   for (const item of items) {
+    if (item.kind === 'phase-boundary') {
+      activeEntry = null;
+      continue;
+    }
     if (item.kind === 'history-message') {
       const role = historyMessageRole(item);
       const message = historyMessagePayload(item);

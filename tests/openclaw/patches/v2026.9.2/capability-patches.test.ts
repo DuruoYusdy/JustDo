@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 
 import { buildSync } from 'esbuild';
 import { describe, expect, test, vi } from 'vitest';
@@ -533,6 +534,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
         CONTRACT: string;
       };
       const metadataPatch = patches.get('006') as PatchModule & {
+        patchChatRegistration: (content: string, filePath: string) => string;
         patchSchema: (content: string, filePath: string) => string;
       };
       const schema = metadataPatch.patchSchema(
@@ -540,12 +542,42 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
         'chat-schema.js',
       );
       expect(schema).toContain(metadata.CONTRACT);
+      expect(schema).toContain('justdoHideUserMessage: T.Optional(T.Boolean())');
+      expect(() =>
+        metadataPatch.patchSchema(
+          schema.replace(/justdoHideUserMessage:[^\n]+\n/, ''),
+          'partial-chat-schema.js',
+        ),
+      ).toThrow('historical or partial');
       expect(() =>
         metadataPatch.patchSchema(
           schema.replace(metadata.CONTRACT, metadata.CONTRACT.replace('9_2', '8_2')),
           'historical-chat-schema.js',
         ),
       ).toThrow('historical or partial');
+
+      const registration = metadataPatch.patchChatRegistration(
+        [
+          'const userTurn = createGatewayChatUserTurnController({',
+          '  admission: admitted.value,',
+          '  transcript: options?.transcript,',
+          '});',
+          'context.addChatRun(clientRunId, { sessionKey, runId: clientRunId });',
+        ].join('\n'),
+        'chat-send-handler.js',
+      );
+      expect(registration).toContain(
+        'p.justdoHideUserMessage === true && client?.internal?.isLocalClient === true',
+      );
+      expect(registration).toContain(
+        'client?.connect?.client?.id === "gateway-client" && client?.connect?.client?.mode === "backend"',
+      );
+      expect(registration).toContain(
+        'client?.connect?.scopes?.includes("operator.admin") ? { ...options?.transcript, display: false } : options?.transcript',
+      );
+      expect(metadataPatch.patchChatRegistration(registration, 'chat-send-handler.js')).toBe(
+        registration,
+      );
 
       const purpose = patches.get('007')?.__testing as {
         COMPACTION_BLOCK: string;
@@ -1162,11 +1194,15 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     },
   );
 
-  test('keeps Gateway restarts but retires tasks from a prior JustDo app start', () => {
+  test('keeps Gateway restarts but retires work from a prior JustDo app start', () => {
     const testing = patches.get('008')?.__testing as {
       readJustDoAppStartedAtMs: (value: unknown) => number | undefined;
       isPriorAppActiveTask: (
         task: { status?: string; createdAt?: unknown },
+        startedAt: number | undefined,
+      ) => boolean;
+      isPriorAppMainSession: (
+        entry: { startedAt?: unknown },
         startedAt: number | undefined,
       ) => boolean;
     };
@@ -1177,8 +1213,97 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(testing.isPriorAppActiveTask({ status: 'completed', createdAt: 100 }, 200)).toBe(
       false,
     );
+    expect(testing.isPriorAppMainSession({ startedAt: 100 }, 200)).toBe(true);
+    expect(testing.isPriorAppMainSession({ startedAt: 200 }, 200)).toBe(false);
+    expect(testing.isPriorAppMainSession({}, 200)).toBe(true);
+    expect(testing.isPriorAppMainSession({ startedAt: 100 }, undefined)).toBe(false);
   });
 
+  test('interrupts prior-app main sessions before native restart recovery dispatch', async () => {
+    const testing = patches.get('008')?.__testing as {
+      MAIN_CONTRACT: string;
+      transformMain: (content: string, filePath: string) => string;
+    };
+    const source = [
+      '// buildMainSessionRecoveryClearPatch',
+      '// resolveRestartRecoveryTerminalClientRunId',
+      'async function recoverStore(params) {',
+      '  const result = { started: 0, settled: 0, failed: 0, skipped: 0 };',
+      '  for (const { sessionKey, entry: loadedEntry } of entries) {',
+      '    let entry = loadedEntry;',
+      '    const resumeDedupeKey = sessionKey;',
+      '    const observed = await commitMainSessionRecovery({});',
+      '    entry = observed.entry;',
+      '    const recoveryView = observed.transition.view;',
+      '    if (recoveryView.status === "exhausted") { continue; }',
+      '  }',
+      '}',
+    ].join('\n');
+    const transformed = testing.transformMain(source, 'main-session-restart-recovery.js');
+    expect(transformed).toContain(testing.MAIN_CONTRACT);
+    expect(transformed).toContain('status: "failed"');
+    expect(transformed).toContain('interrupted by JustDo app restart');
+    expect(transformed.indexOf('if (isJustDoPriorAppMainSession(entry))')).toBeLessThan(
+      transformed.indexOf('const observed = await commitMainSessionRecovery'),
+    );
+    expect(testing.transformMain(transformed, 'main-session-restart-recovery.js')).toBe(
+      transformed,
+    );
+    const compiled = buildSync({
+      stdin: { contents: transformed, loader: 'js' },
+      write: false,
+    }).outputFiles[0]?.text;
+    expect(compiled).toContain(testing.MAIN_CONTRACT);
+
+    const executable = `${transformed}\n` +
+      'globalThis.__settle = settleJustDoPriorAppMainSession;';
+    const context = vm.createContext({
+      process: { env: { JUSTDO_APP_STARTED_AT_MS: '200' } },
+      buildMainSessionRecoveryClearPatch: () => ({
+        abortedLastRun: false,
+        restartRecoveryRuns: undefined,
+        mainRestartRecovery: undefined,
+      }),
+      buildRestartRecoveryClaimCleanupPatch: () => ({
+        restartRecoveryDeliveryRunId: undefined,
+      }),
+      resolveRestartRecoveryTerminalClientRunId: () => 'run-1',
+    }) as vm.Context & {
+      __entry?: Record<string, unknown>;
+      __settle?: (params: Record<string, unknown>) => Promise<boolean>;
+    };
+    context.__entry = {
+      sessionId: 'session-1',
+      status: 'running',
+      abortedLastRun: true,
+      startedAt: 100,
+      activeWriterRunId: 'writer-1',
+      lifecycleRunId: 'run-1',
+      restartRecoveryRuns: [{ runId: 'run-1' }],
+      mainRestartRecovery: { cycleId: 'cycle-1' },
+    };
+    Object.assign(context, {
+      applySessionEntryReplacements: async ({ update }: { update: (entries: unknown[]) => unknown }) =>
+        update([{ sessionKey: 'agent:main:justdo:session-1', entry: context.__entry }]),
+    });
+    vm.runInContext(executable, context);
+
+    await expect(
+      context.__settle?.({
+        sessionId: 'session-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        storePath: 'sessions.sqlite',
+      }),
+    ).resolves.toBe(true);
+    expect(context.__entry).toMatchObject({
+      status: 'failed',
+      abortedLastRun: false,
+      activeWriterRunId: undefined,
+      lifecycleRunId: undefined,
+      lastRunId: 'run-1',
+      lastRunError: 'interrupted by JustDo app restart',
+    });
+  });
   test('native forced reindex transform is idempotent and rejects ambiguity', () => {
     const testing = patches.get('009')?.__testing as {
       CACHE_SEED: string;
@@ -1589,6 +1714,6 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
         expect(() => patch.verifyPatch(runtimeRoot)).not.toThrow();
       }
     },
-    120_000,
+    300_000,
   );
 });

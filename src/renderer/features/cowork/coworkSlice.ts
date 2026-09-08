@@ -45,6 +45,8 @@ interface CoworkState {
   userConfirmedSessionModelRefs: Record<string, string>;
   remoteManaged: boolean;
   pendingInteractions: CoworkInteractionRequest[];
+  planModeBySession: Record<string, boolean>;
+  newSessionPlanMode: boolean;
   config: CoworkConfig;
   /** Global toggle for thinking content visibility - true = expanded, false = collapsed */
   thinkingExpanded: boolean;
@@ -72,6 +74,8 @@ const initialState: CoworkState = {
   userConfirmedSessionModelRefs: {},
   remoteManaged: false,
   pendingInteractions: [],
+  planModeBySession: {},
+  newSessionPlanMode: false,
   config: {
     workingDirectory: '',
     executionMode: 'local',
@@ -263,13 +267,22 @@ const coworkSlice = createSlice({
     deleteSession(state, action: PayloadAction<string>) {
       removeSessionFromState(state, action.payload);
       clearSessionModelSelectionState(state, action.payload);
+      delete state.planModeBySession[action.payload];
+      state.pendingInteractions = state.pendingInteractions.filter(
+        interaction => interaction.sessionId !== action.payload,
+      );
     },
 
     deleteSessions(state, action: PayloadAction<string[]>) {
       removeSessionsFromState(state, action.payload);
       for (const sessionId of action.payload) {
         clearSessionModelSelectionState(state, sessionId);
+        delete state.planModeBySession[sessionId];
       }
+      const deletedSessionIds = new Set(action.payload);
+      state.pendingInteractions = state.pendingInteractions.filter(
+        interaction => !deletedSessionIds.has(interaction.sessionId),
+      );
     },
 
     touchSessionActivity(state, action: PayloadAction<{ sessionId: string; timestamp: number }>) {
@@ -333,6 +346,16 @@ const coworkSlice = createSlice({
 
     clearPendingInteractions(state) {
       state.pendingInteractions = [];
+    },
+
+    setPlanMode(
+      state,
+      action: PayloadAction<{ enabled: boolean; sessionId?: string; promoteFrom?: string }>,
+    ) {
+      const { enabled, sessionId, promoteFrom } = action.payload;
+      if (promoteFrom) delete state.planModeBySession[promoteFrom];
+      if (sessionId) state.planModeBySession[sessionId] = enabled;
+      else state.newSessionPlanMode = enabled;
     },
 
     setConfig(state, action: PayloadAction<CoworkConfig>) {
@@ -620,6 +643,7 @@ export const {
   enqueuePendingInteraction,
   dequeuePendingInteraction,
   clearPendingInteractions,
+  setPlanMode,
   setConfig,
   updateConfig,
   clearCurrentSession,

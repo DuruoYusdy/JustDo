@@ -2,10 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import type { ContentItem } from './chat-transcript-state';
 import type { PersistedTimelineItem } from './project-history-timeline';
-import type {
-  ActiveTurnTimelineItem,
-  ProcessSummaryTimelineItem,
-} from './project-turn-items';
+import type { ActiveTurnTimelineItem, ProcessSummaryTimelineItem } from './project-turn-items';
 import {
   PersistedTimelineRenderCache,
   projectIncrementalTimelineView,
@@ -114,5 +111,34 @@ describe('PersistedTimelineRenderCache', () => {
     cache.get([...timeline]);
 
     expect(cache.revision).toBe(revision + 1);
+  });
+
+  test('starts a new assistant avatar slot after a phase boundary', () => {
+    const cache = new PersistedTimelineRenderCache();
+    const persisted = cache.get([
+      {
+        kind: 'history-message',
+        key: 'planning-user',
+        message: { role: 'user', content: 'Plan this change' },
+      },
+      {
+        kind: 'history-message',
+        key: 'planning-assistant',
+        message: { role: 'assistant', content: 'Here is the plan' },
+      },
+      {
+        kind: 'phase-boundary',
+        key: 'implementation-boundary',
+        label: 'Implementation started',
+      },
+    ] satisfies PersistedTimelineItem[]);
+
+    const view = projectIncrementalTimelineView({
+      persisted,
+      activeTimeline: [activeContent('Implementing now', 1)],
+      suppressTrailingAssistantFooter: true,
+    });
+
+    expect(view.activeRows[0]?.showAvatar).toBe(true);
   });
 });

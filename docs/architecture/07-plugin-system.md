@@ -172,6 +172,7 @@ OpenClaw CLI 都通过 `OPENCLAW_BUNDLED_PLUGINS_DIR` 固定到该目录，不�
 - `plugins.setEnabled` 要求能力同意时，Renderer 展示 `plugins.inspect` 返回的完整声明、新增能力和 trust 原因，并仅用该次 `reviewToken` 重试；Gateway warnings 必须传回 UI；
 - `ask-user-question` 是受保护的内置交互 extension；其启用状态与等待时限由 config sync 管理，不能从通用扩展页禁用或删除；
 - `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
+- `plan-mode` 是受保护的内置工作流 extension，持有会话级 Plan 状态、规划提示、明确 mutation 拦截和计划审核请求，不能从通用扩展页禁用或删除；
 - 安装成功后重启 Gateway，再由 `plugins.list` 重新列举；CLI 输出或目录存在都不能替代 Gateway 最终状态。
 
 扩展配置表单保存相同值时不重写文件、不重启。内容变化后优先等待原生配置 watcher 热更新；启动中保存则先等待本次启动完成。热更新失败或启停 RPC 明确返回 `restartRequired` 时，优先由原生安全重启 coordinator 执行进程内重启，保留活动工作 deferral；环境/端口变化、代码导入/删除与目录释放仍走受管冷重启路径。配置重启策略和编译缓存见 `05-agent-engine.md`。
@@ -210,7 +211,11 @@ pending promise、同一 session 只允许一个待答请求、timeout/default�
 
 本地扩展在资源同步后预编译到 `dist/extensions`，`package.json` 的入口同时改为 JavaScript。`beforePack` 会重新同步最新源码，因此必须再次等待预编译完成；此阶段编译失败会阻止打包，避免交付陈旧代码或重新依赖 TypeScript 即时编译。
 
-## 10. Marketplace Adapter
+## 10. Plan mode Extension
+
+`plan-mode` extension 通过 session extension 的 `justdoPlanMode` 投影读取持久化模式，通过 `agent_turn_prepare` 注入只读规划规则，并注册 `PresentPlan` 阻塞工具。计划审核 pending promise 留在 extension 内；Main 把 `plugin.plan-mode.requested/resolved` 转成既有 interaction IPC，并把计划持久化到当前 workspace 中由 productName 小写派生的隐藏目录。Main 只有在 artifact、handoff 和同一 extension state 中的 `awaitingReview` 标记都已落盘后才展示侧栏。批准后由 Main 创建独立、空 transcript 的 implementation session，并注入 `Implement the plan.`、相对文件路径和完整计划正文；`planMode.resolve` 只让旧规划 run 安全结束。该设计不复制 OpenClaw 消息，也不拥有专用的 Gateway restart-recovery patch；完整应用重启按通用 app-start boundary 中断旧 run，持久 artifact 和 handoff 仍可恢复侧栏。
+
+## 11. Marketplace Adapter
 
 当前 `createPluginMarketplaceService` 传入空 provider 数组，因此开源构建默认没有 marketplace source。企业构建通过公司 SDK Provider 接入，目前只声明 Extension、Skill、MCP；Hook 不属于 Marketplace contract。Gateway `plugins.list` 只以离线模式读取随 OpenClaw 打包的官方目录元数据，不刷新其默认 ClawHub feed；生成的 OpenClaw 配置也关闭默认远程模型目录刷新。外部目录网络访问只能由显式注册或配置的 product provider 发起。
 

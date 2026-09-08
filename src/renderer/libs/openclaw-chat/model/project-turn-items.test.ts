@@ -214,6 +214,29 @@ describe('projectTurnItems', () => {
     expect(result.map(entry => entry.kind)).toEqual(['progress-receipt']);
   });
 
+  test('keeps PresentPlan visible as a standalone plan card', () => {
+    const result = projectTurnItems(
+      turn([
+        item('think-1', 'thinking', 'completed'),
+        item('plan-1', 'tool', 'completed', {
+          name: 'PresentPlan',
+          input: { title: 'Ship it', plan: '# Plan\n\n1. Implement' },
+        }),
+        item('tool-1', 'tool', 'completed'),
+      ]),
+    );
+
+    expect(result.map(entry => entry.kind)).toEqual([
+      'process-summary',
+      'plan-presentation',
+      'process-summary',
+    ]);
+    expect(result[1]).toMatchObject({
+      kind: 'plan-presentation',
+      item: { id: 'plan-1', status: 'completed' },
+    });
+  });
+
   test('does not repeat a Tool failure as a terminal banner after Content', () => {
     const result = projectTurnItems(
       turn([

@@ -964,3 +964,71 @@ describe('session Goal mutation IPC', () => {
     expect(mutateSessionGoal).not.toHaveBeenCalled();
   });
 });
+
+describe('session Plan mode IPC', () => {
+  const registerAndFindHandler = (
+    channel: string,
+    runtime: { getPlanMode?: ReturnType<typeof vi.fn>; setPlanMode?: ReturnType<typeof vi.fn> },
+  ) => {
+    electronMocks.handle.mockClear();
+    registerCoworkSessionRuntimeHandlers({
+      getCoworkStore: vi.fn() as never,
+      getCoworkEngineRouter: vi.fn() as never,
+      getRuntime: () => runtime as never,
+      getGatewaySessionUsage: vi.fn() as never,
+    });
+    return electronMocks.handle.mock.calls.find(([registered]) => registered === channel)?.[1] as
+      ((event: unknown, value: unknown) => Promise<unknown>) | undefined;
+  };
+
+  it('reads Plan mode from the runtime adapter', async () => {
+    const getPlanMode = vi.fn().mockResolvedValue({ enabled: true });
+    const handler = registerAndFindHandler('cowork:session:planMode:get', { getPlanMode });
+
+    await expect(handler?.({}, 'session-1')).resolves.toEqual({ success: true, enabled: true });
+    expect(getPlanMode).toHaveBeenCalledWith('session-1');
+  });
+
+  it('validates and updates Plan mode through the runtime adapter', async () => {
+    const setPlanMode = vi.fn().mockResolvedValue({ enabled: false });
+    const handler = registerAndFindHandler('cowork:session:planMode:set', { setPlanMode });
+
+    await expect(handler?.({}, { sessionId: 'session-1', enabled: false })).resolves.toEqual({
+      success: true,
+      enabled: false,
+    });
+    expect(setPlanMode).toHaveBeenCalledWith('session-1', false);
+  });
+});
+
+describe('session transcript segments IPC', () => {
+  it('returns ordered segment lineage without transcript messages', async () => {
+    electronMocks.handle.mockClear();
+    const segments = [
+      {
+        id: 'planning-session-1',
+        sessionId: 'session-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        phase: 'planning',
+        ordinal: 0,
+        startedAt: 1,
+        endedAt: 2,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+    const listSessionSegments = vi.fn().mockReturnValue(segments);
+    registerCoworkSessionRuntimeHandlers({
+      getCoworkStore: () => ({ listSessionSegments }) as never,
+      getCoworkEngineRouter: vi.fn() as never,
+      getRuntime: () => null,
+      getGatewaySessionUsage: vi.fn() as never,
+    });
+    const handler = electronMocks.handle.mock.calls.find(
+      ([channel]) => channel === 'cowork:session:segments:list',
+    )?.[1] as ((event: unknown, sessionId: string) => unknown) | undefined;
+
+    expect(await handler?.({}, ' session-1 ')).toEqual({ success: true, segments });
+    expect(listSessionSegments).toHaveBeenCalledWith('session-1');
+  });
+});

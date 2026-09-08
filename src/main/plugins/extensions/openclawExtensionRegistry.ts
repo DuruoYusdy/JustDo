@@ -24,6 +24,10 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     id: OpenClawExtensionId.RUNTIME_SERVICES,
     buildEntry: () => ({ enabled: true }),
   },
+  {
+    id: OpenClawExtensionId.PLAN_MODE,
+    buildEntry: () => ({ enabled: true }),
+  },
 ] as const;
 
 export const buildBundledExtensionEntries = (

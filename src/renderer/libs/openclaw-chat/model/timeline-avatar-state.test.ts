@@ -26,6 +26,22 @@ function summary(key: string): VisibleTimelineItem {
 }
 
 describe('timeline avatar state', () => {
+  test('starts a fresh visual turn after a phase boundary', () => {
+    const boundary: VisibleTimelineItem = {
+      kind: 'phase-boundary',
+      key: 'implementation-start',
+      label: 'Implementation started',
+    };
+    const rows = prepareVisibleTimelineRows([
+      history('planning-content', 'assistant'),
+      boundary,
+      summary('implementation-summary'),
+      history('implementation-content', 'assistant'),
+    ]);
+
+    expect(rows.map(row => row.showAvatar)).toEqual([true, false, true, false]);
+  });
+
   test('shows one assistant avatar across multiple summary and Content segments in a turn', () => {
     const rows = prepareVisibleTimelineRows([
       history('user-1', 'user'),

@@ -5,9 +5,12 @@ import { coworkService } from '@/features/cowork/coworkService';
 import {
   clearCurrentSession,
   clearPendingInteractions,
+  deleteSession,
+  dequeuePendingInteraction,
   enqueuePendingInteraction,
   setConfig as setCoworkConfig,
   setCurrentSession,
+  setPlanMode,
   setSessionRuntimeActivity,
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
@@ -17,6 +20,7 @@ import { store } from '@/store';
 describe('cowork interaction responses', () => {
   afterEach(() => {
     store.dispatch(clearPendingInteractions());
+    store.dispatch(deleteSession('session-plan'));
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -45,6 +49,110 @@ describe('cowork interaction responses', () => {
     ).resolves.toBe(false);
 
     expect(store.getState().cowork.pendingInteractions).toHaveLength(1);
+  });
+
+  test('disables Plan mode after approval even if the resolved event dequeues first', async () => {
+    let finishResponse: ((value: { success: true }) => void) | undefined;
+    const response = new Promise<{ success: true }>(resolve => {
+      finishResponse = resolve;
+    });
+    vi.stubGlobal('window', {
+      electron: { cowork: { respondToInteraction: vi.fn(() => response) } },
+    });
+    store.dispatch(setPlanMode({ sessionId: 'session-plan', enabled: true }));
+    store.dispatch(
+      enqueuePendingInteraction({
+        sessionId: 'session-plan',
+        requestId: 'plan-1',
+        toolName: 'PresentPlan',
+        interactionKind: 'plan-approval',
+        toolInput: { plan: 'Inspect and implement' },
+      }),
+    );
+
+    const responding = coworkService.respondToInteraction('plan-1', {
+      behavior: 'plan',
+      decision: 'implement',
+    });
+    store.dispatch(dequeuePendingInteraction({ requestId: 'plan-1' }));
+    finishResponse?.({ success: true });
+
+    await expect(responding).resolves.toBe(true);
+    expect(store.getState().cowork.planModeBySession['session-plan']).toBe(false);
+  });
+
+  test.each([
+    [
+      'reports failure',
+      vi.fn().mockResolvedValue({ success: false, error: 'plan resolve response lost' }),
+    ],
+    ['rejects the IPC call', vi.fn().mockRejectedValue(new Error('transport closed'))],
+  ])('refreshes session segments when implementation admission %s', async (_name, respond) => {
+    const dispatchEvent = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubGlobal('window', {
+      dispatchEvent,
+      electron: {
+        cowork: {
+          respondToInteraction: respond,
+        },
+      },
+    });
+    store.dispatch(
+      enqueuePendingInteraction({
+        sessionId: 'session-plan',
+        requestId: 'plan-refresh',
+        toolName: 'PresentPlan',
+        interactionKind: 'plan-approval',
+        toolInput: { plan: 'Inspect and implement' },
+      }),
+    );
+
+    await expect(
+      coworkService.respondToInteraction('plan-refresh', {
+        behavior: 'plan',
+        decision: 'implement',
+      }),
+    ).resolves.toBe(false);
+
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'justdo:plan-implementation-started',
+        detail: { sessionId: 'session-plan' },
+      }),
+    );
+    expect(store.getState().cowork.pendingInteractions).toHaveLength(1);
+  });
+
+  test('coalesces concurrent responses for the same interaction', async () => {
+    let finishResponse: ((value: { success: true }) => void) | undefined;
+    const response = new Promise<{ success: true }>(resolve => {
+      finishResponse = resolve;
+    });
+    const respondToInteraction = vi.fn(() => response);
+    vi.stubGlobal('window', { electron: { cowork: { respondToInteraction } } });
+    store.dispatch(
+      enqueuePendingInteraction({
+        sessionId: 'session-1',
+        requestId: 'request-concurrent',
+        toolName: 'PresentPlan',
+        interactionKind: 'plan-approval',
+        toolInput: { plan: 'Implement once' },
+      }),
+    );
+
+    const first = coworkService.respondToInteraction('request-concurrent', {
+      behavior: 'plan',
+      decision: 'implement',
+    });
+    const second = coworkService.respondToInteraction('request-concurrent', {
+      behavior: 'plan',
+      decision: 'implement',
+    });
+    finishResponse?.({ success: true });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(respondToInteraction).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -482,6 +590,44 @@ describe('cowork session permission selection', () => {
 
     expect(store.getState().cowork.currentSession).toBeNull();
     expect(store.getState().cowork.config.permissionMode).toBe('full');
+  });
+
+  test('does not overwrite a Plan mode toggle with an older load response', async () => {
+    const session = {
+      id: 'session-plan',
+      title: 'Plan session',
+      status: 'idle' as const,
+      pinned: false,
+      cwd: 'C:\\workspace',
+      executionMode: 'local' as const,
+      permissionMode: 'ask' as const,
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    let finishPlanMode: ((value: { success: true; enabled: false }) => void) | undefined;
+    const planMode = new Promise<{ success: true; enabled: false }>(resolve => {
+      finishPlanMode = resolve;
+    });
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          getSession: vi.fn().mockResolvedValue({ success: true, session }),
+          getPlanMode: vi.fn(() => planMode),
+          remoteManaged: vi.fn().mockResolvedValue({ success: true, remoteManaged: false }),
+        },
+      },
+    });
+
+    await coworkService.loadSession(session.id);
+    store.dispatch(setPlanMode({ sessionId: session.id, enabled: true }));
+    finishPlanMode?.({ success: true, enabled: false });
+    await planMode;
+    await Promise.resolve();
+
+    expect(store.getState().cowork.planModeBySession[session.id]).toBe(true);
+    store.dispatch(deleteSession(session.id));
   });
 
   test('updates the selected session without changing the new-session default', async () => {

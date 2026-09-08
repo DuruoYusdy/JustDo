@@ -81,6 +81,53 @@ describe('cowork AskUserQuestion interaction IPC', () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
+  test('forwards a Plan mode implementation approval', async () => {
+    const resolveAskUserInteraction = vi.fn().mockResolvedValue({ sessionId: 'session-1' });
+    registerCoworkInteractionHandlers({
+      getRuntime: () => ({
+        listPendingAskUserInteractions: vi.fn().mockResolvedValue([]),
+        resolveAskUserInteraction,
+      }),
+    });
+
+    await expect(
+      mocks.handlers.get(CoworkInteractionIpc.Respond)?.(
+        {},
+        {
+          requestId: 'plan-1',
+          result: { behavior: 'plan', decision: 'implement' },
+        },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(resolveAskUserInteraction).toHaveBeenCalledWith('plan-1', {
+      behavior: 'plan',
+      decision: 'implement',
+    });
+  });
+
+  test('does not publish session activity for an unresolved Plan mode session', async () => {
+    const resolveAskUserInteraction = vi.fn().mockResolvedValue({ sessionId: '__planmode__' });
+    registerCoworkInteractionHandlers({
+      getRuntime: () => ({
+        listPendingAskUserInteractions: vi.fn().mockResolvedValue([]),
+        resolveAskUserInteraction,
+      }),
+    });
+
+    await expect(
+      mocks.handlers.get(CoworkInteractionIpc.Respond)?.(
+        {},
+        {
+          requestId: 'plan-1',
+          result: { behavior: 'plan', decision: 'cancel' },
+        },
+      ),
+    ).resolves.toEqual({ success: true });
+
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
   test('rejects an unknown response behavior instead of treating it as cancellation', async () => {
     const resolveAskUserInteraction = vi.fn();
     registerCoworkInteractionHandlers({

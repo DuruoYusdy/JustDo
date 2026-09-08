@@ -1,10 +1,20 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
+import {
+  type CoworkPlanArtifactReference,
+  type CoworkPlanHandoff,
+  CoworkPlanHandoffState,
+} from '../../../shared/cowork/planHandoff';
+import {
+  type BeginCoworkSessionSegmentInput,
+  type CoworkSessionSegment,
+  CoworkSessionSegmentPhase,
+} from '../../../shared/cowork/sessionSegment';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
@@ -26,11 +36,19 @@ import {
   type AskUserInteractionEnvelope,
   AskUserQuestionGateway,
   type AskUserRequest,
+  type CoworkInteractionEnvelope,
   CoworkInteractionIpc,
   CoworkInteractionKind,
+  OpenClawExtensionId,
   OpenClawToolName,
   parseAskUserAnswers,
   parseAskUserRequest,
+  parsePlanModeRequest,
+  parsePlanModeState,
+  PlanModeGateway,
+  type PlanModeInteractionEnvelope,
+  type PlanModeRequest,
+  type PlanModeState,
 } from '../../../shared/openclaw/extensions';
 import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
@@ -40,6 +58,7 @@ import {
   normalizeMessageSessionKey,
   normalizeToolEvent,
 } from '../../../shared/openclaw/messageDomain';
+import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
 import { WORKBOARD_CHANGED_EVENT } from '../../../shared/openclaw/workboard';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import {
@@ -61,6 +80,7 @@ import {
   parseGoalStartObjective,
   SlashCommandBeforeSendHook,
 } from '../../../shared/slashCommands';
+import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
 import {
@@ -81,6 +101,7 @@ import {
   type OpenClawGatewayConnectionInfo,
 } from '../../openclaw/runtime/openclawEngineManager';
 import {
+  buildCoworkExecutionSessionKey,
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
   isManagedSessionKey,
@@ -318,11 +339,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly latestTurnTokenBySession = new Map<string, number>();
   private readonly sessionExecApprovalGrants = new SessionExecApprovalGrants();
   private readonly approvalResolutionByKey = new Map<string, Promise<void>>();
+  private readonly planResolutionByRequestId = new Map<string, Promise<{ sessionId: string }>>();
   private approvalReconciliation: {
     generation: number;
     events: Array<{ channel: string; payload: Record<string, unknown> }>;
   } | null = null;
   private readonly pendingAskUserRequests = new Map<string, AskUserRequest>();
+  private readonly pendingPlanModeRequests = new Map<string, PlanModeRequest>();
   private readonly terminalAskUserIds = new Set<string>();
   private readonly subagentStatusCache = new Map<
     string,
@@ -363,6 +386,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     store: CoworkStore,
     engineManager: OpenClawEngineManager,
     titleFetch?: SessionTitleFetch,
+    private readonly approvedPlanArtifactStore?: Pick<
+      ApprovedPlanArtifactStore,
+      'publish' | 'readVerified'
+    > &
+      Partial<
+        Pick<
+          ApprovedPlanArtifactStore,
+          | 'cleanupStaleTemporaryFiles'
+          | 'removeSessionArtifacts'
+          | 'removeLegacySessionArtifacts'
+        >
+      >,
   ) {
     super();
     this.store = store;
@@ -425,6 +460,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.sessionRpc = new SessionRpc({
       getGatewayClient: () => this.gatewayClient,
       store: this.store,
+      resolveSessionKey: (sessionId, agentId) => this.toSessionKey(sessionId, agentId),
     });
   }
 
@@ -456,6 +492,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
+      planMode: options.planMode,
     });
   }
 
@@ -514,18 +551,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!gatewaySessionId) {
       throw new Error('OpenClaw sessions.create returned no sessionId.');
     }
-    if (result.entry?.permissionMode !== nativePermissionMode) {
-      throw new Error('OpenClaw did not persist the requested session permission mode.');
-    }
-    if (
-      typeof result.entry.sessionRoot !== 'string' ||
-      !areWorkspacePathsEquivalent(result.entry.sessionRoot, workspaceRoot)
-    ) {
-      throw new Error('OpenClaw did not persist the requested session workspace boundary.');
-    }
+    this.assertPreparedSessionEntry(result.entry, nativePermissionMode, workspaceRoot);
 
     this.rememberSessionKey(sessionId, sessionKey);
     return { sessionKey, gatewaySessionId };
+  }
+
+  private assertPreparedSessionEntry(
+    entry: Record<string, unknown> | undefined,
+    permissionMode: string,
+    workspaceRoot: string,
+    expectedModelRef?: string,
+  ): void {
+    if (entry?.permissionMode !== permissionMode) {
+      throw new Error('OpenClaw did not persist the requested session permission mode.');
+    }
+    if (
+      typeof entry.sessionRoot !== 'string' ||
+      !areWorkspacePathsEquivalent(entry.sessionRoot, workspaceRoot)
+    ) {
+      throw new Error('OpenClaw did not persist the requested session workspace boundary.');
+    }
+    if (!expectedModelRef) return;
+    const persistedModelRef =
+      normalizeModelRef(entry.modelOverride, entry.providerOverride) ?? readModelRef(entry);
+    if (persistedModelRef !== expectedModelRef) {
+      throw new Error('OpenClaw did not persist the requested session model.');
+    }
   }
 
   async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
@@ -1268,6 +1320,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId?: string;
       workspaceRoot?: string;
       clientTurnId?: string;
+      planMode?: boolean;
     },
   ): Promise<void> {
     if (!prompt.trim()) {
@@ -1334,6 +1387,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       });
       if (isStartCancelled()) return;
       const sessionKey = preparedSession.sessionKey;
+
+      if (options.planMode !== undefined) {
+        if (options.planMode) {
+          this.ensurePlanningSessionSegment(
+            sessionId,
+            sessionKey,
+            preparedSession.gatewaySessionId,
+          );
+        }
+        await this.patchPlanModeState(this.requireGatewayClient(), sessionKey, agentId, {
+          enabled: options.planMode,
+          updatedAt: Date.now(),
+        });
+      }
 
       const runId = options.clientTurnId?.trim() || randomUUID();
       const encodedIssuedAtMs = /^justdo-(\d{10,16})-/.exec(runId)?.[1];
@@ -1598,6 +1665,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     if (event.event === AskUserQuestionGateway.RESOLVED_EVENT) {
       this.handleAskUserResolved(event.payload);
+      return;
+    }
+
+    if (event.event === PlanModeGateway.REQUESTED_EVENT) {
+      void this.handlePlanModeRequested(event.payload).catch(error => {
+        coworkLog('ERROR', 'OpenClawRuntime', 'Failed to handle Plan mode request event', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
+
+    if (event.event === PlanModeGateway.RESOLVED_EVENT) {
+      void this.handlePlanModeResolved(event.payload).catch(error => {
+        coworkLog('ERROR', 'OpenClawRuntime', 'Failed to handle Plan mode resolved event', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
       return;
     }
 
@@ -1915,6 +2000,34 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       : '__askuser__';
   }
 
+  private resolvePlanModeSessionId(request: PlanModeRequest): string {
+    return this.resolveSessionIdBySessionKey(request.sessionKey) ?? '__planmode__';
+  }
+
+  private toPlanModeInteraction(request: PlanModeRequest): PlanModeInteractionEnvelope {
+    const sessionId = this.resolvePlanModeSessionId(request);
+    return {
+      sessionId,
+      request: {
+        requestId: request.requestId,
+        toolName: OpenClawToolName.PRESENT_PLAN,
+        interactionKind: CoworkInteractionKind.PLAN_APPROVAL,
+        toolInput: {
+          plan: request.plan,
+          ...(request.title ? { title: request.title } : {}),
+          sessionKey: request.sessionKey,
+          sessionId,
+        },
+      },
+    };
+  }
+
+  private isPlanModeInteraction(
+    interaction: CoworkInteractionEnvelope,
+  ): interaction is PlanModeInteractionEnvelope {
+    return interaction.request.interactionKind === CoworkInteractionKind.PLAN_APPROVAL;
+  }
+
   private toAskUserInteraction(request: AskUserRequest): AskUserInteractionEnvelope {
     const sessionId = this.resolveAskUserSessionId(request);
     return {
@@ -1943,7 +2056,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
   }
 
-  private sendAskUserInteraction(interaction: AskUserInteractionEnvelope): void {
+  private sendCoworkInteraction(interaction: CoworkInteractionEnvelope): void {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) {
         window.webContents.send(CoworkInteractionIpc.Stream, interaction);
@@ -1976,7 +2089,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     if (this.terminalAskUserIds.has(request.requestId)) return;
     this.pendingAskUserRequests.set(request.requestId, request);
-    this.sendAskUserInteraction(this.toAskUserInteraction(request));
+    this.sendCoworkInteraction(this.toAskUserInteraction(request));
   }
 
   private handleAskUserResolved(payload: unknown): void {
@@ -1991,6 +2104,150 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const requestId = payload.requestId.trim();
     this.rememberTerminalAskUser(requestId);
     if (!this.pendingAskUserRequests.delete(requestId)) return;
+    this.sendAskUserDismiss(requestId);
+  }
+
+  private async handlePlanModeRequested(payload: unknown): Promise<void> {
+    const request = parsePlanModeRequest(payload);
+    if (!request) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed Plan mode request');
+      return;
+    }
+    if (this.terminalAskUserIds.has(request.requestId)) return;
+    const sessionId = this.resolvePlanModeSessionId(request);
+    if (sessionId === '__planmode__') {
+      const client = this.gatewayClient;
+      const generation = this.gatewayClientGeneration;
+      if (client) void this.cancelUnpersistedPlanRequest(client, generation, request);
+      return;
+    }
+    this.ensurePlanningSessionSegment(sessionId, request.sessionKey);
+    try {
+      this.persistAndVerifyPresentedPlan(sessionId, request);
+    } catch (error) {
+      coworkLog('ERROR', 'OpenClawRuntime', 'Failed to persist presented plan', {
+        requestId: request.requestId,
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const client = this.gatewayClient;
+      const generation = this.gatewayClientGeneration;
+      if (client) {
+        void this.cancelUnpersistedPlanRequest(client, generation, request);
+      }
+      return;
+    }
+    const client = this.gatewayClient;
+    const generation = this.gatewayClientGeneration;
+    if (!client) {
+      coworkLog('ERROR', 'OpenClawRuntime', 'Cannot durably admit Plan mode review', {
+        requestId: request.requestId,
+        sessionId,
+        error: 'OpenClaw Gateway connection is unavailable.',
+      });
+      return;
+    }
+    try {
+      await this.persistPlanReviewAdmission(client, sessionId, request);
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return;
+    } catch (error) {
+      coworkLog('ERROR', 'OpenClawRuntime', 'Failed to persist Plan mode review admission', {
+        requestId: request.requestId,
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (await this.cancelUnpersistedPlanRequest(client, generation, request)) {
+        const session = this.store.getSession(sessionId);
+        try {
+          await this.patchPlanModeState(client, request.sessionKey, session?.agentId, {
+            enabled: true,
+            updatedAt: Date.now(),
+          });
+          this.completePlanHandoffResolution(request.requestId);
+        } catch (clearError) {
+          coworkLog('WARN', 'OpenClawRuntime', 'Failed to clear rejected Plan review admission', {
+            requestId: request.requestId,
+            error: clearError instanceof Error ? clearError.message : String(clearError),
+          });
+        }
+      }
+      return;
+    }
+    this.pendingPlanModeRequests.set(request.requestId, request);
+    this.sendCoworkInteraction(this.toPlanModeInteraction(request));
+  }
+
+  private async cancelUnpersistedPlanRequest(
+    client: GatewayClientLike,
+    generation: number,
+    request: PlanModeRequest,
+  ): Promise<boolean> {
+    try {
+      await client.request(PlanModeGateway.RESOLVE, {
+        requestId: request.requestId,
+        decision: 'cancel',
+      });
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return false;
+      this.rememberTerminalAskUser(request.requestId);
+      this.pendingPlanModeRequests.delete(request.requestId);
+      return true;
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to cancel unpersisted Plan mode request', {
+        requestId: request.requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  private async handlePlanModeResolved(payload: unknown): Promise<void> {
+    if (!isRecord(payload) || typeof payload.requestId !== 'string' || !payload.requestId.trim()) {
+      return;
+    }
+    const requestId = payload.requestId.trim();
+    if (this.planResolutionByRequestId.has(requestId)) return;
+    const pendingPlan = this.pendingPlanModeRequests.get(requestId);
+    const decision =
+      payload.decision === 'implement' ||
+      payload.decision === 'revise' ||
+      payload.decision === 'cancel'
+        ? payload.decision
+        : undefined;
+    if (!decision) return;
+    const handoff = this.store.getPlanHandoff(requestId);
+    const sessionId = pendingPlan
+      ? this.resolvePlanModeSessionId(pendingPlan)
+      : handoff?.sessionId;
+    const sessionKey = pendingPlan?.sessionKey ?? handoff?.planningSessionKey;
+    if (sessionId && sessionKey) {
+      const client = this.gatewayClient;
+      if (!client) return;
+      const generation = this.gatewayClientGeneration;
+      const session = this.store.getSession(sessionId);
+      try {
+        await this.patchPlanModeState(client, sessionKey, session?.agentId, {
+          enabled: decision !== 'implement',
+          updatedAt: Date.now(),
+        });
+      } catch (error) {
+        coworkLog('WARN', 'OpenClawRuntime', 'Failed to clear Plan mode review admission', {
+          requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return;
+    }
+    try {
+      this.completePlanHandoffResolution(requestId);
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to persist Plan mode resolution', {
+        requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.rememberTerminalAskUser(requestId);
+    if (!this.pendingPlanModeRequests.delete(requestId)) return;
     this.sendAskUserDismiss(requestId);
   }
 
@@ -2016,13 +2273,841 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return interactions;
   }
 
-  async listPendingAskUserInteractions(): Promise<AskUserInteractionEnvelope[]> {
+  private async readPendingPlanModeInteractions(
+    client: GatewayClientLike,
+    generation: number,
+  ): Promise<PlanModeInteractionEnvelope[]> {
+    const result = await client.request(PlanModeGateway.LIST, {});
+    if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+    if (!isRecord(result) || !Array.isArray(result.requests)) return [];
+    const interactions: PlanModeInteractionEnvelope[] = [];
+    const planRequests = result.requests;
+    const parsedRequests = new Map<string, PlanModeRequest>();
+    for (const [index, rawRequest] of planRequests.entries()) {
+      const request = parsePlanModeRequest(rawRequest);
+      if (!request) {
+        coworkLog('WARN', 'OpenClawRuntime', 'Ignored malformed Plan mode list entry', { index });
+        continue;
+      }
+      parsedRequests.set(request.requestId, request);
+    }
+
+    for (const handoff of this.store.listRecoverablePlanHandoffs()) {
+      const request = parsedRequests.get(handoff.planId);
+      if (handoff.state === CoworkPlanHandoffState.Admitted) {
+        parsedRequests.delete(handoff.planId);
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+        const session = this.store.getSession(handoff.sessionId);
+        try {
+          await this.patchPlanModeState(
+            client,
+            handoff.planningSessionKey,
+            session?.agentId,
+            {
+              enabled: false,
+              updatedAt: Date.now(),
+              awaitingReview: {
+                version: 1,
+                requestId: handoff.planId,
+                persistedAt: handoff.createdAt,
+              },
+            },
+          );
+          if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+            return [];
+          }
+        } catch (error) {
+          if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+            return [];
+          }
+          coworkLog('WARN', 'OpenClawRuntime', 'Failed to finalize admitted Plan mode state', {
+            requestId: handoff.planId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
+        if (request) {
+          try {
+            await client.request(PlanModeGateway.RESOLVE, {
+              requestId: request.requestId,
+              decision: 'implement',
+            });
+            if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+              return [];
+            }
+          } catch (error) {
+            let requestIsMissing = false;
+            try {
+              requestIsMissing = await this.isPlanRequestMissing(
+                client,
+                generation,
+                request.requestId,
+              );
+            } catch (missingCheckError) {
+              coworkLog('WARN', 'OpenClawRuntime', 'Failed to check admitted Plan request', {
+                requestId: request.requestId,
+                error:
+                  missingCheckError instanceof Error
+                    ? missingCheckError.message
+                    : String(missingCheckError),
+              });
+            }
+            coworkLog('WARN', 'OpenClawRuntime', 'Failed to finish admitted Plan mode handoff', {
+              requestId: request.requestId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+              return [];
+            }
+            if (!requestIsMissing) continue;
+          }
+        }
+        try {
+          await this.patchPlanModeState(
+            client,
+            handoff.planningSessionKey,
+            session?.agentId,
+            { enabled: false, updatedAt: Date.now() },
+          );
+        } catch (error) {
+          if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+            return [];
+          }
+          coworkLog('WARN', 'OpenClawRuntime', 'Failed to clear admitted Plan review marker', {
+            requestId: handoff.planId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+        this.completePlanHandoffResolution(handoff.planId);
+        this.rememberTerminalAskUser(handoff.planId);
+        this.pendingPlanModeRequests.delete(handoff.planId);
+        this.sendAskUserDismiss(handoff.planId);
+        continue;
+      }
+
+      if (!this.approvedPlanArtifactStore) continue;
+      try {
+        const session = this.store.getSession(handoff.sessionId);
+        if (!session?.cwd) {
+          throw new Error('Approved plan workspace is unavailable.');
+        }
+        let effectiveHandoff = handoff;
+        let markdown: string;
+        try {
+          markdown = this.approvedPlanArtifactStore.readVerified(session.cwd, handoff.artifact);
+        } catch (readError) {
+          const gatewayRequest = parsedRequests.get(handoff.planId);
+          if (!gatewayRequest) throw readError;
+          const normalizedGatewayPlan = gatewayRequest.plan.replace(/\r\n?/g, '\n');
+          const gatewayPlanContent = Buffer.from(normalizedGatewayPlan, 'utf8');
+          if (
+            gatewayPlanContent.byteLength !== handoff.artifact.byteLength ||
+            createHash('sha256').update(gatewayPlanContent).digest('hex') !==
+              handoff.artifact.sha256
+          ) {
+            throw readError;
+          }
+          const restoredReference = this.approvedPlanArtifactStore.publish({
+            workspaceRoot: handoff.artifact.workspaceRoot ?? session.cwd,
+            sessionId: handoff.sessionId,
+            planId: handoff.planId,
+            markdown: normalizedGatewayPlan,
+          });
+          if (
+            restoredReference.sha256 !== handoff.artifact.sha256 ||
+            restoredReference.byteLength !== handoff.artifact.byteLength
+          ) {
+            throw readError;
+          }
+          if (handoff.artifact.workspaceRoot) {
+            if (
+              restoredReference.workspaceRoot !== handoff.artifact.workspaceRoot ||
+              restoredReference.relativePath !== handoff.artifact.relativePath
+            ) {
+              throw readError;
+            }
+          } else {
+            effectiveHandoff = this.store.migratePlanHandoffArtifact(
+              handoff.planId,
+              restoredReference,
+            );
+          }
+          markdown = this.approvedPlanArtifactStore.readVerified(
+            restoredReference.workspaceRoot!,
+            restoredReference,
+          );
+        }
+        const recoveredRequest: PlanModeRequest = {
+          requestId: effectiveHandoff.planId,
+          sessionKey: effectiveHandoff.planningSessionKey,
+          plan: markdown,
+        };
+        await this.persistPlanReviewAdmission(client, effectiveHandoff.sessionId, recoveredRequest);
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+        parsedRequests.delete(handoff.planId);
+        interactions.push(this.toPlanModeInteraction(recoveredRequest));
+      } catch (error) {
+        // Keep the Gateway request pending for a later recovery attempt. Do not
+        // route it through the unpersisted-request cancellation path below.
+        parsedRequests.delete(handoff.planId);
+        coworkLog('ERROR', 'OpenClawRuntime', 'Failed to recover persisted Plan mode request', {
+          requestId: handoff.planId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    for (const request of parsedRequests.values()) {
+      if (this.terminalAskUserIds.has(request.requestId)) continue;
+      const sessionId = this.resolvePlanModeSessionId(request);
+      if (sessionId === '__planmode__') {
+        await this.cancelUnpersistedPlanRequest(client, generation, request);
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+        continue;
+      }
+      try {
+        this.ensurePlanningSessionSegment(sessionId, request.sessionKey);
+        const persisted = this.persistAndVerifyPresentedPlan(sessionId, request);
+        await this.persistPlanReviewAdmission(client, sessionId, request);
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+        interactions.push(
+          this.toPlanModeInteraction({
+            ...request,
+            plan: persisted.markdown,
+          }),
+        );
+      } catch (error) {
+        coworkLog('ERROR', 'OpenClawRuntime', 'Failed to persist recovered Plan mode request', {
+          requestId: request.requestId,
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await this.cancelUnpersistedPlanRequest(client, generation, request);
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+      }
+    }
+    return interactions;
+  }
+
+  private getActiveSessionSegment(sessionId: string): CoworkSessionSegment | undefined {
+    return this.store.getActiveSessionSegment?.(sessionId);
+  }
+
+  private persistAndVerifyPresentedPlan(
+    sessionId: string,
+    request: PlanModeRequest,
+  ): { handoff: CoworkPlanHandoff; markdown: string } {
+    if (!this.approvedPlanArtifactStore) {
+      throw new Error('Approved plan artifact storage is unavailable.');
+    }
+    const session = this.store.getSession(sessionId);
+    if (!session?.cwd || !path.isAbsolute(session.cwd)) {
+      throw new Error('Approved plan workspace is unavailable.');
+    }
+    const existingHandoff = this.store.getPlanHandoff(request.requestId);
+    if (existingHandoff?.artifact.workspaceRoot) {
+      const existingMarkdown = this.approvedPlanArtifactStore.readVerified(
+        existingHandoff.artifact.workspaceRoot,
+        existingHandoff.artifact,
+      );
+      if (existingMarkdown !== request.plan.replace(/\r\n?/g, '\n')) {
+        throw new Error('This plan handoff already refers to different immutable content.');
+      }
+      return { handoff: existingHandoff, markdown: existingMarkdown };
+    }
+    if (existingHandoff && !existingHandoff.artifact.workspaceRoot) {
+      const legacyMarkdown = this.approvedPlanArtifactStore.readVerified(
+        session.cwd,
+        existingHandoff.artifact,
+      );
+      if (legacyMarkdown !== request.plan.replace(/\r\n?/g, '\n')) {
+        throw new Error('This plan handoff already refers to different immutable content.');
+      }
+      const migratedReference = this.approvedPlanArtifactStore.publish({
+        workspaceRoot: session.cwd,
+        sessionId,
+        planId: request.requestId,
+        markdown: legacyMarkdown,
+      });
+      const migratedHandoff = this.store.migratePlanHandoffArtifact(
+        request.requestId,
+        migratedReference,
+      );
+      return {
+        handoff: migratedHandoff,
+        markdown: this.approvedPlanArtifactStore.readVerified(
+          session.cwd,
+          migratedHandoff.artifact,
+        ),
+      };
+    }
+    try {
+      this.approvedPlanArtifactStore.cleanupStaleTemporaryFiles?.(session.cwd);
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to clean stale approved-plan artifacts', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const reference = this.approvedPlanArtifactStore.publish({
+      workspaceRoot: session.cwd,
+      sessionId,
+      planId: request.requestId,
+      markdown: request.plan,
+    });
+    const handoff = this.store.createPlanHandoff({
+      sessionId,
+      planId: request.requestId,
+      planningSessionKey: request.sessionKey,
+      artifact: reference,
+      presentedAt: Date.now(),
+    });
+    return {
+      handoff,
+      markdown: this.approvedPlanArtifactStore.readVerified(session.cwd, handoff.artifact),
+    };
+  }
+
+  private beginSessionSegment(input: BeginCoworkSessionSegmentInput): CoworkSessionSegment {
+    if (!this.store.beginSessionSegment) {
+      throw new Error('Cowork session segment persistence is unavailable.');
+    }
+    return this.store.beginSessionSegment(input);
+  }
+
+  private ensurePlanningSessionSegment(
+    sessionId: string,
+    sessionKey: string,
+    gatewaySessionId?: string,
+  ): CoworkSessionSegment {
+    const active = this.getActiveSessionSegment(sessionId);
+    if (active) {
+      if (!active.gatewaySessionId && gatewaySessionId) {
+        return this.store.bindSessionSegmentGatewaySession(active.id, gatewaySessionId) ?? active;
+      }
+      return active;
+    }
+    return this.beginSessionSegment({
+      id: `planning-${sessionId}`,
+      sessionId,
+      sessionKey,
+      phase: CoworkSessionSegmentPhase.Planning,
+      startedAt: Date.now(),
+      ...(gatewaySessionId ? { gatewaySessionId } : {}),
+    });
+  }
+
+  private buildPlanImplementationPrompt(
+    approvedPlanMarkdown: string,
+    approvedPlanRelativePath: string,
+  ): string {
+    return [
+      'Implement the plan.',
+      '',
+      `Plan file: ${approvedPlanRelativePath.replaceAll('\\', '/')}`,
+      '',
+      '<plan>',
+      approvedPlanMarkdown,
+      '</plan>',
+    ].join('\n');
+  }
+
+  private buildPlanRevisionPrompt(
+    request: PlanModeRequest,
+    approvedPlanMarkdown: string,
+    feedback: string | undefined,
+  ): string {
+    return [
+      'Reopen planning for the previous plan below.',
+      'Inspect any additional context needed, revise the plan using the user feedback, and present the complete revised plan for approval.',
+      '',
+      ...(feedback?.trim() ? ['User feedback:', feedback.trim(), ''] : []),
+      '<previous_plan>',
+      approvedPlanMarkdown,
+      '</previous_plan>',
+    ].join('\n');
+  }
+
+  private startRecoveredPlanRevision(
+    sessionId: string,
+    request: PlanModeRequest,
+    approvedPlanMarkdown: string,
+    feedback: string | undefined,
+  ): void {
+    const session = this.store.getSession(sessionId);
+    if (!session) return;
+    void this.startSession(
+      sessionId,
+      this.buildPlanRevisionPrompt(request, approvedPlanMarkdown, feedback),
+      {
+        workspaceRoot: session.cwd,
+        agentId: session.agentId || DEFAULT_MANAGED_AGENT_ID,
+        planMode: true,
+        clientTurnId: `justdo-plan-revision-${request.requestId}`,
+      },
+    ).catch(error => {
+      coworkLog('ERROR', 'OpenClawRuntime', 'Failed to start recovered Plan mode revision', {
+        requestId: request.requestId,
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  private replacePlanningTurnWithImplementation(
+    sessionId: string,
+    sessionKey: string,
+    gatewaySessionId: string,
+    runId: string,
+  ): void {
+    const planningTurn = this.activeTurns.get(sessionId);
+    if (planningTurn) {
+      for (const knownRunId of planningTurn.knownRunIds) {
+        this.sessionIdByRunId.delete(knownRunId);
+      }
+    }
+    const turnToken = this.nextTurnToken(sessionId);
+    this.activeTurns.set(sessionId, {
+      sessionId,
+      sessionKey,
+      runId,
+      gatewaySessionId,
+      lifecycleGeneration: null,
+      lastAgentSeq: -1,
+      status: 'running',
+      turnToken,
+      stopRequested: false,
+      knownRunIds: new Set([runId]),
+    });
+    this.sessionIdByRunId.set(runId, sessionId);
+    this.rootRunIdBySession.set(sessionId, runId);
+    this.terminalLifecycleSessionIds.delete(sessionId);
+    this.terminalLifecycleErrorSessionIds.delete(sessionId);
+    this.clearCompactionInFlight(sessionId);
+    this.startTurnTimeoutWatchdog(sessionId);
+  }
+
+  private async startApprovedPlanImplementation(
+    client: GatewayClientLike,
+    sessionId: string,
+    request: PlanModeRequest,
+    approvedPlanMarkdown: string,
+    artifact: CoworkPlanArtifactReference,
+  ): Promise<void> {
+    const generation = this.gatewayClientGeneration;
+    if (client !== this.gatewayClient) {
+      throw new Error('OpenClaw Gateway connection changed before plan implementation dispatch.');
+    }
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    const implementationWorkspaceRoot = artifact.workspaceRoot ?? session.cwd;
+    if (!path.isAbsolute(implementationWorkspaceRoot)) {
+      throw new Error('Approved plan workspace is unavailable.');
+    }
+    const agentId = session.agentId || DEFAULT_MANAGED_AGENT_ID;
+    this.ensurePlanningSessionSegment(sessionId, request.sessionKey);
+    const sessionKey = buildCoworkExecutionSessionKey(sessionId, request.requestId, agentId);
+    const currentHandoff = this.store.getPlanHandoff(request.requestId);
+    if (!currentHandoff) throw new Error('Plan handoff not found.');
+    if (
+      currentHandoff.state === CoworkPlanHandoffState.Admitted ||
+      currentHandoff.state === CoworkPlanHandoffState.Resolved
+    ) {
+      return;
+    }
+    const dispatchingHandoff =
+      currentHandoff.state === CoworkPlanHandoffState.Dispatching
+        ? currentHandoff
+        : this.store.transitionPlanHandoff({
+            planId: request.requestId,
+            expectedState: currentHandoff.state,
+            nextState: CoworkPlanHandoffState.Dispatching,
+            implementationSessionKey: sessionKey,
+            transitionedAt: Date.now(),
+          });
+    if (dispatchingHandoff.implementationSessionKey !== sessionKey) {
+      throw new Error('Plan handoff targets another implementation session.');
+    }
+    let createdKey: string;
+    let gatewaySessionId: string;
+    try {
+      const nativePermissionMode = toOpenClawSessionPermissionMode(session.permissionMode);
+      const modelRef = normalizeModelRef(
+        session.modelRef || this.store.getAgent(agentId)?.model,
+      );
+      if (!modelRef) throw new Error('Session model is not available.');
+      const created = await client.request<{
+        key?: unknown;
+        sessionId?: unknown;
+        entry?: Record<string, unknown>;
+      }>('sessions.create', {
+        key: sessionKey,
+        parentSessionKey: request.sessionKey,
+        cwd: implementationWorkspaceRoot,
+        permissionMode: nativePermissionMode,
+        model: modelRef,
+      });
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+        throw new Error('OpenClaw Gateway connection changed during plan implementation dispatch.');
+      }
+      createdKey = typeof created.key === 'string' ? created.key.trim() : sessionKey;
+      gatewaySessionId =
+        typeof created.sessionId === 'string'
+          ? created.sessionId.trim()
+          : typeof created.entry?.sessionId === 'string'
+            ? created.entry.sessionId.trim()
+            : '';
+      if (!createdKey || createdKey !== sessionKey || !gatewaySessionId) {
+        throw new Error('OpenClaw sessions.create returned no implementation session identity.');
+      }
+      this.assertPreparedSessionEntry(
+        created.entry,
+        nativePermissionMode,
+        implementationWorkspaceRoot,
+      );
+      const createdModelRef =
+        normalizeModelRef(created.entry?.modelOverride, created.entry?.providerOverride) ??
+        readModelRef(created.entry);
+      if (createdModelRef) {
+        if (createdModelRef !== modelRef) {
+          throw new Error('OpenClaw did not persist the requested session model.');
+        }
+      } else {
+        // OpenClaw elides provider/model overrides when the requested model is
+        // the agent default. The create response then contains no model fields,
+        // even though the new session has an effective model. Verify that
+        // effective selection through the canonical read projection before
+        // admitting the implementation turn.
+        const described = await client.request<{ session?: Record<string, unknown> | null }>(
+          'sessions.describe',
+          { key: createdKey },
+        );
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+          throw new Error(
+            'OpenClaw Gateway connection changed while verifying the plan implementation session.',
+          );
+        }
+        if (described.session?.sessionId !== gatewaySessionId) {
+          throw new Error('OpenClaw did not return the created implementation session.');
+        }
+        this.assertPreparedSessionEntry(
+          described.session,
+          nativePermissionMode,
+          implementationWorkspaceRoot,
+          modelRef,
+        );
+      }
+    } catch (error) {
+      if (generation === this.gatewayClientGeneration && client === this.gatewayClient) {
+        this.store.transitionPlanHandoff({
+          planId: request.requestId,
+          expectedState: CoworkPlanHandoffState.Dispatching,
+          nextState: CoworkPlanHandoffState.Failed,
+          transitionedAt: Date.now(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
+    }
+
+    this.rememberSessionKey(sessionId, createdKey);
+    const runId = `justdo-plan-implementation-${request.requestId}`;
+    const previousTurn = this.activeTurns.get(sessionId);
+    const reusesActiveImplementationTurn = previousTurn?.sessionKey === createdKey;
+    if (!reusesActiveImplementationTurn) {
+      this.replacePlanningTurnWithImplementation(sessionId, createdKey, gatewaySessionId, runId);
+    }
+    // After chat.send is issued, any transport or response error is ambiguous:
+    // Gateway may already be running the implementation. Keep the deterministic
+    // child routing and dispatching state so retry uses the same idempotency key.
+    const sent = await client.request<{ runId?: unknown }>('chat.send', {
+      sessionKey: createdKey,
+      sessionId: gatewaySessionId,
+      message: this.buildPlanImplementationPrompt(
+        approvedPlanMarkdown,
+        artifact.relativePath,
+      ),
+      deliver: false,
+      justdoUserInitiated: true,
+      justdoHideUserMessage: true,
+      timeoutMs: 0,
+      idempotencyKey: runId,
+    });
+    if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+      throw new Error('OpenClaw Gateway connection changed during plan implementation admission.');
+    }
+    const acceptedRunId = typeof sent.runId === 'string' ? sent.runId.trim() : '';
+    if (!acceptedRunId) throw new Error('OpenClaw chat.send returned no implementation runId.');
+    const implementationTurn = this.activeTurns.get(sessionId);
+    if (implementationTurn?.runId === runId && acceptedRunId !== runId) {
+      this.sessionIdByRunId.delete(runId);
+      implementationTurn.runId = acceptedRunId;
+      implementationTurn.knownRunIds.delete(runId);
+      implementationTurn.knownRunIds.add(acceptedRunId);
+      this.sessionIdByRunId.set(acceptedRunId, sessionId);
+      this.rootRunIdBySession.set(sessionId, acceptedRunId);
+    }
+    const admittedAt = Date.now();
+    this.store.admitPlanHandoffAndTransitionSegment({
+      planId: request.requestId,
+      expectedState: CoworkPlanHandoffState.Dispatching,
+      implementationGatewaySessionId: gatewaySessionId,
+      implementationRunId: acceptedRunId,
+      admittedAt,
+      implementationSegment: {
+        id: `implementation-${request.requestId}`,
+        sessionId,
+        sessionKey: createdKey,
+        phase: CoworkSessionSegmentPhase.Implementation,
+        planId: request.requestId,
+        startedAt: admittedAt,
+      },
+    });
+    if (previousTurn && !reusesActiveImplementationTurn) this.rememberTerminalTurn(previousTurn);
+    this.invalidateRuntimeSessionSnapshot();
+  }
+
+  private completePlanHandoffResolution(planId: string): void {
+    const handoff = this.store.getPlanHandoff(planId);
+    if (
+      handoff &&
+      (handoff.state === CoworkPlanHandoffState.Presented ||
+        handoff.state === CoworkPlanHandoffState.Admitted ||
+        handoff.state === CoworkPlanHandoffState.Failed)
+    ) {
+      this.store.transitionPlanHandoff({
+        planId,
+        expectedState: handoff.state,
+        nextState: CoworkPlanHandoffState.Resolved,
+        transitionedAt: Date.now(),
+      });
+    }
+  }
+
+  private async isPlanRequestMissing(
+    client: GatewayClientLike,
+    generation: number,
+    requestId: string,
+  ): Promise<boolean> {
+    const result = await client.request(PlanModeGateway.LIST, {});
+    if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+      throw new Error('OpenClaw Gateway connection changed while resolving the plan.');
+    }
+    if (!isRecord(result) || !Array.isArray(result.requests)) return false;
+    return !result.requests.some(candidate => parsePlanModeRequest(candidate)?.requestId === requestId);
+  }
+
+  private async resolvePlanModeInteraction(
+    pendingPlan: PlanModeRequest,
+    response: { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
+  ): Promise<{ sessionId: string }> {
+    const normalizedRequestId = pendingPlan.requestId;
+    const sessionId = this.resolvePlanModeSessionId(pendingPlan);
+    const persisted = this.persistAndVerifyPresentedPlan(sessionId, pendingPlan);
     await this.ensureGatewayClientReady();
     const client = this.requireGatewayClient();
     const generation = this.gatewayClientGeneration;
-    const interactions = await this.readPendingAskUserInteractions(client);
+    const currentHandoff = this.store.getPlanHandoff(normalizedRequestId) ?? persisted.handoff;
+
+    if (
+      currentHandoff.state === CoworkPlanHandoffState.Dispatching &&
+      response.decision !== 'implement'
+    ) {
+      throw new Error(
+        'Implementation dispatch is awaiting confirmation. Retry implementation before revising or cancelling this plan.',
+      );
+    }
+    const effectiveDecision =
+      currentHandoff.state === CoworkPlanHandoffState.Admitted ? 'implement' : response.decision;
+    let startRecoveredRevision = false;
+
+    if (effectiveDecision === 'implement') {
+      const session = this.store.getSession(sessionId);
+      if (
+        persisted.handoff.state !== CoworkPlanHandoffState.Admitted &&
+        persisted.handoff.state !== CoworkPlanHandoffState.Resolved
+      ) {
+        try {
+          await this.startApprovedPlanImplementation(
+            client,
+            sessionId,
+            pendingPlan,
+            persisted.markdown,
+            persisted.handoff.artifact,
+          );
+        } catch (error) {
+          const failedHandoff = this.store.getPlanHandoff(normalizedRequestId);
+          if (failedHandoff?.state === CoworkPlanHandoffState.Failed) {
+            await this.patchPlanModeState(client, pendingPlan.sessionKey, session?.agentId, {
+              enabled: true,
+              updatedAt: Date.now(),
+              awaitingReview: {
+                version: 1,
+                requestId: pendingPlan.requestId,
+                persistedAt: Date.now(),
+              },
+            }).catch(restoreError => {
+              coworkLog('WARN', 'OpenClawRuntime', 'Failed to restore Plan mode after handoff failure', {
+                requestId: pendingPlan.requestId,
+                error: restoreError instanceof Error ? restoreError.message : String(restoreError),
+              });
+            });
+          }
+          throw error;
+        }
+      }
+      if (this.store.getPlanHandoff(normalizedRequestId)?.state !== CoworkPlanHandoffState.Resolved) {
+        await this.patchPlanModeState(client, pendingPlan.sessionKey, session?.agentId, {
+          enabled: false,
+          updatedAt: Date.now(),
+          awaitingReview: {
+            version: 1,
+            requestId: pendingPlan.requestId,
+            persistedAt: persisted.handoff.createdAt,
+          },
+        });
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+          throw new Error('OpenClaw Gateway connection changed while finalizing the plan.');
+        }
+      }
+    }
+
+    if (this.store.getPlanHandoff(normalizedRequestId)?.state !== CoworkPlanHandoffState.Resolved) {
+      let result: unknown;
+      try {
+        result = await client.request(PlanModeGateway.RESOLVE, {
+          requestId: normalizedRequestId,
+          decision: effectiveDecision,
+          ...(effectiveDecision === response.decision && response.feedback?.trim()
+            ? { feedback: response.feedback.trim() }
+            : {}),
+        });
+      } catch (error) {
+        const handoffState = this.store.getPlanHandoff(normalizedRequestId)?.state;
+        const mayRecoverMissingRequest =
+          handoffState === CoworkPlanHandoffState.Admitted ||
+          ((handoffState === CoworkPlanHandoffState.Presented ||
+            handoffState === CoworkPlanHandoffState.Failed) &&
+            (effectiveDecision === 'revise' || effectiveDecision === 'cancel'));
+        let requestIsMissing = false;
+        if (mayRecoverMissingRequest) {
+          try {
+            requestIsMissing = await this.isPlanRequestMissing(
+              client,
+              generation,
+              normalizedRequestId,
+            );
+          } catch (missingCheckError) {
+            coworkLog('WARN', 'OpenClawRuntime', 'Failed to check Plan request after resolve failure', {
+              requestId: pendingPlan.requestId,
+              error:
+                missingCheckError instanceof Error
+                  ? missingCheckError.message
+                  : String(missingCheckError),
+            });
+          }
+        }
+        if (!requestIsMissing) {
+          throw error;
+        }
+        startRecoveredRevision = effectiveDecision === 'revise';
+        result = { requestId: normalizedRequestId, decision: effectiveDecision };
+      }
+      if (
+        !isRecord(result) ||
+        result.requestId !== normalizedRequestId ||
+        result.decision !== effectiveDecision
+      ) {
+        const handoffState = this.store.getPlanHandoff(normalizedRequestId)?.state;
+        const mayRecoverMissingRequest =
+          handoffState === CoworkPlanHandoffState.Admitted ||
+          ((handoffState === CoworkPlanHandoffState.Presented ||
+            handoffState === CoworkPlanHandoffState.Failed) &&
+            (effectiveDecision === 'revise' || effectiveDecision === 'cancel'));
+        let requestIsMissing = false;
+        if (mayRecoverMissingRequest) {
+          try {
+            requestIsMissing = await this.isPlanRequestMissing(
+              client,
+              generation,
+              normalizedRequestId,
+            );
+          } catch (error) {
+            coworkLog('WARN', 'OpenClawRuntime', 'Failed to check invalid Plan resolve response', {
+              requestId: pendingPlan.requestId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        if (!requestIsMissing) {
+          throw new Error('Plan mode resolve returned an invalid payload.');
+        }
+        startRecoveredRevision = effectiveDecision === 'revise';
+      }
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+        throw new Error('OpenClaw Gateway connection changed while resolving the plan.');
+      }
+      if (effectiveDecision === 'implement') {
+        const session = this.store.getSession(sessionId);
+        await this.patchPlanModeState(client, pendingPlan.sessionKey, session?.agentId, {
+          enabled: false,
+          updatedAt: Date.now(),
+        });
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+          throw new Error('OpenClaw Gateway connection changed while finalizing the plan.');
+        }
+      } else {
+        const session = this.store.getSession(sessionId);
+        await this.patchPlanModeState(client, pendingPlan.sessionKey, session?.agentId, {
+          enabled: true,
+          updatedAt: Date.now(),
+        });
+        if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) {
+          throw new Error('OpenClaw Gateway connection changed while finalizing the plan.');
+        }
+      }
+      this.completePlanHandoffResolution(normalizedRequestId);
+    }
+
+    this.rememberTerminalAskUser(normalizedRequestId);
+    if (this.pendingPlanModeRequests.delete(normalizedRequestId)) {
+      this.sendAskUserDismiss(normalizedRequestId);
+    }
+    if (startRecoveredRevision) {
+      this.startRecoveredPlanRevision(
+        sessionId,
+        pendingPlan,
+        persisted.markdown,
+        response.feedback,
+      );
+    }
+    return { sessionId };
+  }
+
+  async listPendingAskUserInteractions(): Promise<
+    Array<AskUserInteractionEnvelope | PlanModeInteractionEnvelope>
+  > {
+    await this.ensureGatewayClientReady();
+    const client = this.requireGatewayClient();
+    const generation = this.gatewayClientGeneration;
+    const askUserInteractions = await this.readPendingAskUserInteractions(client);
     if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+    const planModeInteractions = await this.readPendingPlanModeInteractions(client, generation).catch(
+      (): PlanModeInteractionEnvelope[] => [],
+    );
+    if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return [];
+    const interactions = [...askUserInteractions, ...planModeInteractions];
     for (const interaction of interactions) {
+      if (this.isPlanModeInteraction(interaction)) {
+        const request = parsePlanModeRequest({
+          requestId: interaction.request.requestId,
+          ...interaction.request.toolInput,
+        });
+        if (request) this.pendingPlanModeRequests.set(request.requestId, request);
+        continue;
+      }
       const request = this.parseAskUserInteractionRequest(interaction);
       if (request) this.pendingAskUserRequests.set(request.requestId, request);
     }
@@ -2031,13 +3116,30 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   async resolveAskUserInteraction(
     requestId: string,
-    response: { behavior: 'submit'; answers: unknown } | { behavior: 'cancel' },
+    response:
+      | { behavior: 'submit'; answers: unknown }
+      | { behavior: 'cancel' }
+      | { behavior: 'plan'; decision: 'implement' | 'revise' | 'cancel'; feedback?: string },
   ): Promise<{ sessionId: string }> {
     const normalizedRequestId = requestId.trim();
+    const pendingPlan = this.pendingPlanModeRequests.get(normalizedRequestId);
+    if (pendingPlan) {
+      if (response.behavior !== 'plan') throw new Error('Invalid Plan mode review response.');
+      const current = this.planResolutionByRequestId.get(normalizedRequestId);
+      if (current) return current;
+      const resolving = this.resolvePlanModeInteraction(pendingPlan, response).finally(() => {
+        if (this.planResolutionByRequestId.get(normalizedRequestId) === resolving) {
+          this.planResolutionByRequestId.delete(normalizedRequestId);
+        }
+      });
+      this.planResolutionByRequestId.set(normalizedRequestId, resolving);
+      return resolving;
+    }
     const pending = this.pendingAskUserRequests.get(normalizedRequestId);
     if (!normalizedRequestId || !pending) {
       throw new Error('This question is not an active JustDo AskUserQuestion interaction.');
     }
+    if (response.behavior === 'plan') throw new Error('Invalid AskUserQuestion response.');
     const answers =
       response.behavior === 'submit'
         ? parseAskUserAnswers(response.answers, pending.questions)
@@ -2070,14 +3172,29 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = this.gatewayClient;
     if (!client) return;
     try {
-      const interactions = await this.readPendingAskUserInteractions(client);
+      const askUserInteractions = await this.readPendingAskUserInteractions(client);
       if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return;
+      const planModeInteractions = await this.readPendingPlanModeInteractions(client, generation).catch(
+        (): PlanModeInteractionEnvelope[] => [],
+      );
+      if (generation !== this.gatewayClientGeneration || client !== this.gatewayClient) return;
+      const interactions = [...askUserInteractions, ...planModeInteractions];
       for (const interaction of interactions) {
         if (!this.terminalAskUserIds.has(interaction.request.requestId)) {
+          if (this.isPlanModeInteraction(interaction)) {
+            const request = parsePlanModeRequest({
+              requestId: interaction.request.requestId,
+              ...interaction.request.toolInput,
+            });
+            if (!request) continue;
+            this.pendingPlanModeRequests.set(request.requestId, request);
+            this.sendCoworkInteraction(interaction);
+            continue;
+          }
           const request = this.parseAskUserInteractionRequest(interaction);
           if (!request) continue;
           this.pendingAskUserRequests.set(request.requestId, request);
-          this.sendAskUserInteraction(interaction);
+          this.sendCoworkInteraction(interaction);
         }
       }
     } catch (error) {
@@ -2092,7 +3209,91 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.sendAskUserDismiss(requestId);
     }
     this.pendingAskUserRequests.clear();
+    for (const requestId of this.pendingPlanModeRequests.keys()) {
+      this.sendAskUserDismiss(requestId);
+    }
+    this.pendingPlanModeRequests.clear();
     this.terminalAskUserIds.clear();
+  }
+
+  private async patchPlanModeState(
+    client: GatewayClientLike,
+    sessionKey: string,
+    agentId: string | undefined,
+    state: PlanModeState,
+  ): Promise<void> {
+    const result = await client.request('sessions.pluginPatch', {
+      key: sessionKey,
+      ...(agentId ? { agentId } : {}),
+      pluginId: OpenClawExtensionId.PLAN_MODE,
+      namespace: 'state',
+      value: state,
+    });
+    if (!isRecord(result) || result.ok !== true) {
+      throw new Error('OpenClaw did not persist the requested Plan mode.');
+    }
+    this.invalidateRuntimeSessionSnapshot();
+  }
+
+  private async persistPlanReviewAdmission(
+    client: GatewayClientLike,
+    sessionId: string,
+    request: PlanModeRequest,
+  ): Promise<void> {
+    const persistedAt = Date.now();
+    const session = this.store.getSession(sessionId);
+    await this.patchPlanModeState(client, request.sessionKey, session?.agentId, {
+      enabled: true,
+      updatedAt: persistedAt,
+      awaitingReview: {
+        version: 1,
+        requestId: request.requestId,
+        persistedAt,
+      },
+    });
+  }
+
+  async setPlanMode(sessionId: string, enabled: boolean): Promise<{ enabled: boolean }> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (enabled && this.isSessionActive(sessionId)) {
+      throw new Error('Plan mode cannot be changed while the session is running.');
+    }
+    await this.ensureGatewayClientReady();
+    if (enabled && this.isSessionActive(sessionId)) {
+      throw new Error('Plan mode cannot be changed while the session is running.');
+    }
+    const agentId = session.agentId || DEFAULT_MANAGED_AGENT_ID;
+    const sessionKey = this.toSessionKey(sessionId, agentId);
+    await this.patchPlanModeState(this.requireGatewayClient(), sessionKey, agentId, {
+      enabled,
+      updatedAt: Date.now(),
+    });
+    return { enabled };
+  }
+
+  async getPlanMode(sessionId: string): Promise<{ enabled: boolean }> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} not found`);
+    await this.ensureGatewayClientReady();
+    const agentId = session.agentId || DEFAULT_MANAGED_AGENT_ID;
+    const sessionKey = this.toSessionKey(sessionId, agentId);
+    const result = await this.requireGatewayClient().request<{ session?: Record<string, unknown> }>(
+      'sessions.describe',
+      { key: sessionKey },
+    );
+    const pluginExtensions = Array.isArray(result.session?.pluginExtensions)
+      ? result.session.pluginExtensions
+      : [];
+    const extension = pluginExtensions.find(
+      candidate =>
+        isRecord(candidate) &&
+        candidate.pluginId === OpenClawExtensionId.PLAN_MODE &&
+        candidate.namespace === 'state',
+    );
+    return {
+      enabled: parsePlanModeState(isRecord(extension) ? extension.value : undefined).enabled,
+    };
   }
 
   private broadcastApproval(channel: string, kind: ApprovalKind, payload: unknown): void {
@@ -2337,7 +3538,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const turn = this.activeTurns.get(sessionId);
     const hasActiveRun = source.hasActiveRun === true;
     const status = typeof source.status === 'string' ? source.status.trim().toLowerCase() : '';
-    const shouldClearRun = Boolean(turn) && !hasActiveRun && status && status !== 'running';
+    const eventMatchesTurn = Boolean(
+      turn && normalizeMessageSessionKey(turn.sessionKey) === normalizeMessageSessionKey(sessionKey),
+    );
+    const isCreationSnapshot = reason === 'create' || reason === 'new';
+    const shouldClearRun =
+      eventMatchesTurn && !isCreationSnapshot && !hasActiveRun && status && status !== 'running';
     if (!shouldClearRun) return;
 
     const terminalStatus: CoworkSessionStatus = ERROR_TERMINAL_SESSION_STATUSES.has(status)
@@ -2577,6 +3783,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private findSessionKeyBySessionId(sessionId: string): string {
+    const activeSegmentKey = this.getActiveSessionSegment(sessionId)?.sessionKey;
+    if (activeSegmentKey) return activeSegmentKey;
     for (const [sessionKey, mappedSessionId] of this.sessionIdBySessionKey.entries()) {
       if (mappedSessionId === sessionId) return sessionKey;
     }
@@ -2592,7 +3800,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private toSessionKey(sessionId: string, agentId?: string): string {
-    return buildManagedSessionKey(sessionId, agentId);
+    return this.getActiveSessionSegment(sessionId)?.sessionKey ?? buildManagedSessionKey(sessionId, agentId);
   }
 
   private requireGatewayClient(): GatewayClientLike {
@@ -3166,17 +4374,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   // ─── Session Deletion ───────────────────────────────────────────────────
 
-  onSessionDeleted(sessionId: string, agentId?: string): void {
-    const removedKeys: string[] = [];
+  onSessionDeleted(
+    sessionId: string,
+    agentId?: string,
+    persistedSessionKeys: string[] = [],
+    workspaceRoots: string[] = [],
+  ): void {
+    const removedKeys: string[] = [...new Set(persistedSessionKeys.map(key => key.trim()).filter(Boolean))];
     for (const [key, id] of this.sessionIdBySessionKey.entries()) {
       if (id === sessionId) {
-        removedKeys.push(key);
+        if (!removedKeys.includes(key)) removedKeys.push(key);
         this.sessionIdBySessionKey.delete(key);
       }
     }
     if (removedKeys.length === 0) {
       const effectiveAgentId = agentId || 'main';
-      removedKeys.push(this.toSessionKey(sessionId, effectiveAgentId));
+      removedKeys.push(buildManagedSessionKey(sessionId, effectiveAgentId));
     }
 
     for (const key of removedKeys) {
@@ -3193,6 +4406,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.terminalLifecycleErrorSessionIds.delete(sessionId);
     this.invalidateSubagentStatus(sessionId);
     this.subagentStatusRefreshes.delete(sessionId);
+    for (const workspaceRoot of new Set(workspaceRoots.filter(path.isAbsolute))) {
+      try {
+        this.approvedPlanArtifactStore?.removeSessionArtifacts?.(workspaceRoot, sessionId);
+      } catch (error) {
+        coworkLog('WARN', 'OpenClawRuntime', 'Failed to remove approved-plan artifacts', {
+          sessionId,
+          workspaceRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    try {
+      this.approvedPlanArtifactStore?.removeLegacySessionArtifacts?.(sessionId);
+    } catch (error) {
+      coworkLog('WARN', 'OpenClawRuntime', 'Failed to remove legacy approved-plan artifacts', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     // Delete remote sessions
     this.deleteOpenClawSessionByKeysWithRetry(sessionId, removedKeys).catch(() => {});
   }
@@ -3247,11 +4479,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   getSessionKeysForSession(sessionId: string): string[] {
     const keys: string[] = [];
+    for (const segment of this.store.listSessionSegments?.(sessionId) ?? []) {
+      if (!keys.includes(segment.sessionKey)) keys.push(segment.sessionKey);
+    }
     for (const [key, id] of this.sessionIdBySessionKey.entries()) {
       if (id === sessionId) keys.push(key);
     }
     const session = this.store.getSession(sessionId);
-    const managedKey = this.toSessionKey(sessionId, session?.agentId);
+    const managedKey = buildManagedSessionKey(sessionId, session?.agentId);
     if (!keys.includes(managedKey)) keys.push(managedKey);
     return keys;
   }

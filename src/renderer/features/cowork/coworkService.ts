@@ -25,6 +25,7 @@ import {
   setConfig,
   setCurrentSession,
   setGroups,
+  setPlanMode as setPlanModeState,
   setRemoteManaged,
   setSessionMainRuntimeActivity,
   setSessionRuntimeActivity,
@@ -90,6 +91,7 @@ export class CoworkService {
     Promise<{ success: boolean; error?: string; engineStatus?: OpenClawEngineStatus }>
   >();
   private readonly temporarySessionPermissionModes = new Map<string, PermissionMode>();
+  private readonly interactionResponses = new Map<string, Promise<boolean>>();
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -618,6 +620,11 @@ export class CoworkService {
       : undefined;
     const result = await cowork.startSession(options);
     if (result.success && result.session) {
+      const planModeEnabled = pendingTemporarySessionId
+        ? (store.getState().cowork.planModeBySession[pendingTemporarySessionId] ??
+          options.planMode ??
+          false)
+        : (options.planMode ?? false);
       const permissionMode = pendingTemporarySessionId
         ? await this.promoteTemporarySessionPermissionMode(
             pendingTemporarySessionId,
@@ -634,6 +641,13 @@ export class CoworkService {
       const select = store.getState().cowork.currentSession?.id === temporarySessionId;
       if (select) hooks.beforeSessionSelected?.(runningSession);
       store.dispatch(addSession({ session: runningSession, select }));
+      store.dispatch(
+        setPlanModeState({
+          sessionId: runningSession.id,
+          enabled: planModeEnabled,
+          ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
+        }),
+      );
       if (isRunning) this.markSessionInProgress(runningSession.id);
       if (result.timing) {
         store.dispatch(
@@ -798,6 +812,19 @@ export class CoworkService {
         ? { ...result.session, status: 'running' as const }
         : result.session;
       store.dispatch(setCurrentSession(session));
+      if (cowork.getPlanMode) {
+        const planModeBeforeLoad = store.getState().cowork.planModeBySession[sessionId];
+        void cowork
+          .getPlanMode(sessionId)
+          .then(planMode => {
+            if (requestId !== this.latestLoadSessionRequestId || !planMode.success) return;
+            if (store.getState().cowork.planModeBySession[sessionId] !== planModeBeforeLoad) {
+              return;
+            }
+            store.dispatch(setPlanModeState({ sessionId, enabled: planMode.enabled === true }));
+          })
+          .catch((): undefined => undefined);
+      }
       void this.loadSessionRuns(sessionId);
       if (mainRuntimeRunning) {
         this.markSessionInProgress(sessionId);
@@ -817,12 +844,36 @@ export class CoworkService {
   }
 
   async respondToInteraction(requestId: string, result: CoworkInteractionResult): Promise<boolean> {
+    const existingResponse = this.interactionResponses.get(requestId);
+    if (existingResponse) return existingResponse;
+
+    const response = this.performInteractionResponse(requestId, result);
+    this.interactionResponses.set(requestId, response);
+    try {
+      return await response;
+    } finally {
+      if (this.interactionResponses.get(requestId) === response) {
+        this.interactionResponses.delete(requestId);
+      }
+    }
+  }
+
+  private async performInteractionResponse(
+    requestId: string,
+    result: CoworkInteractionResult,
+  ): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
+    const interaction = store
+      .getState()
+      .cowork.pendingInteractions.find(candidate => candidate.requestId === requestId);
 
     try {
       const response = await cowork.respondToInteraction({ requestId, result });
       if (response.success) {
+        if (result.behavior === 'plan' && result.decision === 'implement' && interaction) {
+          store.dispatch(setPlanModeState({ sessionId: interaction.sessionId, enabled: false }));
+        }
         store.dispatch(dequeuePendingInteraction({ requestId }));
         return true;
       }
@@ -831,6 +882,36 @@ export class CoworkService {
       return false;
     } catch (error) {
       console.error('Failed to respond to interaction:', error);
+      return false;
+    } finally {
+      if (
+        result.behavior === 'plan' &&
+        result.decision === 'implement' &&
+        interaction &&
+        typeof window.dispatchEvent === 'function'
+      ) {
+        window.dispatchEvent(
+          new CustomEvent('justdo:plan-implementation-started', {
+            detail: { sessionId: interaction.sessionId },
+          }),
+        );
+      }
+    }
+  }
+
+  async setPlanMode(sessionId: string | undefined, enabled: boolean): Promise<boolean> {
+    if (!sessionId || sessionId.startsWith('temp-')) {
+      store.dispatch(setPlanModeState({ sessionId, enabled }));
+      return true;
+    }
+    const cowork = window.electron?.cowork;
+    if (!cowork) return false;
+    try {
+      const result = await cowork.setPlanMode(sessionId, enabled);
+      if (!result.success) return false;
+      store.dispatch(setPlanModeState({ sessionId, enabled: result.enabled === true }));
+      return true;
+    } catch {
       return false;
     }
   }
