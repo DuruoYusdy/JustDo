@@ -44,6 +44,31 @@ describe('Progress card Markdown', () => {
   });
 });
 
+describe('HTML comments', () => {
+  test('styles comment tokens only when the scoped preview option is enabled', () => {
+    const source = 'Before\n\n<!-- openclaw:dreaming:diary:end -->\n\nAfter';
+
+    const standard = toSanitizedMarkdownHtml(source);
+    const styled = toSanitizedMarkdownHtml(source, { styleHtmlComments: true });
+
+    expect(standard).not.toContain('markdown-html-comment');
+    expect(styled).toContain('class="markdown-html-comment"');
+    expect(styled).toContain('&lt;!-- openclaw:dreaming:diary:end --&gt;');
+  });
+
+  test('does not style escaped comments or comments inside code fences', () => {
+    const escaped = toSanitizedMarkdownHtml('\\<!-- visible comment -->', {
+      styleHtmlComments: true,
+    });
+    const fenced = toSanitizedMarkdownHtml('```html\n<!-- code comment -->\n```', {
+      styleHtmlComments: true,
+    });
+
+    expect(escaped).not.toContain('markdown-html-comment');
+    expect(fenced).not.toContain('markdown-html-comment');
+  });
+});
+
 describe('large Markdown content', () => {
   test('falls back to plaintext without truncating the message', () => {
     const source = `head:${'x'.repeat(200_000)}:<tail>`;

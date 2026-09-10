@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
   BookOpenIcon,
   CalendarDaysIcon,
   CheckCircleIcon,
@@ -8,7 +9,9 @@ import {
   DocumentTextIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
+  LightBulbIcon,
   MagnifyingGlassIcon,
+  QuestionMarkCircleIcon,
   SparklesIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -19,16 +22,19 @@ import type {
   MemoryOverview,
   MemorySearchHit,
 } from '@shared/openclaw/memory';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
+import ComposeIcon from '@/shared/components/icons/ComposeIcon';
+import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 
 type MemoryTab = 'overview' | 'search' | 'timeline' | 'files';
 
 const MEMORY_TABS: MemoryTab[] = ['overview', 'search', 'timeline', 'files'];
 
-const kindOrder: MemoryDocumentKind[] = ['longTerm', 'daily', 'dream', 'dreaming'];
+const kindOrder: MemoryDocumentKind[] = ['profile', 'longTerm', 'daily', 'dream', 'dreaming'];
 
 const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -36,13 +42,24 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
 
-const MemoryView: React.FC = () => {
+interface MemoryViewProps {
+  isSidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+  onNewChat: () => void;
+}
+
+const MemoryView: React.FC<MemoryViewProps> = ({
+  isSidebarCollapsed,
+  onToggleSidebar,
+  onNewChat,
+}) => {
   const [activeTab, setActiveTab] = useState<MemoryTab>('overview');
   const [overview, setOverview] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<MemoryDocument | null>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
+  const [documentAction, setDocumentAction] = useState<'open' | 'reveal' | null>(null);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchHits, setSearchHits] = useState<MemorySearchHit[]>([]);
@@ -50,7 +67,57 @@ const MemoryView: React.FC = () => {
   const [hasSearched, setHasSearched] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
+  const indexRequestRef = useRef(0);
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
+  const isMac = window.electron.platform === 'darwin';
+
+  const loadIndexStatus = useCallback(async () => {
+    const requestId = ++indexRequestRef.current;
+    setOverview(current =>
+      current ? { ...current, index: { ...current.index, loading: true } } : current,
+    );
+    try {
+      const result = await window.electron.openclaw.memory.getIndexStatus();
+      if (requestId !== indexRequestRef.current) return;
+      setOverview(current =>
+        current
+          ? {
+              ...current,
+              index:
+                result.success && result.index
+                  ? { ...result.index, loading: false }
+                  : {
+                      available: false,
+                      chunks: 0,
+                      dirty: false,
+                      loading: false,
+                      error: result.error,
+                    },
+            }
+          : current,
+      );
+    } catch (statusError) {
+      if (requestId !== indexRequestRef.current) return;
+      setOverview(current =>
+        current
+          ? {
+              ...current,
+              index: {
+                available: false,
+                chunks: 0,
+                dirty: false,
+                loading: false,
+                error:
+                  statusError instanceof Error
+                    ? statusError.message
+                    : i18nService.t('memoryIndexUnavailable'),
+              },
+            }
+          : current,
+      );
+    }
+  }, []);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -62,15 +129,19 @@ const MemoryView: React.FC = () => {
         return;
       }
       setOverview(result.overview);
+      void loadIndexStatus();
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : i18nService.t('memoryLoadFailed'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadIndexStatus]);
 
   useEffect(() => {
     void loadOverview();
+    return () => {
+      indexRequestRef.current += 1;
+    };
   }, [loadOverview]);
 
   const openDocument = useCallback(async (relativePath: string) => {
@@ -92,10 +163,41 @@ const MemoryView: React.FC = () => {
     }
   }, []);
 
-  const handleSearch = async (event?: React.FormEvent) => {
-    event?.preventDefault();
-    const normalizedQuery = query.trim();
+  const handleDocumentAction = async (action: 'open' | 'reveal') => {
+    if (!selectedDocument || documentAction) return;
+    setDocumentAction(action);
+    try {
+      const result =
+        action === 'open'
+          ? await window.electron.shell.openPath(selectedDocument.filePath)
+          : await window.electron.shell.showItemInFolder(selectedDocument.filePath);
+      if (!result.success) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail:
+              result.error ||
+              i18nService.t(
+                action === 'open' ? 'memoryOpenFileFailed' : 'memoryShowInFolderFailed',
+              ),
+          }),
+        );
+      }
+    } catch {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: i18nService.t(
+            action === 'open' ? 'memoryOpenFileFailed' : 'memoryShowInFolderFailed',
+          ),
+        }),
+      );
+    } finally {
+      setDocumentAction(null);
+    }
+  };
+
+  const searchMemory = async (normalizedQuery: string) => {
     if (!normalizedQuery || searching || rebuilding) return;
+    setActiveTab('search');
     setSearching(true);
     setHasSearched(true);
     setSearchError(null);
@@ -117,6 +219,16 @@ const MemoryView: React.FC = () => {
     } finally {
       setSearching(false);
     }
+  };
+
+  const handleSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    void searchMemory(query.trim());
+  };
+
+  const handleSuggestedSearch = (suggestion: string) => {
+    setQuery(suggestion);
+    void searchMemory(suggestion);
   };
 
   const handleRebuild = async () => {
@@ -149,6 +261,7 @@ const MemoryView: React.FC = () => {
   };
 
   const kindLabels: Record<MemoryDocumentKind, string> = {
+    profile: i18nService.t('memoryKindProfile'),
     longTerm: i18nService.t('memoryKindLongTerm'),
     daily: i18nService.t('memoryKindDaily'),
     dream: i18nService.t('memoryKindDream'),
@@ -171,13 +284,16 @@ const MemoryView: React.FC = () => {
     [locale],
   );
 
+  const profileMemory = overview?.documents.find(document => document.kind === 'profile');
   const longTermMemory = overview?.documents.find(document => document.kind === 'longTerm');
   const recentDocuments =
-    overview?.documents.filter(document => document.kind !== 'longTerm').slice(0, 5) || [];
+    overview?.documents
+      .filter(document => document.kind !== 'profile' && document.kind !== 'longTerm')
+      .slice(0, 5) || [];
   const timelineGroups = useMemo(() => {
     const groups = new Map<string, MemoryDocumentSummary[]>();
     for (const document of overview?.documents || []) {
-      if (document.kind === 'longTerm') continue;
+      if (document.kind === 'profile' || document.kind === 'longTerm') continue;
       const sourceDate = document.date
         ? new Date(`${document.date}T00:00:00`)
         : new Date(document.modifiedAt);
@@ -190,7 +306,10 @@ const MemoryView: React.FC = () => {
   }, [locale, overview]);
 
   const markdownHtml = useMemo(
-    () => toSanitizedMarkdownHtml(selectedDocument?.content || ''),
+    () =>
+      toSanitizedMarkdownHtml(selectedDocument?.content || '', {
+        styleHtmlComments: true,
+      }),
     [selectedDocument],
   );
 
@@ -235,7 +354,7 @@ const MemoryView: React.FC = () => {
 
   const renderEmpty = (title: string, description: string, compact = false) => (
     <div
-      className={`flex ${compact ? 'min-h-44' : 'min-h-52'} flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface/40 px-6 text-center`}
+      className={`flex ${compact ? 'min-h-28' : 'min-h-52'} flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface/40 px-6 text-center`}
     >
       <BookOpenIcon className="mb-3 h-9 w-9 text-muted" />
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
@@ -254,7 +373,7 @@ const MemoryView: React.FC = () => {
       },
       {
         label: i18nService.t('memoryStatChunks'),
-        value: overview.index.chunks,
+        value: overview.index.loading ? '…' : overview.index.chunks,
         detail: i18nService.t('memoryStatChunksDetail'),
         icon: CircleStackIcon,
       },
@@ -271,13 +390,55 @@ const MemoryView: React.FC = () => {
         icon: BookOpenIcon,
       },
     ];
-    const indexStatusDetail = overview.index.available
-      ? overview.index.dirty
-        ? i18nService.t('memoryIndexNeedsRefresh')
-        : i18nService.t('memoryIndexReady')
-      : i18nService.t('memoryIndexUnavailable');
+    const indexStatusDetail = overview.index.loading
+      ? i18nService.t('memoryIndexLoading')
+      : overview.index.available
+        ? overview.index.dirty
+          ? i18nService.t('memoryIndexNeedsRefresh')
+          : i18nService.t('memoryIndexReady')
+        : i18nService.t('memoryIndexUnavailable');
     return (
       <div className="space-y-5">
+        {showGuide && (
+          <section className="overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.09] via-surface to-amber-500/[0.06] p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
+                <LightBulbIcon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-foreground">
+                  {i18nService.t('memoryHowItWorksTitle')}
+                </h2>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-secondary">
+                  {i18nService.t('memoryHowItWorksDescription')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-2.5 md:grid-cols-3">
+              {[
+                ['01', 'memoryFlowCaptureTitle', 'memoryFlowCaptureDescription'],
+                ['02', 'memoryFlowConsolidateTitle', 'memoryFlowConsolidateDescription'],
+                ['03', 'memoryFlowRecallTitle', 'memoryFlowRecallDescription'],
+              ].map(([number, titleKey, descriptionKey]) => (
+                <div
+                  key={number}
+                  className="rounded-xl border border-border/80 bg-background/70 px-4 py-3 backdrop-blur-sm"
+                >
+                  <div className="text-[10px] font-bold tracking-[0.16em] text-primary">
+                    {number}
+                  </div>
+                  <h3 className="mt-1 text-sm font-semibold text-foreground">
+                    {i18nService.t(titleKey)}
+                  </h3>
+                  <p className="mt-1 text-[11px] leading-4 text-secondary">
+                    {i18nService.t(descriptionKey)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
           {stats.map(stat => (
             <div
@@ -303,12 +464,16 @@ const MemoryView: React.FC = () => {
           <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 shadow-sm">
             <div
               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                overview.index.available
-                  ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'bg-amber-500/10 text-amber-500'
+                overview.index.loading
+                  ? 'bg-primary/10 text-primary'
+                  : overview.index.available
+                    ? 'bg-emerald-500/10 text-emerald-500'
+                    : 'bg-amber-500/10 text-amber-500'
               }`}
             >
-              {overview.index.available ? (
+              {overview.index.loading ? (
+                <ArrowPathIcon className="h-4 w-4 animate-spin" />
+              ) : overview.index.available ? (
                 <CheckCircleIcon className="h-4 w-4" />
               ) : (
                 <ExclamationTriangleIcon className="h-4 w-4" />
@@ -328,7 +493,24 @@ const MemoryView: React.FC = () => {
           </div>
         </section>
 
-        <section>
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <div className="mb-3">
+              <h2 className="text-base font-semibold text-foreground">
+                {i18nService.t('memoryProfileTitle')}
+              </h2>
+              <p className="mt-0.5 text-xs text-secondary">
+                {i18nService.t('memoryProfileDescription')}
+              </p>
+            </div>
+            {profileMemory
+              ? documentCard(profileMemory)
+              : renderEmpty(
+                  i18nService.t('memoryProfileEmpty'),
+                  i18nService.t('memoryProfileEmptyDescription'),
+                  true,
+                )}
+          </div>
           <div>
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -384,35 +566,18 @@ const MemoryView: React.FC = () => {
 
   const renderSearch = () => (
     <div className="mx-auto max-w-4xl">
-      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-        <div className="flex items-center gap-2 text-primary">
-          <SparklesIcon className="h-5 w-5" />
+      <div className="flex items-start gap-3">
+        <SparklesIcon className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+        <div>
           <h2 className="text-sm font-semibold text-foreground">
-            {i18nService.t('memorySemanticSearchTitle')}
+            {hasSearched
+              ? i18nService.t('memorySearchResultsTitle')
+              : i18nService.t('memorySemanticSearchTitle')}
           </h2>
+          <p className="mt-1 text-xs leading-5 text-secondary">
+            {i18nService.t('memorySemanticSearchDescription')}
+          </p>
         </div>
-        <p className="mt-1 text-xs leading-5 text-secondary">
-          {i18nService.t('memorySemanticSearchDescription')}
-        </p>
-        <form onSubmit={handleSearch} className="mt-4 flex gap-2">
-          <div className="relative min-w-0 flex-1">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-            <input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder={i18nService.t('memorySearchPlaceholder')}
-              className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/15"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={!query.trim() || searching || rebuilding}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {searching && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-            {i18nService.t('memorySearchAction')}
-          </button>
-        </form>
       </div>
 
       <div className="mt-5 space-y-3">
@@ -447,6 +612,13 @@ const MemoryView: React.FC = () => {
             </p>
           </button>
         ))}
+        {searching &&
+          [0, 1, 2].map(item => (
+            <div
+              key={item}
+              className="h-28 animate-pulse rounded-2xl border border-border bg-surface"
+            />
+          ))}
         {hasSearched &&
           !searching &&
           !searchError &&
@@ -465,11 +637,11 @@ const MemoryView: React.FC = () => {
               <button
                 key={key}
                 type="button"
-                onClick={() => setQuery(i18nService.t(key))}
-                className="rounded-xl border border-border bg-surface/60 px-4 py-4 text-left text-xs text-secondary transition-colors hover:border-primary/30 hover:bg-surface"
+                onClick={() => handleSuggestedSearch(i18nService.t(key))}
+                className="inline-flex min-w-0 items-center gap-2.5 rounded-xl border border-border bg-surface/60 px-4 py-3.5 text-left text-xs text-secondary transition-colors hover:border-primary/30 hover:bg-surface hover:text-foreground"
               >
-                <MagnifyingGlassIcon className="mb-2 h-4 w-4 text-primary" />
-                {i18nService.t(key)}
+                <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate">{i18nService.t(key)}</span>
               </button>
             ))}
           </div>
@@ -548,79 +720,161 @@ const MemoryView: React.FC = () => {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b border-border bg-gradient-to-b from-primary/[0.05] to-transparent px-6 pb-0 pt-2">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <p className="pt-2 text-xs text-secondary">{i18nService.t('memoryDescription')}</p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadOverview()}
-              disabled={loading || rebuilding || searching}
-              className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              {i18nService.t('memoryRefresh')}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleRebuild()}
-              disabled={loading || rebuilding || searching}
-              className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <CircleStackIcon className={`h-4 w-4 ${rebuilding ? 'animate-pulse' : ''}`} />
-              {rebuilding ? i18nService.t('memoryRebuilding') : i18nService.t('memoryRebuild')}
-            </button>
-          </div>
+      <div className="draggable relative flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+        <div className="flex h-8 items-center">
+          {isSidebarCollapsed && (
+            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
+                aria-label={i18nService.t('expand')}
+              >
+                <SidebarToggleIcon className="h-4 w-4" isCollapsed />
+              </button>
+              <button
+                type="button"
+                onClick={onNewChat}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
+                aria-label={i18nService.t('newChat')}
+              >
+                <ComposeIcon className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
-        <nav className="mt-5 flex gap-5" aria-label={i18nService.t('memoryTitle')}>
-          {MEMORY_TABS.map(tab => (
+        <WindowTitleBar inline />
+      </div>
+
+      <header className="shrink-0 border-b border-border bg-gradient-to-br from-primary/[0.08] via-background to-amber-500/[0.04] px-6 pb-0 pt-5">
+        <div className="mx-auto max-w-6xl">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <BookOpenIcon className="h-5 w-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                    {i18nService.t('memoryTitle')}
+                  </h1>
+                  <p className="mt-0.5 text-xs text-secondary">
+                    {i18nService.t('memoryDescription')}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void loadOverview()}
+                disabled={loading || overview?.index.loading || rebuilding || searching}
+                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                {i18nService.t('memoryRefresh')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRebuild()}
+                disabled={loading || overview?.index.loading || rebuilding || searching}
+                className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3.5 text-xs font-medium text-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <CircleStackIcon className={`h-4 w-4 ${rebuilding ? 'animate-pulse' : ''}`} />
+                {rebuilding ? i18nService.t('memoryRebuilding') : i18nService.t('memoryRebuild')}
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleSearch} className="mt-5 flex max-w-3xl gap-2">
+            <label className="relative min-w-0 flex-1">
+              <MagnifyingGlassIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              <input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder={i18nService.t('memorySearchPlaceholder')}
+                className="h-11 w-full rounded-xl border border-border bg-surface/90 pl-10 pr-3 text-sm text-foreground shadow-sm outline-none transition-all placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/15"
+              />
+            </label>
             <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 pb-3 text-sm font-medium transition-colors ${
-                activeTab === tab
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-secondary hover:text-foreground'
-              }`}
+              type="submit"
+              disabled={!query.trim() || searching || rebuilding}
+              className="inline-flex h-11 items-center gap-2 rounded-xl bg-foreground px-5 text-sm font-semibold text-background shadow-sm transition-all hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {tabLabels[tab]}
+              {searching && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+              {i18nService.t('memorySearchAction')}
             </button>
-          ))}
-        </nav>
+          </form>
+
+          <nav className="mt-5 flex gap-1" aria-label={i18nService.t('memoryTitle')}>
+            {MEMORY_TABS.map(tab => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={`rounded-t-lg border-b-2 px-3 pb-3 pt-2 text-sm font-medium transition-colors ${
+                  activeTab === tab
+                    ? 'border-primary bg-background/70 text-primary'
+                    : 'border-transparent text-secondary hover:bg-background/40 hover:text-foreground'
+                }`}
+              >
+                {tabLabels[tab]}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('overview');
+                setShowGuide(value => !value);
+              }}
+              className={`ml-auto mb-2 inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                showGuide
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-secondary hover:bg-background/60 hover:text-foreground'
+              }`}
+              aria-label={i18nService.t('memoryHowItWorksTitle')}
+              aria-expanded={showGuide}
+              title={i18nService.t('memoryHowItWorksTitle')}
+            >
+              <QuestionMarkCircleIcon className="h-[18px] w-[18px]" />
+            </button>
+          </nav>
+        </div>
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        {notice && (
-          <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-600 dark:text-emerald-400">
-            <CheckCircleIcon className="h-4 w-4" />
-            {notice}
-          </div>
-        )}
-        {error && (
-          <div className="mb-4 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-xs text-danger">
-            <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="min-w-0 break-words">{error}</span>
-          </div>
-        )}
-        {loading && !overview ? (
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
-            {[0, 1, 2, 3, 4].map(item => (
-              <div
-                key={item}
-                className="h-[53px] animate-pulse rounded-xl border border-border bg-surface"
-              />
-            ))}
-          </div>
-        ) : activeTab === 'overview' ? (
-          renderOverview()
-        ) : activeTab === 'search' ? (
-          renderSearch()
-        ) : activeTab === 'timeline' ? (
-          renderTimeline()
-        ) : (
-          renderFiles()
-        )}
+        <div className="mx-auto max-w-6xl">
+          {notice && (
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-600 dark:text-emerald-400">
+              <CheckCircleIcon className="h-4 w-4" />
+              {notice}
+            </div>
+          )}
+          {error && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-xs text-danger">
+              <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="min-w-0 break-words">{error}</span>
+            </div>
+          )}
+          {loading && !overview ? (
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+              {[0, 1, 2, 3, 4].map(item => (
+                <div
+                  key={item}
+                  className="h-[53px] animate-pulse rounded-xl border border-border bg-surface"
+                />
+              ))}
+            </div>
+          ) : activeTab === 'overview' ? (
+            renderOverview()
+          ) : activeTab === 'search' ? (
+            renderSearch()
+          ) : activeTab === 'timeline' ? (
+            renderTimeline()
+          ) : (
+            renderFiles()
+          )}
+        </div>
       </main>
 
       {documentLoading && !selectedDocument && (
@@ -638,38 +892,64 @@ const MemoryView: React.FC = () => {
             aria-label={i18nService.t('close')}
           />
           <aside className="absolute bottom-2 right-0 top-2 z-50 flex w-[min(680px,88%)] flex-col overflow-hidden rounded-l-2xl border border-r-0 border-border bg-background shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-surface px-5 py-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                    {kindLabels[selectedDocument.kind]}
-                  </span>
-                  <span className="text-[11px] text-muted">
-                    {formatBytes(selectedDocument.size)}
-                  </span>
-                </div>
-                <h2 className="mt-2 truncate text-base font-semibold text-foreground">
-                  {selectedDocument.title}
-                </h2>
-                <p
-                  className="mt-0.5 truncate text-[11px] text-muted"
-                  title={selectedDocument.relativePath}
-                >
-                  {selectedDocument.relativePath}
-                </p>
+            <div className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-3 border-b border-border bg-surface px-3">
+              <div className="flex min-w-0 items-center gap-2 pl-1">
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                  {kindLabels[selectedDocument.kind]}
+                </span>
+                <span className="shrink-0 text-[11px] text-muted">
+                  {formatBytes(selectedDocument.size)}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedDocument(null)}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-                aria-label={i18nService.t('close')}
+              <h2
+                className="truncate text-center text-sm font-semibold text-foreground"
+                title={`${selectedDocument.title} · ${selectedDocument.relativePath}`}
               >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
+                {selectedDocument.title}
+              </h2>
+              <div className="flex items-center justify-end gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => void handleDocumentAction('open')}
+                  disabled={documentAction !== null}
+                  className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-wait disabled:opacity-50"
+                  aria-label={i18nService.t('memoryOpenFile')}
+                  title={i18nService.t('memoryOpenFile')}
+                >
+                  {documentAction === 'open' ? (
+                    <ArrowPathIcon className="h-[18px] w-[18px] animate-spin" />
+                  ) : (
+                    <ArrowTopRightOnSquareIcon className="h-[18px] w-[18px]" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDocumentAction('reveal')}
+                  disabled={documentAction !== null}
+                  className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-wait disabled:opacity-50"
+                  aria-label={i18nService.t('memoryShowInFolder')}
+                  title={i18nService.t('memoryShowInFolder')}
+                >
+                  {documentAction === 'reveal' ? (
+                    <ArrowPathIcon className="h-[18px] w-[18px] animate-spin" />
+                  ) : (
+                    <FolderOpenIcon className="h-[18px] w-[18px]" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDocument(null)}
+                  className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  aria-label={i18nService.t('close')}
+                  title={i18nService.t('close')}
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
               <article
-                className="mx-auto max-w-3xl text-[14px] leading-7 text-foreground [&_a]:text-primary [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-secondary [&_code]:rounded [&_code]:bg-surface-raised [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_h1]:mb-4 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-3 [&_h2]:mt-7 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-6 [&_hr]:border-border [&_li]:my-1 [&_li]:ml-6 [&_ol]:my-4 [&_ol]:list-decimal [&_p]:my-3 [&_pre]:my-4 [&_pre]:overflow-auto [&_pre]:rounded-xl [&_pre]:bg-surface-raised [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:my-5 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-surface-raised [&_th]:p-2 [&_ul]:my-4 [&_ul]:list-disc"
+                className="mx-auto max-w-3xl text-[14px] leading-7 text-foreground [&_.markdown-html-comment]:my-2 [&_.markdown-html-comment]:font-mono [&_.markdown-html-comment]:text-[13px] [&_.markdown-html-comment]:text-amber-600/70 dark:[&_.markdown-html-comment]:text-amber-400/60 [&_a]:text-primary [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-secondary [&_code]:rounded [&_code]:bg-surface-raised [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_h1]:mb-4 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-3 [&_h2]:mt-7 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-6 [&_hr]:border-border [&_li]:my-1 [&_li]:ml-6 [&_ol]:my-4 [&_ol]:list-decimal [&_p]:my-3 [&_pre]:my-4 [&_pre]:overflow-auto [&_pre]:rounded-xl [&_pre]:bg-surface-raised [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_table]:my-5 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-surface-raised [&_th]:p-2 [&_ul]:my-4 [&_ul]:list-disc"
                 dangerouslySetInnerHTML={{ __html: markdownHtml }}
               />
             </div>

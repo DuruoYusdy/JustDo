@@ -48,6 +48,7 @@ const CJK_SCRIPT_START_RE =
 const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
 const BOX_DRAWING_BOTTOM_RE = /^[ \t]*[└╚].*[┘╝][ \t]*$/u;
 const INLINE_DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
+const HTML_COMMENT_RE = /^<!--[\s\S]*-->$/u;
 const PROGRESS_HTML_RE = /^(?:<progress(?:\s[^<>]*)?>\s*(?:<\/progress>)?|<\/progress>)$/iu;
 const PROGRESS_CARD_RAW_CONTENT_BLOCK_RE =
   /<(script|style|iframe|object|template)\b[^>]*>[\s\S]*?<\/\1\s*>/giu;
@@ -628,9 +629,14 @@ function renderRawMarkdownHtml(
   index: number,
   allowProgressElement: boolean,
   block: boolean,
+  styleHtmlComments: boolean,
 ): string {
   const content = tokens[index]?.content ?? '';
   if (allowProgressElement) return PROGRESS_HTML_RE.test(content.trim()) ? content : '';
+  if (styleHtmlComments && HTML_COMMENT_RE.test(content.trim())) {
+    const tag = block ? 'div' : 'span';
+    return `<${tag} class="markdown-html-comment">${escapeHtml(content.trim())}</${tag}>${block ? '\n' : ''}`;
+  }
   return escapeHtml(content) + (block ? '\n' : '');
 }
 
@@ -638,11 +644,23 @@ function renderRawMarkdownHtml(
 // admits only the protocol's <progress value max> extension; DOMPurify remains
 // the final attribute and tag boundary.
 md.renderer.rules.html_block = (tokens, idx, _options, env) =>
-  renderRawMarkdownHtml(tokens, idx, env?.allowProgressElement === true, true);
+  renderRawMarkdownHtml(
+    tokens,
+    idx,
+    env?.allowProgressElement === true,
+    true,
+    env?.styleHtmlComments === true,
+  );
 md.renderer.rules.html_inline = (tokens, idx, _options, env) => {
   const token = tokens[idx];
   if (token.meta?.taskListPlugin === true) return token.content;
-  return renderRawMarkdownHtml(tokens, idx, env?.allowProgressElement === true, false);
+  return renderRawMarkdownHtml(
+    tokens,
+    idx,
+    env?.allowProgressElement === true,
+    false,
+    env?.styleHtmlComments === true,
+  );
 };
 
 // Override image to only allow base64 data URIs
@@ -756,6 +774,8 @@ export interface MarkdownRenderOptions {
   renderFrontmatter?: boolean;
   /** Allow only OpenClaw's progress-card `<progress value max>` extension. */
   allowProgressElement?: boolean;
+  /** Render HTML comments as subdued source markers instead of ordinary raw HTML text. */
+  styleHtmlComments?: boolean;
 }
 
 export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOptions = {}): string {
@@ -778,10 +798,11 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
       ? 'frontmatter-stripped'
       : 'full-document';
   const sanitizeMode = options.allowProgressElement ? 'progress-card' : 'standard';
+  const htmlCommentMode = options.styleHtmlComments ? 'comments-styled' : 'comments-plain';
   const activeSanitizeOptions = options.allowProgressElement
     ? progressCardSanitizeOptions
     : sanitizeOptions;
-  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${frontmatterMode}:${sanitizeMode}:${i18nService.getLanguage()}:${normalizedInput}`;
+  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${i18nService.getLanguage()}:${normalizedInput}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
@@ -803,6 +824,7 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
   try {
     rendered = md.render(renderInput, {
       allowProgressElement: options.allowProgressElement === true,
+      styleHtmlComments: options.styleHtmlComments === true,
     });
   } catch {
     rendered = `<pre class="code-block">${escapeHtml(renderInput)}</pre>`;

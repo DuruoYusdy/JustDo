@@ -1,11 +1,12 @@
 export const MemoryIpc = {
   GetOverview: 'openclaw:memory:getOverview',
+  GetIndexStatus: 'openclaw:memory:getIndexStatus',
   GetDocument: 'openclaw:memory:getDocument',
   Search: 'openclaw:memory:search',
   RebuildIndex: 'openclaw:memory:rebuildIndex',
 } as const;
 
-export type MemoryDocumentKind = 'longTerm' | 'daily' | 'dream' | 'dreaming';
+export type MemoryDocumentKind = 'profile' | 'longTerm' | 'daily' | 'dream' | 'dreaming';
 
 export interface MemoryDocumentSummary {
   id: string;
@@ -21,11 +22,13 @@ export interface MemoryDocumentSummary {
 }
 
 export interface MemoryDocument extends MemoryDocumentSummary {
+  filePath: string;
   content: string;
 }
 
 export interface MemoryDocumentCounts {
   total: number;
+  profile: number;
   longTerm: number;
   daily: number;
   dream: number;
@@ -36,6 +39,7 @@ export interface MemoryIndexStatus {
   available: boolean;
   chunks: number;
   dirty: boolean;
+  loading?: boolean;
   error?: string;
 }
 
@@ -57,6 +61,12 @@ export interface MemorySearchHit {
 export interface MemoryOverviewResult {
   success: boolean;
   overview?: MemoryOverview;
+  error?: string;
+}
+
+export interface MemoryIndexStatusResult {
+  success: boolean;
+  index?: MemoryIndexStatus;
   error?: string;
 }
 

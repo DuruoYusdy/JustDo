@@ -23,7 +23,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // 记忆
     memoryTitle: '记忆',
-    memoryDescription: '整理、检索并维护长期上下文',
+    memoryDescription: '查看助手记住了什么，让跨对话协作真正延续',
     memoryOverviewTab: '概览',
     memorySearchTab: '搜索',
     memoryTimelineTab: '时间线',
@@ -35,6 +35,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryRebuildFailed: '记忆索引重建失败',
     memoryLoadFailed: '记忆加载失败',
     memoryDocumentLoadFailed: '无法读取该记忆文件',
+    memoryOpenFile: '使用默认应用打开',
+    memoryOpenFileFailed: '无法打开该记忆文件',
+    memoryShowInFolder: '在文件夹中显示',
+    memoryShowInFolderFailed: '无法打开文件所在的文件夹',
+    memoryKindProfile: '用户画像',
     memoryKindLongTerm: '长期记忆',
     memoryKindDaily: '每日记忆',
     memoryKindDream: '梦境日记',
@@ -47,11 +52,17 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryStatDailyDetail: '按日期沉淀的工作记忆',
     memoryStatLongTerm: '长期条目',
     memoryStatLongTermDetail: '稳定且持续生效的记忆',
+    memoryProfileTitle: '关于你',
+    memoryProfileDescription: '助手用于理解你的身份、偏好和协作方式',
+    memoryProfileEmpty: '还没有用户画像',
+    memoryProfileEmptyDescription:
+      '告诉助手你的偏好和背景，并明确说“记住”，内容会逐步沉淀到 USER.md。',
     memoryLongTermTitle: '长期记忆',
     memoryLongTermDescription: '稳定的偏好、规则、背景与重要决定',
     memoryLongTermEmpty: '尚未形成长期记忆',
     memoryLongTermEmptyDescription: '重要的每日记忆经过提炼后，会沉淀到 MEMORY.md。',
     memoryIndexHealth: '索引状态',
+    memoryIndexLoading: '正在后台检查索引，不影响浏览',
     memoryIndexReady: '索引已就绪，可以进行语义搜索',
     memoryIndexNeedsRefresh: '文件发生变化，建议重建索引',
     memoryIndexUnavailable: '索引状态暂时不可用',
@@ -65,6 +76,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       '按含义查找记忆，不要求搜索词与原文完全一致。搜索由本地记忆索引完成。',
     memorySearchPlaceholder: '例如：我偏好的工作方式是什么？',
     memorySearchAction: '搜索记忆',
+    memorySearchResultsTitle: '搜索结果',
     memorySearchFailed: '记忆搜索失败',
     memorySearchEmpty: '没有找到相关记忆',
     memorySearchEmptyDescription: '可以换一种说法，或先重建记忆索引后再试。',
@@ -74,6 +86,15 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryTimelineEmpty: '时间线还是空的',
     memoryFilesEmpty: '没有可展示的记忆文件',
     memoryLastModified: '最后修改：',
+    memoryHowItWorksTitle: '记忆如何帮到你',
+    memoryHowItWorksDescription:
+      '记忆不是聊天记录备份。助手会从工作中沉淀有长期价值的偏好、背景和决定，并在相关任务中主动找回。',
+    memoryFlowCaptureTitle: '记录上下文',
+    memoryFlowCaptureDescription: '重要事实、决定与工作过程先进入每日记忆。',
+    memoryFlowConsolidateTitle: '提炼重点',
+    memoryFlowConsolidateDescription: '反复出现且长期有效的信息会整理为长期记忆。',
+    memoryFlowRecallTitle: '用于协作',
+    memoryFlowRecallDescription: '后续任务按含义检索相关内容，不必每次重新交代。',
 
     // 设置
     settings: '设置',
@@ -1768,7 +1789,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
 
     // Memory
     memoryTitle: 'Memory',
-    memoryDescription: 'Organize, search, and maintain durable context',
+    memoryDescription: 'See what your assistant remembers and carry context across conversations',
     memoryOverviewTab: 'Overview',
     memorySearchTab: 'Search',
     memoryTimelineTab: 'Timeline',
@@ -1780,6 +1801,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryRebuildFailed: 'Failed to rebuild the memory index',
     memoryLoadFailed: 'Failed to load memory',
     memoryDocumentLoadFailed: 'Unable to read this memory document',
+    memoryOpenFile: 'Open with default app',
+    memoryOpenFileFailed: 'Unable to open this memory file',
+    memoryShowInFolder: 'Show in folder',
+    memoryShowInFolderFailed: 'Unable to open the folder containing this file',
+    memoryKindProfile: 'User profile',
     memoryKindLongTerm: 'Long-term',
     memoryKindDaily: 'Daily memory',
     memoryKindDream: 'Dream diary',
@@ -1792,12 +1818,19 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryStatDailyDetail: 'Working memory organized by date',
     memoryStatLongTerm: 'Long-term entries',
     memoryStatLongTermDetail: 'Stable memory that remains in effect',
+    memoryProfileTitle: 'About you',
+    memoryProfileDescription:
+      'Identity, preferences, and working style the assistant uses to understand you',
+    memoryProfileEmpty: 'No user profile yet',
+    memoryProfileEmptyDescription:
+      'Share your preferences or background and explicitly ask the assistant to remember them. They can be distilled into USER.md.',
     memoryLongTermTitle: 'Long-term memory',
     memoryLongTermDescription: 'Stable preferences, rules, context, and important decisions',
     memoryLongTermEmpty: 'No long-term memory yet',
     memoryLongTermEmptyDescription:
       'Important daily memories can be distilled into MEMORY.md over time.',
     memoryIndexHealth: 'Index status',
+    memoryIndexLoading: 'Checking the index in the background; browsing is ready',
     memoryIndexReady: 'The index is ready for semantic search',
     memoryIndexNeedsRefresh: 'Files have changed; rebuilding is recommended',
     memoryIndexUnavailable: 'Index status is temporarily unavailable',
@@ -1812,6 +1845,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Find memories by meaning without requiring an exact wording match. Search is powered by the local memory index.',
     memorySearchPlaceholder: 'For example: What are my preferred ways of working?',
     memorySearchAction: 'Search memory',
+    memorySearchResultsTitle: 'Search results',
     memorySearchFailed: 'Memory search failed',
     memorySearchEmpty: 'No relevant memory found',
     memorySearchEmptyDescription:
@@ -1822,6 +1856,18 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     memoryTimelineEmpty: 'The timeline is empty',
     memoryFilesEmpty: 'No memory documents to display',
     memoryLastModified: 'Last modified:',
+    memoryHowItWorksTitle: 'How memory helps you',
+    memoryHowItWorksDescription:
+      'Memory is not a chat backup. The assistant distills durable preferences, context, and decisions from your work, then recalls them when they become relevant.',
+    memoryFlowCaptureTitle: 'Capture context',
+    memoryFlowCaptureDescription:
+      'Important facts, decisions, and work in progress first enter daily memory.',
+    memoryFlowConsolidateTitle: 'Distill what matters',
+    memoryFlowConsolidateDescription:
+      'Recurring, durable information is consolidated into long-term memory.',
+    memoryFlowRecallTitle: 'Use it in your work',
+    memoryFlowRecallDescription:
+      'Relevant context is retrieved by meaning, so you do not need to repeat it.',
 
     // Settings
     settings: 'Settings',
