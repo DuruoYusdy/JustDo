@@ -304,6 +304,7 @@ describe('OpenClawConfigSyncService', () => {
     nativeRestartStatus?: string;
     secretsChanged?: boolean;
     secretsReloadFails?: boolean;
+    authLogoutFails?: boolean;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
@@ -364,6 +365,13 @@ describe('OpenClawConfigSyncService', () => {
       if (method === 'secrets.reload') {
         if (options.secretsReloadFails) throw new Error('credential reload failed');
         return { ok: true };
+      }
+      if (method === 'models.authLogout') {
+        if (options.authLogoutFails) throw new Error('auth store busy');
+        return { removedProfiles: [`${(params as { provider: string }).provider}:default`] };
+      }
+      if (method === 'models.authStatus') {
+        return { providers: [] };
       }
       if (method === 'gateway.restart.request' && options.nativeRestartStatus) {
         return { ok: true, status: options.nativeRestartStatus };
@@ -563,6 +571,211 @@ describe('OpenClawConfigSyncService', () => {
     await expect(harness.service.syncConfig({ reason: 'provider-add' })).resolves.toMatchObject({ success: true });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
     expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('cleans retired provider auth profiles through the Gateway without failing the config sync', async () => {
+    const harness = createHarness();
+
+    await expect(
+      harness.service.syncConfig({ reason: 'provider-remove', retiredProviderIds: ['OldProxy'] }),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', {
+      provider: 'oldproxy',
+      agentId: 'main',
+    });
+  });
+
+  it('reconciles unresolved managed auth profiles left by an earlier app version', async () => {
+    const harness = createHarness();
+    harness.requestGateway.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === 'models.authStatus') {
+        return {
+          providers: [
+            {
+              provider: 'mymodel',
+              profiles: [
+                {
+                  profileId: 'mymodel:default',
+                  type: 'api_key',
+                  // OpenClaw treats a legacy ${ENV_VAR} string as statically
+                  // configured here even when the Secrets subsystem cannot
+                  // resolve it during startup.
+                  status: 'static',
+                  source: 'inherited',
+                },
+              ],
+            },
+            {
+              provider: 'manual-provider',
+              profiles: [
+                {
+                  profileId: 'manual-provider:personal',
+                  type: 'oauth',
+                  status: 'expired',
+                  source: 'saved',
+                },
+              ],
+            },
+          ],
+        };
+      }
+      if (method === 'models.authLogout') {
+        return { removedProfiles: [`${(params as { provider: string }).provider}:default`] };
+      }
+      if (method === 'exec.approvals.get') {
+        return {
+          hash: 'approval-hash',
+          file: {
+            version: 1,
+            defaults: { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
+            agents: {
+              'justdo-scheduler': { security: 'full', ask: 'off', askFallback: 'full' },
+            },
+          },
+        };
+      }
+      if (method === 'config.get') {
+        return {
+          config: {
+            models: { providers: { builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] } } },
+            agents: {
+              entries: {
+                'justdo-scheduler': {
+                  tools: {
+                    exec: { host: 'gateway', mode: 'full' },
+                    fs: { workspaceOnly: false },
+                  },
+                },
+              },
+            },
+            tools: {
+              exec: { host: 'gateway', mode: 'ask' },
+              fs: { workspaceOnly: true },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected Gateway method: ${method}`);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
+      success: true,
+    });
+    expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', {
+      provider: 'mymodel',
+      agentId: 'main',
+    });
+    expect(harness.requestGateway).not.toHaveBeenCalledWith('models.authLogout', {
+      provider: 'manual-provider',
+      agentId: 'main',
+    });
+  });
+
+  it('keeps a failed retired provider cleanup pending for the next verified sync', async () => {
+    const harness = createHarness({ authLogoutFails: true });
+
+    await expect(
+      harness.service.syncConfig({ reason: 'provider-remove', retiredProviderIds: ['oldproxy'] }),
+    ).resolves.toMatchObject({ success: true });
+    harness.requestGateway.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === 'models.authLogout') {
+        return { removedProfiles: [`${(params as { provider: string }).provider}:default`] };
+      }
+      if (method === 'exec.approvals.get') {
+        return {
+          hash: 'approval-hash',
+          file: {
+            version: 1,
+            defaults: { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
+            agents: {
+              'justdo-scheduler': { security: 'full', ask: 'off', askFallback: 'full' },
+            },
+          },
+        };
+      }
+      if (method === 'config.get') {
+        return {
+          config: {
+            agents: {
+              entries: {
+                'justdo-scheduler': {
+                  tools: {
+                    exec: { host: 'gateway', mode: 'full' },
+                    fs: { workspaceOnly: false },
+                  },
+                },
+              },
+            },
+            tools: {
+              exec: { host: 'gateway', mode: 'ask' },
+              fs: { workspaceOnly: true },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected Gateway method: ${method}`);
+    });
+
+    await expect(harness.service.verifyActivePermissionPolicy()).resolves.toMatchObject({
+      success: true,
+    });
+    expect(
+      harness.requestGateway.mock.calls.filter(([method]) => method === 'models.authLogout'),
+    ).toHaveLength(2);
+  });
+
+  it('cancels pending auth cleanup when a provider is restored by config rollback', async () => {
+    const harness = createHarness({ authLogoutFails: true });
+
+    await expect(
+      harness.service.syncConfig({ reason: 'provider-remove', retiredProviderIds: ['oldproxy'] }),
+    ).resolves.toMatchObject({ success: true });
+    harness.requestGateway.mockImplementation(async (method: string) => {
+      if (method === 'models.authStatus') return { providers: [] };
+      if (method === 'models.authLogout') return { removedProfiles: ['oldproxy:default'] };
+      if (method === 'exec.approvals.get') {
+        return {
+          hash: 'approval-hash',
+          file: {
+            version: 1,
+            defaults: { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
+            agents: {
+              'justdo-scheduler': { security: 'full', ask: 'off', askFallback: 'full' },
+            },
+          },
+        };
+      }
+      if (method === 'config.get') {
+        return {
+          config: {
+            models: { providers: { oldproxy: { models: [{ id: 'restored-model' }] } } },
+            agents: {
+              entries: {
+                'justdo-scheduler': {
+                  tools: {
+                    exec: { host: 'gateway', mode: 'full' },
+                    fs: { workspaceOnly: false },
+                  },
+                },
+              },
+            },
+            tools: {
+              exec: { host: 'gateway', mode: 'ask' },
+              fs: { workspaceOnly: true },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected Gateway method: ${method}`);
+    });
+
+    await expect(harness.service.verifyActivePermissionPolicy()).resolves.toMatchObject({
+      success: true,
+    });
+    expect(
+      harness.requestGateway.mock.calls.filter(([method]) => method === 'models.authLogout'),
+    ).toHaveLength(1);
   });
 
   it('does not restart for reordered provider environment variables', async () => {

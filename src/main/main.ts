@@ -15,7 +15,11 @@ import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   USER_DATA_DIRECTORY_NAME,
 } from '../shared/productMetadata';
-import { buildCustomProviderRenameAliases, ProviderName } from '../shared/providers';
+import {
+  buildCustomProviderRenameAliases,
+  listRetiredOpenClawProviderIds,
+  ProviderName,
+} from '../shared/providers';
 import type { ProxySettings } from '../shared/proxy';
 import { APP_NAME, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
@@ -546,6 +550,7 @@ const syncOpenClawConfig = (
     reason: string;
     restartGatewayIfRunning?: boolean;
     discoverExternalMcpServers?: boolean;
+    retiredProviderIds?: readonly string[];
   } = { reason: 'unknown' },
 ) => getOpenClawConfigSyncService().syncConfig(options);
 
@@ -801,6 +806,10 @@ if (!gotTheLock) {
       }
       const syncResult = await syncOpenClawConfig({
         reason: 'app-config-change',
+        retiredProviderIds: listRetiredOpenClawProviderIds(
+          (previousConfig as AppConfigSettings | undefined)?.providers,
+          (nextConfig as AppConfigSettings | undefined)?.providers,
+        ),
       });
       if (!syncResult.success) {
         console.error(

@@ -16,6 +16,8 @@ export {
   isLegacyCustomProviderKey,
   isReservedOpenClawProviderId,
   JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS,
+  listConfiguredOpenClawProviderIds,
+  listRetiredOpenClawProviderIds,
   normalizeOpenClawProviderId,
   rewriteOpenClawModelProviderId,
   validateCustomProviderDisplayName,

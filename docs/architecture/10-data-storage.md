@@ -20,6 +20,8 @@
 
 模型供应商配置仍以 SQLite `kv.app_config` 为产品来源。自定义供应商使用规范化展示名作为 `providers` key，并保存一个仅用于可靠识别改名操作的本地 UUID identity；不再支持的旧 `custom_N` 配置会在 Renderer 加载时删除，用户需要重新添加对应供应商。供 OpenClaw 读取的自定义供应商凭据按规范化名称派生为 `<openclawStateDir>/model-provider-secrets.json`；`openclaw.json` 只保存同名原生 file SecretRef，不包含这些 Key 的值。文件先通过独占临时文件设置权限，再写入并原子替换：POSIX 使用 `0600`，Windows 移除继承 ACL，仅授予当前用户、SYSTEM 和 Administrators。它是敏感派生文件，不应作为普通诊断配置导出或记录日志；供应商目录正常同步时移除不再引用的凭据。Key 内容变更通过 `secrets.reload` 刷新运行时，不要求重启进程，也不新增 SQLite 表。
 
+当已启用供应商被删除、禁用、改名，或失去最后一个可用模型而不再进入 OpenClaw 配置时，配置同步在新配置生效并把现有会话切回可用模型后，通过原生 `models.authLogout` 清理该供应商的系统 auth profile。进程首次成功验收配置时还会通过 `models.authStatus` 收敛旧版本遗留的孤儿：仅匹配已不在配置中、`<provider>:default`、`api_key` 且来源为 saved/inherited 的 profile，不依赖 auth status，因为 OpenClaw 会把无法解析的 legacy `${ENV_VAR}` Key 报告为 `static`；手工 OAuth/token 账号不会被清理。清理使用 `main` Agent 作为共享凭据 owner，由 OpenClaw 自己同步处理共享及继承状态；失败只进入内存待重试集合，并在下一次成功验收时重试，不直接修改 OpenClaw SQLite。该操作只删除鉴权 profile、顺序和健康/限流 `usageStats`，不会删除 transcript，因此 `usage.cost` 与 `sessions.usage` 的历史模型 Token 统计保持不变。
+
 ## 2. SQLite 参数
 
 `SqliteStore` 将 `app_config.providers.builtin_models.apiKey` 规范化为非秘密凭据引用，legacy `app_config.api.key` 若与旧内置值相同也一并改为引用。无关的用户自定义 legacy API Key 保持原有存储契约，不新增 OS 密钥服务依赖，避免没有系统密钥库的 Linux 用户无法启动。读取此前已保存的 OS 加密 legacy 记录仍需 Electron `safeStorage`，解密不可用时明确报错；不把密文当作 Key 使用。打开已有数据库时转换内置旧值，并尝试通过 secure-delete 和 WAL truncate 清理本次转换的数据库残留；历史备份、旧导出及存储介质残留不在该保证内。

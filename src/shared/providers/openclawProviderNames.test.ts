@@ -1,14 +1,62 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 
 import {
   buildCustomProviderRenameAliases,
   getEffectiveCustomProviderDisplayName,
   isReservedOpenClawProviderId,
   JUSTDO_RESERVED_OPENCLAW_PROVIDER_IDS,
+  listConfiguredOpenClawProviderIds,
+  listRetiredOpenClawProviderIds,
   normalizeOpenClawProviderId,
   rewriteOpenClawModelProviderId,
   validateCustomProviderDisplayName,
 } from './openclawProviderNames';
+
+describe('configured OpenClaw provider ids', () => {
+  const provider = (overrides: Record<string, unknown> = {}) => ({
+    enabled: true,
+    apiKey: 'fixture-key',
+    baseUrl: 'https://example.invalid/v1',
+    models: [{ id: 'fixture-model' }],
+    ...overrides,
+  });
+
+  it('uses canonical display names and ignores providers without usable models', () => {
+    expect(
+      listConfiguredOpenClawProviderIds({
+        internal: provider({ displayName: 'My Proxy' }),
+        disabled: provider({ enabled: false }),
+        empty: provider({ models: [] }),
+      }),
+    ).toEqual(['my proxy']);
+  });
+
+  it('retires a provider only when its last usable model is removed', () => {
+    const previous = {
+      proxy: provider({ models: [{ id: 'first' }, { id: 'second' }] }),
+    };
+
+    expect(
+      listRetiredOpenClawProviderIds(previous, {
+        proxy: provider({ models: [{ id: 'second' }] }),
+      }),
+    ).toEqual([]);
+    expect(
+      listRetiredOpenClawProviderIds(previous, {
+        proxy: provider({ models: [] }),
+      }),
+    ).toEqual(['proxy']);
+  });
+
+  it('retires the old provider id after a display-name change', () => {
+    expect(
+      listRetiredOpenClawProviderIds(
+        { internal: provider({ displayName: 'Old Proxy' }) },
+        { internal: provider({ displayName: 'New Proxy' }) },
+      ),
+    ).toEqual(['old proxy']);
+  });
+});
 
 describe('OpenClaw provider names', () => {
   test('keeps the JustDo-owned provider id inventory unique and normalized', () => {

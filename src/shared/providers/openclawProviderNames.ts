@@ -48,6 +48,59 @@ type CustomProviderConfigLike = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const hasConfiguredProviderModel = (value: unknown, respectEnabled: boolean): boolean =>
+  Array.isArray(value) &&
+  value.some(
+    model =>
+      isRecord(model) &&
+      (!respectEnabled || model.enabled !== false) &&
+      typeof model.id === 'string' &&
+      model.id.trim().length > 0,
+  );
+
+/**
+ * Resolve the provider ids that JustDo will publish to OpenClaw from an app
+ * config provider map. This intentionally mirrors the eligibility floor used
+ * by providerApiConfig without returning or logging credential values.
+ */
+export const listConfiguredOpenClawProviderIds = (providers: unknown): string[] => {
+  if (!isRecord(providers)) return [];
+
+  const ids = new Set<string>();
+  for (const [providerKey, value] of Object.entries(providers)) {
+    if (!isRecord(value) || value.enabled !== true) continue;
+    if (typeof value.baseUrl !== 'string' || !value.baseUrl.trim()) continue;
+    if (
+      providerKey !== 'builtin_models' &&
+      (typeof value.apiKey !== 'string' || !value.apiKey.trim())
+    ) {
+      continue;
+    }
+    if (
+      !hasConfiguredProviderModel(value.models, true) &&
+      !hasConfiguredProviderModel(value.embeddingModels, false)
+    ) {
+      continue;
+    }
+
+    const providerId = isJustDoCustomProviderKey(providerKey)
+      ? normalizeOpenClawProviderId(
+          getEffectiveCustomProviderDisplayName(providerKey, value.displayName),
+        )
+      : normalizeOpenClawProviderId(providerKey);
+    if (providerId) ids.add(providerId);
+  }
+  return [...ids].sort();
+};
+
+export const listRetiredOpenClawProviderIds = (
+  previousProviders: unknown,
+  nextProviders: unknown,
+): string[] => {
+  const nextIds = new Set(listConfiguredOpenClawProviderIds(nextProviders));
+  return listConfiguredOpenClawProviderIds(previousProviders).filter(id => !nextIds.has(id));
+};
+
 /**
  * Build wire-provider rename aliases by matching the stable internal provider
  * key in the previous and next app config. This only covers renames made by

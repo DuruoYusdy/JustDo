@@ -38,6 +38,7 @@ type SyncOpenClawConfigOptions = {
   reason: string;
   restartGatewayIfRunning?: boolean;
   discoverExternalMcpServers?: boolean;
+  retiredProviderIds?: readonly string[];
 };
 
 type SyncOpenClawConfigResult = {
@@ -122,6 +123,18 @@ type ConfigSnapshot = {
   };
 };
 
+type ModelAuthStatusSnapshot = {
+  unavailable?: unknown;
+  providers?: Array<{
+    provider?: unknown;
+    profiles?: Array<{
+      profileId?: unknown;
+      type?: unknown;
+      source?: unknown;
+    }>;
+  }>;
+};
+
 const removePersistentApprovalGrants = (
   entry: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -190,6 +203,8 @@ export class OpenClawConfigSyncService {
   private deferredRestartGeneration: number | null = null;
   private deferredRestartCheckInProgress = false;
   private syncTail: Promise<void> = Promise.resolve();
+  private readonly pendingRetiredProviderIds = new Set<string>();
+  private orphanedAuthProfilesReconciled = false;
 
   constructor(deps: OpenClawConfigSyncServiceDeps) {
     this.deps = deps;
@@ -383,6 +398,14 @@ export class OpenClawConfigSyncService {
   ): Promise<SyncOpenClawConfigResult> {
     console.log(`[OpenClaw] syncOpenClawConfig: called (reason: ${options.reason})`);
 
+    for (const providerId of options.retiredProviderIds ?? []) {
+      const normalized = providerId.trim().toLowerCase();
+      if (normalized) this.pendingRetiredProviderIds.add(normalized);
+    }
+    if (options.reason === BuiltinModelSyncReason.AuthLogout) {
+      this.pendingRetiredProviderIds.add('builtin_models');
+    }
+
     const engineManager = this.deps.getOpenClawEngineManager();
     if (options.discoverExternalMcpServers !== false) {
       try {
@@ -509,19 +532,25 @@ export class OpenClawConfigSyncService {
           changed: syncResult.changed,
           configSynced: true,
         },
-        { execPolicyAlreadyVerified: fallbackExecPolicyVerified },
+        {
+          execPolicyAlreadyVerified: fallbackExecPolicyVerified,
+          retiredProviderIds: options.retiredProviderIds,
+        },
       );
     }
 
     if (applyMode === 'native-reload') {
       const reloaded = await engineManager.waitForGatewayConfigReload(reloadGeneration);
       if (reloaded) {
-        return this.verifySuccessfulConfigApplication({
-          success: true,
-          changed: syncResult.changed,
-          configSynced: true,
-          status: engineManager.getStatus(),
-        });
+        return this.verifySuccessfulConfigApplication(
+          {
+            success: true,
+            changed: syncResult.changed,
+            configSynced: true,
+            status: engineManager.getStatus(),
+          },
+          { retiredProviderIds: options.retiredProviderIds },
+        );
       }
       if (isAuthLogout) {
         console.warn(
@@ -558,7 +587,11 @@ export class OpenClawConfigSyncService {
         };
         if (nativeRestart === GatewayConfigRestartOutcome.Ready) {
           const restored = await this.restoreGatewayBridgeOrFailClosed(result);
-          return restored.success ? this.verifySuccessfulConfigApplication(restored) : restored;
+          return restored.success
+            ? this.verifySuccessfulConfigApplication(restored, {
+                retiredProviderIds: options.retiredProviderIds,
+              })
+            : restored;
         }
         return result;
       }
@@ -579,7 +612,9 @@ export class OpenClawConfigSyncService {
       applyMode === 'hard-restart',
     );
     return restartResult.success
-      ? this.verifySuccessfulConfigApplication(restartResult)
+      ? this.verifySuccessfulConfigApplication(restartResult, {
+          retiredProviderIds: options.retiredProviderIds,
+        })
       : restartResult;
   }
 
@@ -596,7 +631,10 @@ export class OpenClawConfigSyncService {
 
   private async verifySuccessfulConfigApplication(
     result: SyncOpenClawConfigResult,
-    options: { execPolicyAlreadyVerified?: boolean } = {},
+    options: {
+      execPolicyAlreadyVerified?: boolean;
+      retiredProviderIds?: readonly string[];
+    } = {},
   ): Promise<SyncOpenClawConfigResult> {
     const engineManager = this.deps.getOpenClawEngineManager();
     if (engineManager.getStatus().phase !== 'running') return result;
@@ -610,6 +648,11 @@ export class OpenClawConfigSyncService {
       ]);
       if (runtimeConfigResult.verified && execPolicyApplied) {
         await this.syncManagedSessionModelsViaGateway(runtimeConfigResult.snapshot);
+        await this.discoverOrphanedManagedAuthProfiles(runtimeConfigResult.snapshot);
+        await this.cleanupRetiredProviderAuthProfiles(
+          runtimeConfigResult.snapshot,
+          options.retiredProviderIds ?? [],
+        );
         return { ...result, hostPolicyVerified: true };
       }
 
@@ -620,6 +663,92 @@ export class OpenClawConfigSyncService {
         error instanceof Error ? error.message : String(error)
       }`;
       return this.failClosedConfigApplication(result, message);
+    }
+  }
+
+  private async discoverOrphanedManagedAuthProfiles(snapshot: ConfigSnapshot): Promise<void> {
+    if (this.orphanedAuthProfilesReconciled) return;
+
+    try {
+      const configuredProviders = new Set(
+        Object.keys(snapshot.config?.models?.providers ?? {}).map(provider =>
+          provider.trim().toLowerCase(),
+        ),
+      );
+      const authStatus = await this.deps.requestGateway<ModelAuthStatusSnapshot>(
+        'models.authStatus',
+        { agentId: 'main' },
+      );
+      if (authStatus.unavailable) {
+        throw new Error('model authentication status is temporarily unavailable');
+      }
+      for (const entry of authStatus.providers ?? []) {
+        if (typeof entry.provider !== 'string') continue;
+        const provider = entry.provider.trim().toLowerCase();
+        if (!provider || configuredProviders.has(provider)) continue;
+
+        const profiles = Array.isArray(entry.profiles) ? entry.profiles : [];
+        const isJustDoManagedOrphan =
+          profiles.length > 0 &&
+          profiles.every(
+            profile =>
+              profile.profileId === `${provider}:default` &&
+              profile.type === 'api_key' &&
+              (profile.source === 'saved' || profile.source === 'inherited'),
+          );
+        if (isJustDoManagedOrphan) this.pendingRetiredProviderIds.add(provider);
+      }
+      this.orphanedAuthProfilesReconciled = true;
+    } catch (error) {
+      console.warn(
+        '[OpenClaw] Failed to inspect orphaned managed auth profiles; will retry later',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private async cleanupRetiredProviderAuthProfiles(
+    snapshot: ConfigSnapshot,
+    providerIds: readonly string[],
+  ): Promise<void> {
+    const configuredProviders = new Set(
+      Object.keys(snapshot.config?.models?.providers ?? {}).map(provider =>
+        provider.trim().toLowerCase(),
+      ),
+    );
+    const uniqueProviderIds = [
+      ...new Set([
+        ...this.pendingRetiredProviderIds,
+        ...providerIds.map(id => id.trim().toLowerCase()).filter(Boolean),
+      ]),
+    ];
+    for (const provider of uniqueProviderIds) {
+      if (configuredProviders.has(provider)) {
+        this.pendingRetiredProviderIds.delete(provider);
+        continue;
+      }
+      try {
+        const result = await this.deps.requestGateway<{
+          removedProfiles?: unknown;
+        }>('models.authLogout', {
+          provider,
+          agentId: 'main',
+        });
+        const removedCount = Array.isArray(result.removedProfiles)
+          ? result.removedProfiles.length
+          : 0;
+        console.info(
+          `[OpenClaw] Retired provider auth cleanup completed: provider=${provider} removedProfiles=${removedCount}`,
+        );
+        this.pendingRetiredProviderIds.delete(provider);
+      } catch (error) {
+        // Provider removal remains applied. A later config change can retry the
+        // cleanup without restoring a credential or touching session history.
+        console.warn(
+          `[OpenClaw] Failed to clean retired provider auth profile: provider=${provider}`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
   }
 
