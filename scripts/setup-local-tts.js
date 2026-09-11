@@ -10,19 +10,24 @@ const { pipeline } = require('stream/promises');
 
 const SHERPA_VERSION = '1.13.7';
 const MODEL_ID = 'kokoro-int8-multi-lang-v1_1';
-const ASR_MODEL_ID = 'sherpa-onnx-whisper-tiny';
+const ASR_MODEL_ID = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09';
 const RUNTIME_ARCHIVE = `sherpa-onnx-v${SHERPA_VERSION}-win-x64-shared-MD-MinSizeRel.tar.bz2`;
 const MODEL_ARCHIVE = `${MODEL_ID}.tar.bz2`;
 const ASR_MODEL_ARCHIVE = `${ASR_MODEL_ID}.tar.bz2`;
 const RUNTIME_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${RUNTIME_ARCHIVE}`;
 const MODEL_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${MODEL_ARCHIVE}`;
 const ASR_MODEL_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${ASR_MODEL_ARCHIVE}`;
-const ASR_MODEL_LICENSE_URL = 'https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE';
+const ASR_MODEL_LICENSE_URL =
+  'https://raw.githubusercontent.com/modelscope/FunASR/main/MODEL_LICENSE';
+const WHISPER_MODEL_LICENSE_URL =
+  'https://raw.githubusercontent.com/openai/whisper/v20250625/LICENSE';
 const RUNTIME_LICENSE_URL = `https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${SHERPA_VERSION}/LICENSE`;
 const RUNTIME_SHA256 = '16d96d9f4787a698541fc53740077f70b5c8a76ef36aff803503de1aa036ede7';
 const MODEL_SHA256 = 'a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6';
-const ASR_MODEL_SHA256 = 'c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1';
-const ASR_MODEL_LICENSE_SHA256 = 'b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d';
+const ASR_MODEL_SHA256 = '7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63';
+const ASR_MODEL_LICENSE_SHA256 = '7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8';
+const WHISPER_MODEL_LICENSE_SHA256 =
+  'b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d';
 const RUNTIME_LICENSE_SHA256 = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30';
 const ADDITIONAL_MODELS = [
   {
@@ -30,20 +35,10 @@ const ADDITIONAL_MODELS = [
     archive: 'sherpa-onnx-whisper-base.tar.bz2',
     release: 'asr-models',
     sha256: '911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de',
-    licenseUrl: ASR_MODEL_LICENSE_URL,
-    licenseSha256: ASR_MODEL_LICENSE_SHA256,
+    licenseUrl: WHISPER_MODEL_LICENSE_URL,
+    licenseSha256: WHISPER_MODEL_LICENSE_SHA256,
     requiredFiles: ['base-encoder.int8.onnx', 'base-decoder.int8.onnx', 'base-tokens.txt'],
     prune: ['base-encoder.onnx', 'base-decoder.onnx', 'test_wavs'],
-  },
-  {
-    id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-    archive: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2',
-    release: 'asr-models',
-    sha256: '7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63',
-    licenseUrl: 'https://raw.githubusercontent.com/FunAudioLLM/SenseVoice/main/LICENSE',
-    licenseSha256: '4bc3bffe14ebe38cc67309991e04f92866835eac1c5e2e1abd37163f67c6de5f',
-    requiredFiles: ['model.int8.onnx', 'tokens.txt'],
-    prune: ['test_wavs'],
   },
   {
     id: 'vits-icefall-zh-aishell3',
@@ -52,7 +47,14 @@ const ADDITIONAL_MODELS = [
     sha256: 'ab468db3a3308cdd861495e0db2f25d79418a0c00639f74944c7cdf5dd8c6ec1',
     licenseUrl: 'https://raw.githubusercontent.com/k2-fsa/icefall/master/LICENSE',
     licenseSha256: RUNTIME_LICENSE_SHA256,
-    requiredFiles: ['model.onnx', 'tokens.txt', 'lexicon.txt', 'phone.fst', 'date.fst', 'number.fst'],
+    requiredFiles: [
+      'model.onnx',
+      'tokens.txt',
+      'lexicon.txt',
+      'phone.fst',
+      'date.fst',
+      'number.fst',
+    ],
     prune: ['rule.far'],
   },
   {
@@ -75,6 +77,7 @@ const EXECUTABLE_PATH = path.join(RUNTIME_ROOT, 'bin', 'sherpa-onnx-offline-tts.
 const ASR_EXECUTABLE_PATH = path.join(RUNTIME_ROOT, 'bin', 'sherpa-onnx-offline.exe');
 const MODEL_ROOT = path.join(OUTPUT_ROOT, MODEL_ID);
 const ASR_MODEL_ROOT = path.join(OUTPUT_ROOT, ASR_MODEL_ID);
+const ASR_REQUIRED_MODEL_FILES = ['model.int8.onnx', 'tokens.txt'];
 const VERSION_MARKER = path.join(OUTPUT_ROOT, '.justdo-local-speech-runtime-version');
 const EXPECTED_VERSION_MARKER = `sherpa-onnx=${SHERPA_VERSION}\n`;
 const REQUIRED_MODEL_FILES = [
@@ -108,7 +111,7 @@ function areModelsPrepared() {
     fs.existsSync(path.join(OUTPUT_ROOT, 'KOKORO-LICENSE.txt')) &&
     fs.existsSync(path.join(OUTPUT_ROOT, 'WHISPER-LICENSE.txt')) &&
     REQUIRED_MODEL_FILES.every(file => fs.existsSync(path.join(MODEL_ROOT, file))) &&
-    ['tiny-encoder.int8.onnx', 'tiny-decoder.int8.onnx', 'tiny-tokens.txt'].every(file =>
+    [...ASR_REQUIRED_MODEL_FILES, 'LICENSE'].every(file =>
       fs.existsSync(path.join(ASR_MODEL_ROOT, file)),
     ) &&
     ADDITIONAL_MODELS.every(model =>
@@ -307,11 +310,7 @@ function pruneRuntime() {
 
 function pruneAsrModel() {
   for (const entry of fs.readdirSync(ASR_MODEL_ROOT, { withFileTypes: true })) {
-    if (
-      entry.name === 'tiny-encoder.onnx' ||
-      entry.name === 'tiny-decoder.onnx' ||
-      entry.name === 'test_wavs'
-    ) {
+    if (entry.name === 'test_wavs') {
       fs.rmSync(path.join(ASR_MODEL_ROOT, entry.name), { recursive: true, force: true });
     }
   }
@@ -333,10 +332,9 @@ async function ensureLocalTts(options = {}) {
     pruneRuntime();
     fs.copyFileSync(runtimeLicense, path.join(RUNTIME_ROOT, 'LICENSE'));
     fs.copyFileSync(runtimeLicense, path.join(OUTPUT_ROOT, 'SHERPA-ONNX-LICENSE.txt'));
-    fs.rmSync(
-      path.join(OUTPUT_ROOT, `sherpa-onnx-non-streaming-tts-x64-v${SHERPA_VERSION}.exe`),
-      { force: true },
-    );
+    fs.rmSync(path.join(OUTPUT_ROOT, `sherpa-onnx-non-streaming-tts-x64-v${SHERPA_VERSION}.exe`), {
+      force: true,
+    });
     fs.rmSync(path.join(OUTPUT_ROOT, 'sherpa-onnx-non-streaming-tts.exe'), { force: true });
     fs.writeFileSync(VERSION_MARKER, EXPECTED_VERSION_MARKER, 'utf8');
   }
@@ -345,16 +343,20 @@ async function ensureLocalTts(options = {}) {
   if (includeModels && !areModelsPrepared()) {
     const modelArchive = path.join(CACHE_ROOT, MODEL_ARCHIVE);
     const asrModelArchive = path.join(CACHE_ROOT, ASR_MODEL_ARCHIVE);
-    const asrModelLicense = path.join(CACHE_ROOT, 'whisper-LICENSE');
+    const asrModelLicense = path.join(CACHE_ROOT, 'sensevoice-LICENSE');
     await download(MODEL_URL, modelArchive, MODEL_SHA256);
     await download(ASR_MODEL_URL, asrModelArchive, ASR_MODEL_SHA256);
     await download(ASR_MODEL_LICENSE_URL, asrModelLicense, ASR_MODEL_LICENSE_SHA256);
     extractModel(modelArchive);
     extractAsrModel(asrModelArchive);
     pruneAsrModel();
+    fs.copyFileSync(asrModelLicense, path.join(ASR_MODEL_ROOT, 'LICENSE'));
     fs.copyFileSync(path.join(MODEL_ROOT, 'LICENSE'), path.join(OUTPUT_ROOT, 'KOKORO-LICENSE.txt'));
-    fs.copyFileSync(asrModelLicense, path.join(OUTPUT_ROOT, 'WHISPER-LICENSE.txt'));
     await prepareAdditionalModels();
+    fs.copyFileSync(
+      path.join(OUTPUT_ROOT, 'sherpa-onnx-whisper-base', 'LICENSE'),
+      path.join(OUTPUT_ROOT, 'WHISPER-LICENSE.txt'),
+    );
   }
   if (includeModels && !areModelsPrepared()) {
     throw new Error('Local speech models failed validation after extraction.');

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
 import {
-  LOCAL_ASR_MODEL_ID,
+  LOCAL_ASR_DEFAULT_MODEL_ID,
   LocalAsrIpc,
   type LocalAsrTranscribeOptions,
   type LocalAsrTranscribeResult,
@@ -15,7 +15,7 @@ import {
 
 export function registerLocalAsrHandlers(): void {
   ipcMain.handle(LocalAsrIpc.GetStatus, (_event, modelId: unknown) =>
-    getLocalAsrStatus(isLocalAsrModelId(modelId) ? modelId : LOCAL_ASR_MODEL_ID),
+    getLocalAsrStatus(isLocalAsrModelId(modelId) ? modelId : LOCAL_ASR_DEFAULT_MODEL_ID),
   );
   ipcMain.handle(
     LocalAsrIpc.Transcribe,
@@ -25,7 +25,7 @@ export function registerLocalAsrHandlers(): void {
         !(audio instanceof Uint8Array) ||
         !request ||
         !isLocalAsrModelId(request.modelId) ||
-        (request.language !== 'zh' && request.language !== 'en')
+        !['auto', 'zh', 'en', 'ja', 'ko', 'yue'].includes(request.language ?? '')
       ) {
         return { success: false, error: 'Invalid local transcription request.' };
       }

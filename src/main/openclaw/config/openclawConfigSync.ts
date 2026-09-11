@@ -316,6 +316,64 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 };
 
+export const resolveManagedOpenClawTtsConfig = (
+  existingConfig: Record<string, unknown> | null,
+  localTtsConfig: Record<string, unknown> | null,
+  outputState: { enabled: boolean; mode: 'local' | 'online' } = {
+    enabled: true,
+    mode: 'online',
+  },
+): Record<string, unknown> | null => {
+  const existingTts = isRecord(existingConfig?.tts) ? existingConfig.tts : null;
+  if (!outputState.enabled) return existingTts ? { ...existingTts, enabled: false } : null;
+  if (outputState.mode === 'local') {
+    if (!localTtsConfig) return existingTts ? { ...existingTts, enabled: false } : null;
+    const existingProviders = isRecord(existingTts?.providers) ? existingTts.providers : {};
+    const localProviders = isRecord(localTtsConfig.providers) ? localTtsConfig.providers : {};
+    return {
+      ...(existingTts ?? {}),
+      ...localTtsConfig,
+      providers: { ...existingProviders, ...localProviders },
+    };
+  }
+  if (!existingTts) return null;
+  const currentProvider =
+    typeof existingTts.provider === 'string' ? existingTts.provider.trim() : '';
+  if (currentProvider === 'openai' || currentProvider === 'elevenlabs') {
+    return existingTts.enabled === false ? { ...existingTts, enabled: true } : existingTts;
+  }
+  const providers = isRecord(existingTts.providers) ? existingTts.providers : {};
+  const onlineProvider = ['openai', 'elevenlabs'].find(provider => isRecord(providers[provider]));
+  return onlineProvider
+    ? { ...existingTts, enabled: true, provider: onlineProvider }
+    : { ...existingTts, enabled: false };
+};
+
+const MANAGED_TTS_PLUGIN_IDS = new Set([LOCAL_TTS_PROVIDER_ID, 'openai', 'elevenlabs']);
+
+export const buildManagedOpenClawTtsPluginEntries = (
+  ttsConfig: Record<string, unknown> | null,
+): Record<string, { enabled: true }> => {
+  const provider = typeof ttsConfig?.provider === 'string' ? ttsConfig.provider.trim() : '';
+  return provider && MANAGED_TTS_PLUGIN_IDS.has(provider)
+    ? { [provider]: { enabled: true } }
+    : {};
+};
+
+export const buildManagedOnlineAsrPluginEntries = (
+  existingPlugins: Record<string, unknown>,
+): Record<string, Record<string, unknown>> => {
+  const entries = isRecord(existingPlugins.entries) ? existingPlugins.entries : {};
+  const voiceCall = isRecord(entries['voice-call']) ? entries['voice-call'] : null;
+  const config = voiceCall && isRecord(voiceCall.config) ? voiceCall.config : null;
+  const streaming = config && isRecord(config.streaming) ? config.streaming : null;
+  const provider = typeof streaming?.provider === 'string' ? streaming.provider.trim() : '';
+  const providers = isRecord(streaming?.providers) ? streaming.providers : null;
+  return provider && providers && isRecord(providers[provider])
+    ? { 'voice-call': voiceCall! }
+    : {};
+};
+
 type OpenClawConfigVerification = {
   ok: boolean;
   error?: string;
@@ -1751,6 +1809,7 @@ type OpenClawConfigSyncDeps = {
   getAgents?: () => Agent[];
   getBrowserMode?: () => BrowserModeValue;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
+  getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
 };
 
 export class OpenClawConfigSync {
@@ -1762,6 +1821,7 @@ export class OpenClawConfigSync {
   private readonly getAgents?: () => Agent[];
   private readonly getBrowserMode?: () => BrowserModeValue;
   private readonly getLocalTtsConfig: () => Record<string, unknown> | null;
+  private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -1773,6 +1833,8 @@ export class OpenClawConfigSync {
     this.getAgents = deps.getAgents;
     this.getBrowserMode = deps.getBrowserMode;
     this.getLocalTtsConfig = deps.getLocalTtsConfig ?? (() => null);
+    this.getSpeechOutputState =
+      deps.getSpeechOutputState ?? (() => ({ enabled: true, mode: 'online' }));
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -1916,9 +1978,15 @@ export class OpenClawConfigSync {
     );
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const localTtsConfig = this.getLocalTtsConfig();
+    const managedTtsConfig = resolveManagedOpenClawTtsConfig(
+      existingConfig,
+      localTtsConfig,
+      this.getSpeechOutputState(),
+    );
     const bundledExtensionEntries = {
       ...buildManagedBundledExtensionEntries(agentRuntimeSettings),
-      ...(localTtsConfig ? { [LOCAL_TTS_PROVIDER_ID]: { enabled: true } } : {}),
+      ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
+      ...buildManagedOnlineAsrPluginEntries(existingPlugins),
     };
     const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
       ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
@@ -2000,7 +2068,7 @@ export class OpenClawConfigSync {
         ...this.buildAgentsEntries(primaryModel, availableModelRefs, resolvedWorkspaceDir),
       },
       session: buildManagedOpenClawSessionConfig(),
-      ...(localTtsConfig ? { tts: localTtsConfig } : {}),
+      ...(managedTtsConfig ? { tts: managedTtsConfig } : {}),
       commands: {
         // Internal `chat.send` turns identify the sender as bare `gateway-client`.
         // Prefixing with `webchat:` does not round-trip through owner resolution,
@@ -2305,9 +2373,14 @@ export class OpenClawConfigSync {
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
     );
     const localTtsConfig = this.getLocalTtsConfig();
+    const managedTtsConfig = resolveManagedOpenClawTtsConfig(
+      null,
+      localTtsConfig,
+      this.getSpeechOutputState(),
+    );
     const bundledExtensionEntries = {
       ...buildManagedBundledExtensionEntries(agentRuntimeSettings),
-      ...(localTtsConfig ? { [LOCAL_TTS_PROVIDER_ID]: { enabled: true } } : {}),
+      ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
     const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
       ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }

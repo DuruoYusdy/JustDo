@@ -866,6 +866,31 @@ interface IElectronAPI {
       options: import('../../shared/localAsr').LocalAsrTranscribeOptions,
     ) => Promise<import('../../shared/localAsr').LocalAsrTranscribeResult>;
   };
+  onlineAsr: {
+    getStatus: () => Promise<import('../../shared/onlineAsr').OnlineAsrStatus>;
+    getConfiguration: () => Promise<import('../../shared/onlineAsr').OnlineAsrConfiguration>;
+    saveConfiguration: (
+      update: import('../../shared/onlineAsr').OnlineAsrConfigurationUpdate,
+    ) => Promise<void>;
+    start: (
+      options: import('../../shared/onlineAsr').OnlineAsrStartOptions,
+    ) => Promise<import('../../shared/onlineAsr').OnlineAsrSession>;
+    appendAudio: (sessionId: string, audioBase64: string) => Promise<void>;
+    close: (sessionId: string) => Promise<void>;
+    onEvent: (
+      callback: (event: import('../../shared/onlineAsr').OnlineAsrEvent) => void,
+    ) => () => void;
+  };
+  onlineTts: {
+    getStatus: () => Promise<import('../../shared/onlineTts').OnlineTtsStatus>;
+    getConfiguration: () => Promise<import('../../shared/onlineTts').OnlineTtsConfiguration>;
+    saveConfiguration: (
+      update: import('../../shared/onlineTts').OnlineTtsConfigurationUpdate,
+    ) => Promise<void>;
+  };
+  mediaCapture: {
+    armSystemAudio: () => Promise<void>;
+  };
   localSpeechModels: {
     list: () => Promise<import('../../shared/localSpeechModels').LocalSpeechModelListResult>;
     install: (

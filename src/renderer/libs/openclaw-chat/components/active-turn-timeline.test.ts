@@ -500,6 +500,38 @@ describe('active turn timeline', () => {
     expect(rendered).toContain('Application started');
   });
 
+  test('renders the floating speaker action for completed active Content', () => {
+    const rendered = flatten(
+      renderTimelineItem(
+        {
+          kind: 'content',
+          key: 'content:speech',
+          item: {
+            id: 'content:speech',
+            runId: 'run-1',
+            firstSeq: 1,
+            lastSeq: 1,
+            startedAt: 1,
+            updatedAt: 1,
+            type: 'content',
+            status: 'completed',
+            text: 'Read this response',
+            sourceMode: 'delta',
+          },
+        },
+        Date.now(),
+        false,
+        true,
+        new Map(),
+        undefined,
+        { state: 'idle', onSpeak: vi.fn() },
+      ),
+    );
+
+    expect(rendered).toContain('message-speech');
+    expect(rendered).toContain('message-speech__icon');
+  });
+
   test('expands archived Thinking and Tool inline in chronological order', () => {
     const rendered = flatten(renderTimelineItem(summary(), 100, true));
 

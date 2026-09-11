@@ -7,7 +7,7 @@ import * as tar from 'tar';
 import { createZstdDecompress } from 'zlib';
 
 import appUpdateConfig from '../../shared/appUpdateConfig.json';
-import { LOCAL_ASR_MODEL_ID } from '../../shared/localAsr';
+import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/localAsr';
 import {
   type LocalSpeechModelInstallResult,
   LocalSpeechModelKind,
@@ -59,17 +59,12 @@ export const LOCAL_SPEECH_MODEL_ARTIFACTS: LocalSpeechModelArtifact[] = [
     ],
   },
   {
-    id: LOCAL_ASR_MODEL_ID,
+    id: LOCAL_ASR_DEFAULT_MODEL_ID,
     kind: LocalSpeechModelKind.Asr,
-    file: `${LOCAL_ASR_MODEL_ID}.tar.zst`,
-    sha256: 'f14129a4a5bcaf675770bd4e30753c38d5967a96466e0912e5ee2c27175f7d9e',
-    compressedBytes: 55_282_846,
-    requiredFiles: [
-      'tiny-encoder.int8.onnx',
-      'tiny-decoder.int8.onnx',
-      'tiny-tokens.txt',
-      'MODEL-LICENSE.txt',
-    ],
+    file: `${LOCAL_ASR_DEFAULT_MODEL_ID}.tar.zst`,
+    sha256: '52883e8e75c869d95006451d786fa91678f3af196210d4ec55f5b96c086b2444',
+    compressedBytes: 155_381_132,
+    requiredFiles: ['model.int8.onnx', 'tokens.txt', 'MODEL-LICENSE.txt'],
   },
   {
     id: 'sherpa-onnx-whisper-base',
@@ -83,14 +78,6 @@ export const LOCAL_SPEECH_MODEL_ARTIFACTS: LocalSpeechModelArtifact[] = [
       'base-tokens.txt',
       'MODEL-LICENSE.txt',
     ],
-  },
-  {
-    id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-    kind: LocalSpeechModelKind.Asr,
-    file: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.zst',
-    sha256: '52883e8e75c869d95006451d786fa91678f3af196210d4ec55f5b96c086b2444',
-    compressedBytes: 155_381_132,
-    requiredFiles: ['model.int8.onnx', 'tokens.txt', 'MODEL-LICENSE.txt'],
   },
   {
     id: 'vits-icefall-zh-aishell3',
@@ -167,9 +154,7 @@ export class LocalSpeechModelService {
   }
 
   install(kind: unknown, id: unknown): Promise<LocalSpeechModelInstallResult> {
-    const artifact = this.artifacts.find(
-      model => model.kind === kind && model.id === id,
-    );
+    const artifact = this.artifacts.find(model => model.kind === kind && model.id === id);
     if (!artifact) {
       return Promise.resolve({
         success: false,
@@ -254,7 +239,8 @@ export class LocalSpeechModelService {
           new URL('manifest.json', this.resolveBaseUrl()).toString(),
           { cache: 'no-store', redirect: 'follow' },
         );
-        if (!response.ok) throw new Error(`Model catalog download failed with HTTP ${response.status}.`);
+        if (!response.ok)
+          throw new Error(`Model catalog download failed with HTTP ${response.status}.`);
         const manifest = (await response.json()) as Partial<LocalSpeechServerManifest>;
         if (manifest.version !== 1 || !Array.isArray(manifest.models)) {
           throw new Error('Model catalog is invalid.');
@@ -301,10 +287,7 @@ export class LocalSpeechModelService {
     return Boolean(modelDir && isModelComplete(modelDir, artifact));
   }
 
-  private update(
-    artifact: LocalSpeechModelArtifact,
-    patch: Partial<LocalSpeechModelStatus>,
-  ): void {
+  private update(artifact: LocalSpeechModelArtifact, patch: Partial<LocalSpeechModelStatus>): void {
     const status = { ...this.statuses.get(artifact.id)!, ...patch };
     this.statuses.set(artifact.id, status);
     this.dependencies.notify({ ...status });
@@ -313,7 +296,9 @@ export class LocalSpeechModelService {
   private async installArtifact(
     artifact: LocalSpeechModelArtifact,
   ): Promise<LocalSpeechModelInstallResult> {
-    const modelsRoot = resolveLocalSpeechModelsRoot({ userDataPath: this.dependencies.userDataPath });
+    const modelsRoot = resolveLocalSpeechModelsRoot({
+      userDataPath: this.dependencies.userDataPath,
+    });
     if (!modelsRoot) return this.fail(artifact, 'Local speech models are unsupported.');
 
     const downloadDir = path.join(modelsRoot, '.downloads');
@@ -425,10 +410,7 @@ export class LocalSpeechModelService {
     }
   }
 
-  private fail(
-    artifact: LocalSpeechModelArtifact,
-    error: string,
-  ): LocalSpeechModelInstallResult {
+  private fail(artifact: LocalSpeechModelArtifact, error: string): LocalSpeechModelInstallResult {
     this.update(artifact, {
       phase: 'error',
       installed: this.isInstalled(artifact),

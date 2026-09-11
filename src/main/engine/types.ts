@@ -87,6 +87,7 @@ export interface SkillRpcResult {
 // ============================================================
 
 export interface CoworkRuntimeEvents {
+  gatewayEvent: (event: import('./gateway/types').GatewayEventFrame) => void;
   activity: (sessionId: string, kind: 'user' | 'other', timestamp: number) => void;
   complete: (sessionId: string, finalStatus?: 'idle' | 'running' | 'completed' | 'error') => void;
   error: (sessionId: string, error: string) => void;

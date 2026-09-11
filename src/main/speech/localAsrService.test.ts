@@ -3,8 +3,9 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_ASR_MODEL_ID } from '../../shared/localAsr';
+import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/localAsr';
 import {
+  buildLocalAsrModelArgs,
   getLocalAsrStatus,
   type LocalAsrAssetPaths,
   parseSherpaTranscription,
@@ -17,7 +18,8 @@ function createPaths(): LocalAsrAssetPaths {
   temporaryRoots.push(root);
   return {
     executablePath: path.join(root, 'runtime', 'bin', 'sherpa-onnx-offline.exe'),
-    modelDir: path.join(root, LOCAL_ASR_MODEL_ID),
+    modelDir: path.join(root, LOCAL_ASR_DEFAULT_MODEL_ID),
+    modelId: LOCAL_ASR_DEFAULT_MODEL_ID,
   };
 }
 
@@ -35,13 +37,13 @@ describe('local ASR service', () => {
     fs.mkdirSync(path.dirname(paths.executablePath), { recursive: true });
     fs.mkdirSync(paths.modelDir, { recursive: true });
     fs.writeFileSync(paths.executablePath, 'runtime');
-    for (const file of ['tiny-encoder.int8.onnx', 'tiny-decoder.int8.onnx', 'tiny-tokens.txt']) {
+    for (const file of ['model.int8.onnx', 'tokens.txt']) {
       fs.writeFileSync(path.join(paths.modelDir, file), file);
     }
     expect(getLocalAsrStatus(paths)).toEqual({
       available: true,
       supported: true,
-      modelId: LOCAL_ASR_MODEL_ID,
+      modelId: LOCAL_ASR_DEFAULT_MODEL_ID,
     });
   });
 
@@ -53,5 +55,33 @@ describe('local ASR service', () => {
     ].join('\n');
 
     expect(parseSherpaTranscription(output)).toBe('今天天气很好');
+  });
+
+  it('uses multilingual short-audio arguments without forcing a language in auto mode', () => {
+    const automatic = buildLocalAsrModelArgs(
+      'sherpa-onnx-whisper-base',
+      'auto',
+      'C:\\models\\base',
+    );
+    const japanese = buildLocalAsrModelArgs('sherpa-onnx-whisper-base', 'ja', 'C:\\models\\base');
+
+    expect(automatic).not.toContainEqual(expect.stringContaining('--whisper-language='));
+    expect(automatic).toContain('--whisper-tail-paddings=300');
+    expect(japanese).toContain('--whisper-language=jp');
+    expect(() =>
+      buildLocalAsrModelArgs('sherpa-onnx-whisper-base', 'yue', 'C:\\models\\base'),
+    ).toThrow('does not support Cantonese');
+  });
+
+  it('passes auto language and inverse text normalization to SenseVoice', () => {
+    expect(
+      buildLocalAsrModelArgs(
+        'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
+        'auto',
+        'C:\\models\\sensevoice',
+      ),
+    ).toEqual(
+      expect.arrayContaining(['--sense-voice-language=auto', '--sense-voice-use-itn=true']),
+    );
   });
 });

@@ -18,6 +18,7 @@ import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
+  buildManagedOnlineAsrPluginEntries,
   buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
@@ -25,6 +26,7 @@ import {
   buildManagedOpenClawModelCatalogConfig,
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
+  buildManagedOpenClawTtsPluginEntries,
   buildOpenClawConfigMeta,
   buildProviderSelection,
   hasOpenClawConfigChanged,
@@ -41,6 +43,7 @@ import {
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
   OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
+  resolveManagedOpenClawTtsConfig,
   sanitizeOpenClawV2026_9_2Config,
 } from './openclawConfigSync';
 
@@ -713,6 +716,81 @@ describe('OpenClaw plugin config merging', () => {
           config: { endpoint: 'http://127.0.0.1:1933' },
         },
       },
+    });
+  });
+});
+
+describe('OpenClaw managed speech config', () => {
+  test('preserves Gateway-owned online TTS when no local provider is active', () => {
+    const onlineTts = {
+      provider: 'openai',
+      providers: {
+        openai: {
+          baseUrl: 'http://speech.internal:8000/v1',
+          model: 'internal-tts',
+          voice: 'speaker-1',
+        },
+      },
+    };
+
+    expect(resolveManagedOpenClawTtsConfig({ tts: onlineTts }, null)).toBe(onlineTts);
+  });
+
+  test('activates a local provider without discarding retained online TTS', () => {
+    const localTts = {
+      provider: 'tts-local-cli',
+      providers: { 'tts-local-cli': { command: 'tts.exe' } },
+    };
+
+    expect(
+      resolveManagedOpenClawTtsConfig(
+        { tts: { provider: 'openai', providers: { openai: { model: 'tts-1' } } } },
+        localTts,
+        { enabled: true, mode: 'local' },
+      ),
+    ).toEqual({
+      provider: 'tts-local-cli',
+      providers: {
+        openai: { model: 'tts-1' },
+        'tts-local-cli': { command: 'tts.exe' },
+      },
+    });
+  });
+
+  test('disables retained Gateway TTS when response reading is turned off', () => {
+    expect(
+      resolveManagedOpenClawTtsConfig(
+        { tts: { enabled: true, provider: 'openai' } },
+        null,
+        { enabled: false, mode: 'online' },
+      ),
+    ).toEqual({ enabled: false, provider: 'openai' });
+  });
+
+  test.each(['tts-local-cli', 'openai', 'elevenlabs'])(
+    'enables the active %s speech provider plugin',
+    provider => {
+      expect(buildManagedOpenClawTtsPluginEntries({ provider })).toEqual({
+        [provider]: { enabled: true },
+      });
+    },
+  );
+
+  test('does not enable an unknown speech provider plugin', () => {
+    expect(buildManagedOpenClawTtsPluginEntries({ provider: 'unknown' })).toEqual({});
+  });
+
+  test('retains the legacy transcription bridge while it contains an online provider', () => {
+    const voiceCall = {
+      config: {
+        streaming: {
+          provider: 'openai',
+          providers: { openai: { baseUrl: 'http://speech.internal:8000' } },
+        },
+      },
+    };
+    expect(buildManagedOnlineAsrPluginEntries({ entries: { 'voice-call': voiceCall } })).toEqual({
+      'voice-call': voiceCall,
     });
   });
 });

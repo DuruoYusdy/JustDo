@@ -160,7 +160,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the eighteen retained capability patches', () => {
+  test('contains exactly the nineteen retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -180,7 +180,68 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '017-segmented-live-progress-snapshot.cjs',
       '018-mixed-tool-commentary-order.cjs',
       '019-disable-configured-plugin-auto-install.cjs',
+      '020-openai-realtime-transcription-base-url.cjs',
     ]);
+  });
+
+  test('routes OpenAI realtime transcription through its configured base URL', () => {
+    const testing = patches.get('020')?.__testing as {
+      MARKER: string;
+      resolveOpenAIRealtimeTranscriptionUrl: (baseUrl?: string) => string;
+      transform: (content: string, filePath: string) => string;
+    };
+    const source = [
+      'const OPENAI_REALTIME_TRANSCRIPTION_URL = "wss://api.openai.com/v1/realtime?intent=transcription";',
+      'function normalizeProviderConfig(config) {',
+      '\tconst raw = config;',
+      '\treturn {',
+      '\t\tapiKey: raw?.apiKey,',
+      '\t\tlanguage: normalizeOptionalString(raw?.language),',
+      '\t};',
+      '}',
+      'function createOpenAIRealtimeTranscriptionSession(config, runtime) {',
+      '\treturn runtime.createRealtimeTranscriptionWebSocketSession({',
+      '\t\tproviderId: "openai",',
+      '\t\tcallbacks: config,',
+      '\t\turl: OPENAI_REALTIME_TRANSCRIPTION_URL,',
+      '\t\theaders: async () => runtime.resolveProviderRequestHeaders({',
+      '\t\t\t\tbaseUrl: OPENAI_REALTIME_TRANSCRIPTION_URL,',
+      '\t\t}),',
+      '\t});',
+      '}',
+      'function buildOpenAIRealtimeTranscriptionProvider(runtime) {',
+      '\treturn {',
+      '\t\tcreateSession: (req) => {',
+      '\t\t\tconst config = normalizeProviderConfig(req.providerConfig);',
+      '\t\t\treturn createOpenAIRealtimeTranscriptionSession({',
+      '\t\t\t\t...req,',
+      '\t\t\t\tapiKey: config.apiKey,',
+      '\t\t\t\tlanguage: config.language,',
+      '\t\t\t}, runtime);',
+      '\t\t}',
+      '\t};',
+      '}',
+    ].join('\n');
+
+    const patched = testing.transform(source, 'realtime-transcription-provider-factory.js');
+
+    expect(patched).toContain(`/*${testing.MARKER}*/`);
+    expect(patched).toContain('baseUrl: normalizeOptionalString(raw?.baseUrl)');
+    expect(patched).toContain(
+      'const transcriptionUrl = resolveOpenAIRealtimeTranscriptionUrl(config.baseUrl)',
+    );
+    expect(patched).toContain('url: transcriptionUrl');
+    expect(patched).toContain('baseUrl: transcriptionUrl');
+    expect(patched).toContain('baseUrl: config.baseUrl');
+    expect(testing.transform(patched, 'realtime-transcription-provider-factory.js')).toBe(patched);
+    expect(testing.resolveOpenAIRealtimeTranscriptionUrl('http://speech.internal:8000/v1')).toBe(
+      'ws://speech.internal:8000/v1/realtime?intent=transcription',
+    );
+    expect(
+      testing.resolveOpenAIRealtimeTranscriptionUrl(
+        'https://speech.internal/v1/realtime?tenant=justdo',
+      ),
+    ).toBe('wss://speech.internal/v1/realtime?tenant=justdo&intent=transcription');
   });
 
   test('keeps routine official plugin catalog reads offline', () => {

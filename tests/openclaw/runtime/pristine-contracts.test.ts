@@ -37,6 +37,7 @@ const EXPECTED_PATCH_FILES = [
   '017-segmented-live-progress-snapshot.cjs',
   '018-mixed-tool-commentary-order.cjs',
   '019-disable-configured-plugin-auto-install.cjs',
+  '020-openai-realtime-transcription-base-url.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

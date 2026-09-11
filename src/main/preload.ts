@@ -51,7 +51,15 @@ import {
 } from '../shared/localSpeechModels';
 import { LocalTtsIpc, type LocalTtsModelId } from '../shared/localTts';
 import { LogIpc } from '../shared/logIpc';
+import { MediaCaptureIpc } from '../shared/mediaCapture';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
+import {
+  type OnlineAsrConfigurationUpdate,
+  type OnlineAsrEvent,
+  OnlineAsrIpc,
+  type OnlineAsrStartOptions,
+} from '../shared/onlineAsr';
+import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/onlineTts';
 import {
   type AgentRuntimeSettings,
   AgentRuntimeSettingsIpc,
@@ -533,10 +541,33 @@ contextBridge.exposeInMainWorld('electron', {
     getStatus: (modelId: LocalTtsModelId) => ipcRenderer.invoke(LocalTtsIpc.GetStatus, modelId),
   },
   localAsr: {
-    getStatus: (modelId: LocalAsrModelId) =>
-      ipcRenderer.invoke(LocalAsrIpc.GetStatus, modelId),
+    getStatus: (modelId: LocalAsrModelId) => ipcRenderer.invoke(LocalAsrIpc.GetStatus, modelId),
     transcribe: (audio: Uint8Array, options: LocalAsrTranscribeOptions) =>
       ipcRenderer.invoke(LocalAsrIpc.Transcribe, audio, options),
+  },
+  onlineAsr: {
+    getStatus: () => ipcRenderer.invoke(OnlineAsrIpc.GetStatus),
+    getConfiguration: () => ipcRenderer.invoke(OnlineAsrIpc.GetConfiguration),
+    saveConfiguration: (update: OnlineAsrConfigurationUpdate) =>
+      ipcRenderer.invoke(OnlineAsrIpc.SaveConfiguration, update),
+    start: (options: OnlineAsrStartOptions) => ipcRenderer.invoke(OnlineAsrIpc.Start, options),
+    appendAudio: (sessionId: string, audioBase64: string) =>
+      ipcRenderer.invoke(OnlineAsrIpc.AppendAudio, sessionId, audioBase64),
+    close: (sessionId: string) => ipcRenderer.invoke(OnlineAsrIpc.Close, sessionId),
+    onEvent: (callback: (event: OnlineAsrEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: OnlineAsrEvent) => callback(event);
+      ipcRenderer.on(OnlineAsrIpc.Event, handler);
+      return () => ipcRenderer.removeListener(OnlineAsrIpc.Event, handler);
+    },
+  },
+  onlineTts: {
+    getStatus: () => ipcRenderer.invoke(OnlineTtsIpc.GetStatus),
+    getConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.GetConfiguration),
+    saveConfiguration: (update: OnlineTtsConfigurationUpdate) =>
+      ipcRenderer.invoke(OnlineTtsIpc.SaveConfiguration, update),
+  },
+  mediaCapture: {
+    armSystemAudio: () => ipcRenderer.invoke(MediaCaptureIpc.ArmSystemAudio),
   },
   localSpeechModels: {
     list: () => ipcRenderer.invoke(LocalSpeechModelIpc.List),

@@ -8,6 +8,8 @@ export { registerMarketplaceHandlers } from './marketplace';
 export { registerMcpHandlers } from './mcp';
 export { registerOpenClawMemoryHandlers } from './memory';
 export { registerOpenClawModelHandlers } from './models';
+export { registerOnlineAsrHandlers } from './onlineAsr';
+export { registerOnlineTtsHandlers } from './onlineTts';
 export { registerSkillHandlers } from './skills';
 export { registerSlashCommandHandlers } from './slashCommands';
 export { registerOpenClawUsageHandlers } from './usage';

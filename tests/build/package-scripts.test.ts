@@ -31,6 +31,16 @@ test('starts Electron as soon as the quiet readiness probes succeed', () => {
   expect(devRunner).not.toContain('wait-on -v');
 });
 
+test('prepares the local speech runtime before starting Electron in development', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
+  ) as { scripts: Record<string, string> };
+
+  expect(packageJson.scripts['preelectron:dev']).toBe(
+    'npm run browser-extension:prepare && npm run setup:local-tts',
+  );
+});
+
 test('uses Vite native Monaco workers without emitting the legacy duplicate bundle', () => {
   const viteConfig = fs.readFileSync(path.resolve(__dirname, '../../vite.config.ts'), 'utf8');
   const packageJson = JSON.parse(

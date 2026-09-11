@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { encodeAudioBufferToWav } from './localAudioCapture';
+import {
+  encodeAudioBufferToWav,
+  LOCAL_ASR_SAMPLE_RATE,
+  normalizeAudioForLocalAsr,
+} from './localAudioCapture';
 
 describe('local audio capture', () => {
   it('encodes and downmixes browser audio into mono PCM16 WAV', () => {
@@ -22,5 +26,20 @@ describe('local audio capture', () => {
     expect(view.getUint32(40, true)).toBe(4);
     expect(view.getInt16(44, true)).toBe(16_383);
     expect(view.getInt16(46, true)).toBe(-16_384);
+  });
+
+  it('normalizes browser-rate audio to the ASR sample rate', () => {
+    const audio = {
+      numberOfChannels: 1,
+      length: 6,
+      sampleRate: 48_000,
+      getChannelData: () => new Float32Array([1, 1, 1, -1, -1, -1]),
+    } as unknown as AudioBuffer;
+
+    expect([...normalizeAudioForLocalAsr(audio)]).toEqual([1, -1]);
+    const wav = encodeAudioBufferToWav(audio);
+    const view = new DataView(wav.buffer);
+    expect(view.getUint32(24, true)).toBe(LOCAL_ASR_SAMPLE_RATE);
+    expect(view.getUint32(40, true)).toBe(4);
   });
 });

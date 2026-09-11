@@ -193,9 +193,47 @@ describe('renderMessageBlock', () => {
     );
     const withoutSpeech = stringifyTemplate(renderMessageBlock(createGroup('assistant')));
 
-    expect(withSpeech).toContain('chat-group__speech');
+    expect(withSpeech).toContain('message-speech');
     expect(withSpeech).toContain(i18nService.t('localTtsPlay'));
-    expect(withoutSpeech).not.toContain('chat-group__speech');
+    expect(withoutSpeech).not.toContain('message-speech');
+  });
+
+  test('keeps the speaker control when assistant footer metadata is suppressed', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock(createGroup('assistant'), {
+        showFooter: false,
+        onSpeak: vi.fn(),
+        speechState: 'idle',
+      }),
+    );
+
+    expect(rendered).toContain('message-speech');
+    expect(rendered).toContain('message-speech__icon');
+    expect(rendered).not.toContain('▶');
+  });
+
+  test('keeps the loading speech control clickable so synthesis can be cancelled', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock(createGroup('assistant'), {
+        onSpeak: vi.fn(),
+        speechState: 'loading',
+      }),
+    );
+
+    expect(rendered).toContain(i18nService.t('localTtsStop'));
+    expect(rendered).not.toContain('disabled');
+  });
+
+  test('shows an audio waveform while the response is playing', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock(createGroup('assistant'), {
+        onSpeak: vi.fn(),
+        speechState: 'playing',
+      }),
+    );
+
+    expect(rendered).toContain('message-speech__wave');
+    expect(rendered).toContain(i18nService.t('localTtsStop'));
   });
 
   test('marks ordinary messages as content rows for consistent bubble spacing', () => {

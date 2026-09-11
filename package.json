@@ -40,7 +40,7 @@
     "prestart:electron": "npm run browser-extension:prepare",
     "start:electron": "node scripts/launch-electron.cjs",
     "electron:dev": "rimraf dist-electron && npm run compile:electron && node scripts/run-electron-dev.cjs",
-    "preelectron:dev": "npm run browser-extension:prepare",
+    "preelectron:dev": "npm run browser-extension:prepare && npm run setup:local-tts",
     "electron:dev:openclaw": "npm run openclaw:runtime:host && npm run electron:dev",
     "postinstall": "node scripts/patch-http-mitm-proxy.cjs && electron-builder install-app-deps && npm run rebuild:electron-native",
     "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs --dir",

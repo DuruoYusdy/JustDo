@@ -109,6 +109,8 @@ import {
   registerLocalTtsHandlers,
   registerMarketplaceHandlers,
   registerMcpHandlers,
+  registerOnlineAsrHandlers,
+  registerOnlineTtsHandlers,
   registerOpenClawApprovalHandlers,
   registerOpenClawEngineHandlers,
   registerOpenClawHistoryHandlers,
@@ -561,6 +563,12 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
           undefined,
           normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
         ),
+      getSpeechOutputState: () => {
+        const settings = normalizeLocalSpeechSettings(
+          getStore().get<AppConfigSettings>('app_config')?.voice,
+        );
+        return { enabled: settings.outputEnabled, mode: settings.synthesisMode };
+      },
     });
   }
   return openClawConfigSyncService;
@@ -749,6 +757,8 @@ const getOpenClawAppConfigSignature = (config: unknown): string => {
     providers: appConfig.providers,
     voice: {
       outputEnabled: voice.outputEnabled,
+      synthesisMode: voice.synthesisMode,
+      ttsModelId: voice.ttsModelId,
       voiceId: voice.voiceId,
       speechRate: voice.speechRate,
       synthesisThreads: voice.synthesisThreads,
@@ -932,6 +942,16 @@ if (!gotTheLock) {
       getCoworkEngineService().requestGateway<T>(method, params),
   });
   registerOpenClawModelHandlers({ getRuntime: getOpenClawRuntimeAdapter });
+  registerOnlineAsrHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+  });
+  registerOnlineTtsHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+  });
 
   registerSlashCommandHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,

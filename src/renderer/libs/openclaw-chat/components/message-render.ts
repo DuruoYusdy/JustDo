@@ -41,7 +41,7 @@ type MessageRenderOptions = {
 
 type AssistantTimelineContentOptions = Pick<
   MessageRenderOptions,
-  'showAvatar' | 'workingDirectory'
+  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory'
 > & {
   key: string;
   timestamp: number;
@@ -63,6 +63,29 @@ const COPY_ICON = html`
     <rect width="14" height="14" x="8" y="8" rx="2"></rect>
     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
   </svg>
+`;
+
+const SPEAKER_ICON = html`
+  <svg
+    class="message-speech__icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    aria-hidden="true"
+  >
+    <path
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z"
+    ></path>
+  </svg>
+`;
+
+const PLAYING_SPEECH_ICON = html`
+  <span class="message-speech__wave" aria-hidden="true">
+    <span></span><span></span><span></span><span></span>
+  </span>
 `;
 
 async function copyMessage(event: Event, text: string): Promise<void> {
@@ -92,6 +115,33 @@ function renderCopyButton(text: string): TemplateResult {
       @click=${(event: Event) => void copyMessage(event, text)}
     >
       ${COPY_ICON}
+    </button>
+  `;
+}
+
+function renderSpeechButton(
+  groupKey: string,
+  text: string,
+  opts?: MessageRenderOptions,
+): TemplateResult | typeof nothing {
+  if (!text || !opts?.onSpeak) return nothing;
+  const state = opts.speechState ?? 'idle';
+  const label = i18nService.t(state === 'idle' ? 'localTtsPlay' : 'localTtsStop');
+  return html`
+    <button
+      type="button"
+      class=${`message-speech message-speech--${state}`}
+      aria-label=${label}
+      title=${label}
+      @click=${() => opts.onSpeak?.(groupKey, text)}
+    >
+      ${
+        state === 'loading'
+          ? html`<span class="message-speech__loading" aria-hidden="true"></span>`
+          : state === 'playing'
+            ? PLAYING_SPEECH_ICON
+            : SPEAKER_ICON
+      }
     </button>
   `;
 }
@@ -439,6 +489,7 @@ function renderOrderedBubble(
   items: BubbleContentItem[],
   role: 'user' | 'assistant',
   workingDirectory?: string,
+  trailingAction: TemplateResult | typeof nothing = nothing,
 ): TemplateResult | typeof nothing {
   if (items.length === 0) return nothing;
   const text = items
@@ -476,6 +527,7 @@ function renderOrderedBubble(
           );
         })}
       </div>
+      ${trailingAction}
     </div>
   `;
 }
@@ -496,6 +548,18 @@ export function renderMessageBlock(
 
   const avatar = renderChatAvatar(role);
   const isContinuation = opts?.showAvatar === false;
+  const speechText =
+    group.role === 'assistant'
+      ? group.messages
+          .map(message => extractTextCached(message.message)?.trim() ?? '')
+          .filter(Boolean)
+          .join('\n\n')
+      : '';
+  let speechMessageIndex = -1;
+  group.messages.forEach((message, index) => {
+    if (extractTextCached(message.message)?.trim()) speechMessageIndex = index;
+  });
+  const speechAction = renderSpeechButton(group.key, speechText, opts);
 
   return html`
     <div
@@ -506,7 +570,14 @@ export function renderMessageBlock(
     >
       <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
       <div class="chat-group__content">
-        ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
+        ${group.messages.map((message, index) =>
+          renderSingleMessage(
+            message.message,
+            role,
+            opts,
+            index === speechMessageIndex ? speechAction : nothing,
+          ),
+        )}
         ${renderGroupFooter(group, opts)}
       </div>
     </div>
@@ -559,6 +630,7 @@ function renderSingleMessage(
   message: unknown,
   role: string,
   opts?: MessageRenderOptions,
+  trailingAction: TemplateResult | typeof nothing = nothing,
 ): TemplateResult | typeof nothing {
   const normalized = normalizeMessage(message) as NormalizedMessage | null;
   if (!normalized) return html`<div class="chat-bubble chat-bubble--empty"></div>`;
@@ -571,7 +643,7 @@ function renderSingleMessage(
   if (isUser) {
     return renderUserMessage(normalized, message, opts?.workingDirectory);
   }
-  return renderAssistantMessage(normalized, message, opts?.workingDirectory);
+  return renderAssistantMessage(normalized, message, opts?.workingDirectory, trailingAction);
 }
 
 // ─── User Message ───────────────────────────────────────────────────────────
@@ -608,12 +680,16 @@ function renderAssistantMessage(
   msg: NormalizedMessage,
   _rawMessage: unknown,
   workingDirectory?: string,
+  trailingAction: TemplateResult | typeof nothing = nothing,
 ): TemplateResult {
-  const sections: Array<TemplateResult | typeof nothing> = [];
+  const sections: Array<
+    | { kind: 'bubble'; items: BubbleContentItem[] }
+    | { kind: 'content'; content: TemplateResult | typeof nothing }
+  > = [];
   let bubbleItems: BubbleContentItem[] = [];
   const flushBubble = () => {
     if (bubbleItems.length === 0) return;
-    sections.push(renderOrderedBubble(bubbleItems, 'assistant', workingDirectory));
+    sections.push({ kind: 'bubble', items: bubbleItems });
     bubbleItems = [];
   };
 
@@ -628,12 +704,25 @@ function renderAssistantMessage(
     }
     if (item.type === 'canvas') {
       flushBubble();
-      sections.push(renderAssistantCanvas(item));
+      sections.push({ kind: 'content', content: renderAssistantCanvas(item) });
     }
   }
   flushBubble();
 
-  return html`${sections}`;
+  let lastBubbleIndex = -1;
+  sections.forEach((section, index) => {
+    if (section.kind === 'bubble') lastBubbleIndex = index;
+  });
+  return html`${sections.map((section, index) =>
+    section.kind === 'bubble'
+      ? renderOrderedBubble(
+          section.items,
+          'assistant',
+          workingDirectory,
+          index === lastBubbleIndex ? trailingAction : nothing,
+        )
+      : section.content,
+  )}`;
 }
 
 /**
@@ -672,6 +761,8 @@ export function renderAssistantTimelineContent(
     {
       showAvatar: opts.showAvatar,
       showFooter: false,
+      speechState: opts.speechState,
+      onSpeak: opts.onSpeak,
       workingDirectory: opts.workingDirectory,
     },
   ) as TemplateResult;
@@ -689,14 +780,6 @@ function renderGroupFooter(
   const date = new Date(ts);
   const time = formatGroupTimestamp(date);
   const roleName = getGroupFooterLabel(group, opts?.assistantName);
-  const speechText =
-    group.role === 'assistant'
-      ? group.messages
-          .map(message => extractTextCached(message.message)?.trim() ?? '')
-          .filter(Boolean)
-          .join('\n\n')
-      : '';
-  const speechState = opts?.speechState ?? 'idle';
   const duration =
     group.role === 'assistant' &&
     typeof group.durationMs === 'number' &&
@@ -720,24 +803,6 @@ function renderGroupFooter(
               <span
                 >${i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)}</span
               >
-            `
-          : nothing
-      }
-      ${
-        speechText && opts?.onSpeak
-          ? html`
-              <button
-                type="button"
-                class=${`chat-group__speech chat-group__speech--${speechState}`}
-                aria-label=${i18nService.t(
-                  speechState === 'playing' ? 'localTtsStop' : 'localTtsPlay',
-                )}
-                title=${i18nService.t(speechState === 'playing' ? 'localTtsStop' : 'localTtsPlay')}
-                ?disabled=${speechState === 'loading'}
-                @click=${() => opts.onSpeak?.(group.key, speechText)}
-              >
-                ${speechState === 'playing' ? '■' : speechState === 'loading' ? '…' : '▶'}
-              </button>
             `
           : nothing
       }

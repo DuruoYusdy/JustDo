@@ -82,6 +82,11 @@ export type EditDiffMode = 'unified' | 'split';
 
 export type EditDiffModeChangeHandler = (toolId: string, mode: EditDiffMode) => void;
 
+export interface TimelineSpeechOptions {
+  state: 'idle' | 'loading' | 'playing';
+  onSpeak: (groupKey: string, text: string) => void;
+}
+
 function editDiffChangeLabel(line: EditDiffLine): string | null {
   return line.kind === 'added'
     ? i18nService.t('coworkEditDiffAddedLine')
@@ -449,6 +454,7 @@ export function renderTimelineItem(
   showAvatar = true,
   editDiffModes: ReadonlyMap<string, EditDiffMode> = new Map(),
   onEditDiffModeChange?: EditDiffModeChangeHandler,
+  speech?: TimelineSpeechOptions,
 ): TemplateResult {
   if (item.kind === 'waiting') {
     return renderReadingIndicatorGroup({ showAvatar });
@@ -618,6 +624,8 @@ export function renderTimelineItem(
         timestamp: item.item.startedAt,
         streaming: item.item.status === 'streaming',
         showAvatar,
+        speechState: speech?.state,
+        onSpeak: speech?.onSpeak,
       },
     );
   }

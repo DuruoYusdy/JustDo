@@ -4,7 +4,7 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.9.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to eighteen product-specific gaps. Live Thinking emission,
+The previous 49-patch integration has been reduced to nineteen product-specific gaps. Live Thinking emission,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
@@ -32,6 +32,8 @@ Explicitly hidden messages do not emit standalone fallbacks that would lose thei
 Patch 019 disables OpenClaw's configuration-driven plugin package repair so custom Provider IDs,
 channel configuration and credential environment variables cannot trigger npm downloads. Explicit
 plugin installation and update actions remain available.
+Patch 020 lets the OpenAI realtime transcription provider use an explicitly configured intranet
+base URL, converting HTTP(S) schemes to WS(S) and deriving the realtime transcription endpoint.
 
 | Patch                                            | Retained capability                                                                                                          | Remove when upstream provides                                                                               |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -53,6 +55,7 @@ plugin installation and update actions remain available.
 | `017-segmented-live-progress-snapshot.cjs`       | Retains bounded Thinking/Content/preamble recovery segments with the same identity and sequence as live events.              | Upstream in-flight snapshots preserve independently addressable live text segments.                         |
 | `018-mixed-tool-commentary-order.cjs`            | Preserves original Thinking/Commentary/Tool block order in native mixed assistant history with commentary recovery enabled.  | Upstream mixed Tool history restores commentary in place with equivalent visibility and sanitization rules. |
 | `019-disable-configured-plugin-auto-install.cjs` | Prevents Provider/channel configuration from automatically downloading or repairing plugin packages.                         | Upstream exposes a host policy that disables configured-plugin package repair.                              |
+| `020-openai-realtime-transcription-base-url.cjs` | Routes OpenAI realtime transcription through an explicitly configured intranet endpoint.                                     | Upstream OpenAI realtime transcription accepts a provider base URL.                                         |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.9.2 marker shape. `verify-openclaw-pristine-contracts`

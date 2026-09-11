@@ -11,6 +11,11 @@ describe('local speech settings', () => {
     expect(normalizeLocalSpeechSettings(undefined)).toEqual(defaultLocalSpeechSettings);
   });
 
+  it('accepts online synthesis mode and rejects unknown values', () => {
+    expect(normalizeLocalSpeechSettings({ synthesisMode: 'online' }).synthesisMode).toBe('online');
+    expect(normalizeLocalSpeechSettings({ synthesisMode: 'cloud' }).synthesisMode).toBe('local');
+  });
+
   it('clamps persisted and untrusted numeric values', () => {
     expect(
       normalizeLocalSpeechSettings({
@@ -30,8 +35,22 @@ describe('local speech settings', () => {
   });
 
   it('resolves the app-language recognition mode', () => {
+    expect(resolveLocalSpeechInputLanguage('auto', 'zh')).toBe('auto');
     expect(resolveLocalSpeechInputLanguage('app', 'zh')).toBe('zh');
     expect(resolveLocalSpeechInputLanguage('en', 'zh')).toBe('en');
+    expect(resolveLocalSpeechInputLanguage('yue', 'zh')).toBe('yue');
+  });
+
+  it('falls back from Cantonese when the OpenClaw relay language contract cannot represent it', () => {
+    expect(
+      normalizeLocalSpeechSettings({ recognitionMode: 'online', inputLanguage: 'yue' }),
+    ).toMatchObject({ recognitionMode: 'online', inputLanguage: 'app' });
+  });
+
+  it('falls back from file input because OpenClaw Talk accepts live audio streams', () => {
+    expect(
+      normalizeLocalSpeechSettings({ recognitionMode: 'online', inputSource: 'file' }),
+    ).toMatchObject({ recognitionMode: 'online', inputSource: 'microphone' });
   });
 
   it('keeps supported model and capture-source selections while rejecting unknown values', () => {
@@ -40,6 +59,7 @@ describe('local speech settings', () => {
         asrModelId: 'sherpa-onnx-whisper-base',
         ttsModelId: 'vits-icefall-zh-aishell3',
         inputSource: 'microphone-system',
+        recognitionMode: 'online',
         inputDeviceId: 'usb-microphone',
         meetingMode: true,
         meetingSegmentSeconds: 5,
@@ -48,6 +68,7 @@ describe('local speech settings', () => {
       asrModelId: 'sherpa-onnx-whisper-base',
       ttsModelId: 'vits-icefall-zh-aishell3',
       inputSource: 'microphone-system',
+      recognitionMode: 'online',
       inputDeviceId: 'usb-microphone',
       meetingMode: true,
       meetingSegmentSeconds: 15,

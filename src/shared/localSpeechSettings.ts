@@ -1,4 +1,4 @@
-import { LOCAL_ASR_MODEL_ID, LOCAL_ASR_MODEL_IDS, type LocalAsrModelId } from './localAsr';
+import { LOCAL_ASR_DEFAULT_MODEL_ID, LOCAL_ASR_MODEL_IDS, type LocalAsrModelId } from './localAsr';
 import {
   LOCAL_TTS_DEFAULT_VOICE_ID,
   LOCAL_TTS_MODEL_ID,
@@ -15,11 +15,14 @@ export const LOCAL_SPEECH_MAX_THREADS = 8;
 export const LOCAL_SPEECH_MIN_RATE = 0.5;
 export const LOCAL_SPEECH_MAX_RATE = 2;
 
-export type LocalSpeechInputLanguage = 'app' | 'zh' | 'en';
+export type LocalSpeechInputLanguage = 'auto' | 'app' | 'zh' | 'en' | 'ja' | 'ko' | 'yue';
 export type LocalSpeechInputSource = 'microphone' | 'system' | 'microphone-system' | 'file';
+export type SpeechRecognitionMode = 'local' | 'online';
+export type SpeechSynthesisMode = 'local' | 'online';
 
 export interface LocalSpeechSettings {
   inputEnabled: boolean;
+  recognitionMode: SpeechRecognitionMode;
   asrModelId: LocalAsrModelId;
   inputSource: LocalSpeechInputSource;
   inputDeviceId: string;
@@ -29,6 +32,7 @@ export interface LocalSpeechSettings {
   meetingSegmentSeconds: number;
   recognitionThreads: number;
   outputEnabled: boolean;
+  synthesisMode: SpeechSynthesisMode;
   ttsModelId: LocalTtsModelId;
   voiceId: number;
   speechRate: number;
@@ -37,7 +41,8 @@ export interface LocalSpeechSettings {
 
 export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   inputEnabled: false,
-  asrModelId: LOCAL_ASR_MODEL_ID,
+  recognitionMode: 'local',
+  asrModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
   inputSource: 'microphone',
   inputDeviceId: '',
   inputLanguage: 'app',
@@ -46,6 +51,7 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   meetingSegmentSeconds: 30,
   recognitionThreads: 2,
   outputEnabled: false,
+  synthesisMode: 'local',
   ttsModelId: LOCAL_TTS_MODEL_ID,
   voiceId: LOCAL_TTS_DEFAULT_VOICE_ID,
   speechRate: 1,
@@ -62,19 +68,35 @@ const clampInteger = (value: unknown, fallback: number, min: number, max: number
 
 export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSettings => {
   const candidate = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const inputLanguage =
+  const recognitionMode: SpeechRecognitionMode =
+    candidate.recognitionMode === 'online' ? 'online' : defaultLocalSpeechSettings.recognitionMode;
+  const synthesisMode: SpeechSynthesisMode =
+    candidate.synthesisMode === 'online' ? 'online' : defaultLocalSpeechSettings.synthesisMode;
+  const selectedInputLanguage =
+    candidate.inputLanguage === 'auto' ||
     candidate.inputLanguage === 'zh' ||
     candidate.inputLanguage === 'en' ||
+    candidate.inputLanguage === 'ja' ||
+    candidate.inputLanguage === 'ko' ||
+    candidate.inputLanguage === 'yue' ||
     candidate.inputLanguage === 'app'
       ? candidate.inputLanguage
       : defaultLocalSpeechSettings.inputLanguage;
-  const inputSource =
+  const inputLanguage =
+    recognitionMode === 'online' && selectedInputLanguage === 'yue'
+      ? defaultLocalSpeechSettings.inputLanguage
+      : selectedInputLanguage;
+  const selectedInputSource =
     candidate.inputSource === 'system' ||
     candidate.inputSource === 'microphone-system' ||
     candidate.inputSource === 'file' ||
     candidate.inputSource === 'microphone'
       ? candidate.inputSource
       : defaultLocalSpeechSettings.inputSource;
+  const inputSource =
+    recognitionMode === 'online' && selectedInputSource === 'file'
+      ? defaultLocalSpeechSettings.inputSource
+      : selectedInputSource;
   const asrModelId = LOCAL_ASR_MODEL_IDS.includes(candidate.asrModelId as LocalAsrModelId)
     ? (candidate.asrModelId as LocalAsrModelId)
     : defaultLocalSpeechSettings.asrModelId;
@@ -82,21 +104,17 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     ? (candidate.ttsModelId as LocalTtsModelId)
     : defaultLocalSpeechSettings.ttsModelId;
   const maximumVoiceId =
-    ttsModelId === 'vits-icefall-zh-aishell3'
-      ? 173
-      : ttsModelId === LOCAL_TTS_MODEL_ID
-        ? 102
-        : 0;
+    ttsModelId === 'vits-icefall-zh-aishell3' ? 173 : ttsModelId === LOCAL_TTS_MODEL_ID ? 102 : 0;
 
   return {
     inputEnabled:
       typeof candidate.inputEnabled === 'boolean'
         ? candidate.inputEnabled
         : defaultLocalSpeechSettings.inputEnabled,
+    recognitionMode,
     asrModelId,
     inputSource,
-    inputDeviceId:
-      typeof candidate.inputDeviceId === 'string' ? candidate.inputDeviceId : '',
+    inputDeviceId: typeof candidate.inputDeviceId === 'string' ? candidate.inputDeviceId : '',
     inputLanguage,
     maxRecordingSeconds: clampInteger(
       candidate.maxRecordingSeconds,
@@ -124,6 +142,7 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
       typeof candidate.outputEnabled === 'boolean'
         ? candidate.outputEnabled
         : defaultLocalSpeechSettings.outputEnabled,
+    synthesisMode,
     ttsModelId,
     voiceId: clampInteger(
       candidate.voiceId,
@@ -149,4 +168,4 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
 export const resolveLocalSpeechInputLanguage = (
   setting: LocalSpeechInputLanguage,
   appLanguage: 'zh' | 'en',
-): 'zh' | 'en' => (setting === 'app' ? appLanguage : setting);
+): Exclude<LocalSpeechInputLanguage, 'app'> => (setting === 'app' ? appLanguage : setting);

@@ -106,6 +106,7 @@ export function buildManagedLocalTtsConfig(
   const resolvedPaths = paths ?? resolveLocalTtsAssetPaths(settings.ttsModelId);
   if (
     !settings.outputEnabled ||
+    settings.synthesisMode !== 'local' ||
     !resolvedPaths ||
     !getLocalTtsStatus(settings.ttsModelId, resolvedPaths).available
   ) {

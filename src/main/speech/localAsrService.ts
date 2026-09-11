@@ -5,8 +5,9 @@ import path from 'path';
 import { promisify } from 'util';
 
 import {
+  isLocalAsrLanguageSupported,
+  LOCAL_ASR_DEFAULT_MODEL_ID,
   LOCAL_ASR_MAX_AUDIO_BYTES,
-  LOCAL_ASR_MODEL_ID,
   LOCAL_ASR_MODEL_IDS,
   type LocalAsrLanguage,
   type LocalAsrModelId,
@@ -29,27 +30,19 @@ export interface LocalAsrAssetPaths {
 }
 
 const ASR_MODEL_FILES: Record<LocalAsrModelId, string[]> = {
-  'sherpa-onnx-whisper-tiny': [
-    'tiny-encoder.int8.onnx',
-    'tiny-decoder.int8.onnx',
-    'tiny-tokens.txt',
-  ],
   'sherpa-onnx-whisper-base': [
     'base-encoder.int8.onnx',
     'base-decoder.int8.onnx',
     'base-tokens.txt',
   ],
-  'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09': [
-    'model.int8.onnx',
-    'tokens.txt',
-  ],
+  'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09': ['model.int8.onnx', 'tokens.txt'],
 };
 
 const isLocalAsrModelId = (value: unknown): value is LocalAsrModelId =>
   LOCAL_ASR_MODEL_IDS.includes(value as LocalAsrModelId);
 
 export function resolveLocalAsrAssetPaths(
-  modelId: LocalAsrModelId = LOCAL_ASR_MODEL_ID,
+  modelId: LocalAsrModelId = LOCAL_ASR_DEFAULT_MODEL_ID,
   options?: LocalSpeechPathOptions,
 ): LocalAsrAssetPaths | null {
   if (!isLocalSpeechRuntimeReady(options)) return null;
@@ -64,13 +57,13 @@ export function resolveLocalAsrAssetPaths(
 }
 
 export function getLocalAsrStatus(
-  modelIdOrPaths: LocalAsrModelId | LocalAsrAssetPaths = LOCAL_ASR_MODEL_ID,
+  modelIdOrPaths: LocalAsrModelId | LocalAsrAssetPaths = LOCAL_ASR_DEFAULT_MODEL_ID,
   suppliedPaths?: LocalAsrAssetPaths | null,
 ): LocalAsrStatus {
   const modelId =
     typeof modelIdOrPaths === 'string'
       ? modelIdOrPaths
-      : (modelIdOrPaths.modelId ?? LOCAL_ASR_MODEL_ID);
+      : (modelIdOrPaths.modelId ?? LOCAL_ASR_DEFAULT_MODEL_ID);
   const paths =
     typeof modelIdOrPaths === 'string'
       ? (suppliedPaths ?? resolveLocalAsrAssetPaths(modelId))
@@ -116,30 +109,10 @@ export async function transcribeLocalAudio(
   const audioPath = path.join(temporaryRoot, 'recording.wav');
   try {
     fs.writeFileSync(audioPath, audio);
-    const modelArgs = modelId.includes('sense-voice')
-      ? [
-          `--tokens=${path.join(paths.modelDir, 'tokens.txt')}`,
-          `--sense-voice-model=${path.join(paths.modelDir, 'model.int8.onnx')}`,
-          `--sense-voice-language=${language}`,
-          '--sense-voice-use-itn=true',
-        ]
-      : (() => {
-          const prefix = modelId === LOCAL_ASR_MODEL_ID ? 'tiny' : 'base';
-          return [
-            `--tokens=${path.join(paths.modelDir, `${prefix}-tokens.txt`)}`,
-            `--whisper-encoder=${path.join(paths.modelDir, `${prefix}-encoder.int8.onnx`)}`,
-            `--whisper-decoder=${path.join(paths.modelDir, `${prefix}-decoder.int8.onnx`)}`,
-            `--whisper-language=${language}`,
-            '--whisper-task=transcribe',
-          ];
-        })();
+    const modelArgs = buildLocalAsrModelArgs(modelId, language, paths.modelDir);
     const { stdout } = await execFileAsync(
       paths.executablePath,
-      [
-        ...modelArgs,
-        `--num-threads=${numThreads}`,
-        audioPath,
-      ],
+      [...modelArgs, `--num-threads=${numThreads}`, audioPath],
       { windowsHide: true, timeout: TRANSCRIPTION_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
     );
     const text = parseSherpaTranscription(stdout);
@@ -151,6 +124,33 @@ export async function transcribeLocalAudio(
 }
 
 export { isLocalAsrModelId };
+
+export function buildLocalAsrModelArgs(
+  modelId: LocalAsrModelId,
+  language: LocalAsrLanguage,
+  modelDir: string,
+): string[] {
+  if (!isLocalAsrLanguageSupported(modelId, language)) {
+    throw new Error('The selected speech recognition model does not support Cantonese.');
+  }
+  if (modelId.includes('sense-voice')) {
+    return [
+      `--tokens=${path.join(modelDir, 'tokens.txt')}`,
+      `--sense-voice-model=${path.join(modelDir, 'model.int8.onnx')}`,
+      `--sense-voice-language=${language}`,
+      '--sense-voice-use-itn=true',
+    ];
+  }
+
+  return [
+    `--tokens=${path.join(modelDir, 'base-tokens.txt')}`,
+    `--whisper-encoder=${path.join(modelDir, 'base-encoder.int8.onnx')}`,
+    `--whisper-decoder=${path.join(modelDir, 'base-decoder.int8.onnx')}`,
+    ...(language === 'auto' ? [] : [`--whisper-language=${language === 'ja' ? 'jp' : language}`]),
+    '--whisper-task=transcribe',
+    '--whisper-tail-paddings=300',
+  ];
+}
 
 export function parseSherpaTranscription(stdout: string): string {
   const lines = stdout

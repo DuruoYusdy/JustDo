@@ -53,6 +53,7 @@ const GATEWAY_HEALTH_POLL_INTERVAL_MS = 1_000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
 const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
 const APP_PROCESS_STARTED_AT_MS = Date.now();
+const SPEECH_PLUGIN_IDS = new Set(['tts-local-cli', 'openai', 'elevenlabs']);
 
 export type OpenClawEnginePhase =
   | 'ready'
@@ -696,6 +697,14 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private async runMigrationCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
     const cli = await this.buildCliEnvironment();
+    return this.runCliWithEnvironment(cli, args, 'migration');
+  }
+
+  private async runCliWithEnvironment(
+    cli: OpenClawCliEnvironment,
+    args: string[],
+    commandKind: string,
+  ): Promise<{ stdout: string; stderr: string }> {
     const maxOutputBytes = 4 * 1024 * 1024;
     return new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [cli.openclawEntry, ...args], {
@@ -730,9 +739,94 @@ export class OpenClawEngineManager extends EventEmitter {
           return;
         }
         const diagnostic = stderr.trim() || stdout.trim() || `exit code ${String(code)}`;
-        reject(new Error(`OpenClaw migration command failed: ${diagnostic.slice(0, 500)}`));
+        reject(new Error(`OpenClaw ${commandKind} command failed: ${diagnostic.slice(0, 500)}`));
       });
     });
+  }
+
+  private async refreshSpeechPluginRegistryIfNeeded(
+    cli: OpenClawCliEnvironment,
+  ): Promise<void> {
+    let config: unknown;
+    try {
+      config = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+    } catch {
+      return;
+    }
+    if (!config || typeof config !== 'object' || Array.isArray(config)) return;
+    const configRecord = config as Record<string, unknown>;
+    const tts = configRecord.tts;
+    const ttsProviderValue =
+      tts && typeof tts === 'object' && !Array.isArray(tts)
+        ? (tts as Record<string, unknown>).provider
+        : undefined;
+    const plugins =
+      configRecord.plugins &&
+      typeof configRecord.plugins === 'object' &&
+      !Array.isArray(configRecord.plugins)
+        ? (configRecord.plugins as Record<string, unknown>)
+        : {};
+    const entries =
+      plugins.entries && typeof plugins.entries === 'object' && !Array.isArray(plugins.entries)
+        ? (plugins.entries as Record<string, unknown>)
+        : {};
+    const voiceCall =
+      entries['voice-call'] &&
+      typeof entries['voice-call'] === 'object' &&
+      !Array.isArray(entries['voice-call'])
+        ? (entries['voice-call'] as Record<string, unknown>)
+        : {};
+    const voiceCallConfig =
+      voiceCall.config && typeof voiceCall.config === 'object' && !Array.isArray(voiceCall.config)
+        ? (voiceCall.config as Record<string, unknown>)
+        : {};
+    const streaming =
+      voiceCallConfig.streaming &&
+      typeof voiceCallConfig.streaming === 'object' &&
+      !Array.isArray(voiceCallConfig.streaming)
+        ? (voiceCallConfig.streaming as Record<string, unknown>)
+        : {};
+    const providerValues = [ttsProviderValue, streaming.provider];
+    const providers = [
+      ...new Set(
+        providerValues
+          .filter((value): value is string => typeof value === 'string')
+          .map(value => value.trim())
+          .filter(provider => SPEECH_PLUGIN_IDS.has(provider)),
+      ),
+    ].sort();
+    if (providers.length === 0) return;
+
+    const bundledPluginsDir = cli.env.OPENCLAW_BUNDLED_PLUGINS_DIR?.trim();
+    if (!bundledPluginsDir) return;
+    const manifests = providers.flatMap(provider => {
+      const manifestPath = path.join(bundledPluginsDir, provider, 'openclaw.plugin.json');
+      return fs.existsSync(manifestPath) ? [{ provider, manifestPath }] : [];
+    });
+    if (manifests.length === 0) return;
+    const signatureHash = crypto.createHash('sha256');
+    manifests.forEach(({ provider, manifestPath }) => {
+      signatureHash.update(provider).update('\0').update(fs.readFileSync(manifestPath));
+    });
+    const signature = signatureHash.digest('hex');
+    const markerPath = path.join(this.stateDir, '.speech-plugin-registry');
+    try {
+      if (fs.readFileSync(markerPath, 'utf8').trim() === signature) return;
+    } catch {
+      // Missing marker: refresh once before starting the Gateway.
+    }
+
+    console.log(
+      `[OpenClaw] refreshing speech plugin registry for ${manifests.map(item => item.provider).join(', ')}`,
+    );
+    await this.runCliWithEnvironment(
+      cli,
+      ['plugins', 'registry', '--refresh', '--json'],
+      'plugin registry refresh',
+    );
+    const temporaryMarkerPath = `${markerPath}.tmp-${process.pid}`;
+    fs.writeFileSync(temporaryMarkerPath, `${signature}\n`, 'utf8');
+    fs.renameSync(temporaryMarkerPath, markerPath);
   }
 
   private async doStartGateway(): Promise<OpenClawEngineStatus> {
@@ -810,6 +904,11 @@ export class OpenClawEngineManager extends EventEmitter {
 
     this.beginNetworkGeneration();
     const cliEnvironment = await this.buildCliEnvironment();
+    try {
+      await this.refreshSpeechPluginRegistryIfNeeded(cliEnvironment);
+    } catch (error) {
+      console.warn('[OpenClaw] Failed to refresh speech plugin registry:', error);
+    }
     const launchEnvironmentGeneration = this.gatewayLaunchEnvironmentGeneration;
     console.log(`[OpenClaw] buildCliEnvironment done (${elapsed()})`);
     const openclawEntry = cliEnvironment.openclawEntry;

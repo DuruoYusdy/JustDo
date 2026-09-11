@@ -3,11 +3,10 @@ export const LocalAsrIpc = {
   Transcribe: 'local-asr:transcribe',
 } as const;
 
-export const LOCAL_ASR_MODEL_ID = 'sherpa-onnx-whisper-tiny';
+export const LOCAL_ASR_DEFAULT_MODEL_ID = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09';
 export const LOCAL_ASR_MODEL_IDS = [
-  LOCAL_ASR_MODEL_ID,
+  LOCAL_ASR_DEFAULT_MODEL_ID,
   'sherpa-onnx-whisper-base',
-  'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
 ] as const;
 export type LocalAsrModelId = (typeof LOCAL_ASR_MODEL_IDS)[number];
 export const LOCAL_ASR_MAX_AUDIO_BYTES = 20 * 1024 * 1024;
@@ -24,10 +23,15 @@ export interface LocalAsrTranscribeResult {
   error?: string;
 }
 
-export type LocalAsrLanguage = 'zh' | 'en';
+export type LocalAsrLanguage = 'auto' | 'zh' | 'en' | 'ja' | 'ko' | 'yue';
 
 export interface LocalAsrTranscribeOptions {
   modelId: LocalAsrModelId;
   language: LocalAsrLanguage;
   numThreads: number;
 }
+
+export const isLocalAsrLanguageSupported = (
+  modelId: LocalAsrModelId,
+  language: LocalAsrLanguage | 'app',
+): boolean => language !== 'yue' || modelId.includes('sense-voice');

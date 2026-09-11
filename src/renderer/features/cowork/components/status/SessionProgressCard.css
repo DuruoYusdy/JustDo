@@ -326,13 +326,3 @@
     transform: translateY(0) scale(1);
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .cowork-progress-card {
-    animation: none;
-  }
-
-  .cowork-progress-card__step--in_progress .cowork-progress-card__step-marker {
-    animation: none;
-  }
-}

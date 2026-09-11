@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_ASR_MODEL_ID } from '../../../shared/localAsr';
+import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../../shared/localAsr';
 import { defaultLocalSpeechSettings } from '../../../shared/localSpeechSettings';
 import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_PROVIDER_ID } from '../../../shared/localTts';
 import {
@@ -95,7 +95,7 @@ describe('local TTS OpenClaw configuration', () => {
 
     const config = buildManagedLocalTtsConfig(paths, {
       inputEnabled: true,
-      asrModelId: LOCAL_ASR_MODEL_ID,
+      asrModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
       inputLanguage: 'app',
       maxRecordingSeconds: 60,
       recognitionThreads: 2,
@@ -122,7 +122,7 @@ describe('local TTS OpenClaw configuration', () => {
     expect(
       buildManagedLocalTtsConfig(paths, {
         inputEnabled: true,
-        asrModelId: LOCAL_ASR_MODEL_ID,
+        asrModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
         inputLanguage: 'app',
         maxRecordingSeconds: 60,
         recognitionThreads: 2,
@@ -131,6 +131,19 @@ describe('local TTS OpenClaw configuration', () => {
         voiceId: 3,
         speechRate: 1,
         synthesisThreads: 2,
+      }),
+    ).toBeNull();
+  });
+
+  it('does not expose the local provider in online synthesis mode', () => {
+    const paths = createAssetPaths();
+    prepareAssets(paths);
+
+    expect(
+      buildManagedLocalTtsConfig(paths, {
+        ...defaultLocalSpeechSettings,
+        outputEnabled: true,
+        synthesisMode: 'online',
       }),
     ).toBeNull();
   });

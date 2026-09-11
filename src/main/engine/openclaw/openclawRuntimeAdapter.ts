@@ -1563,6 +1563,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // ─── Gateway Event Routing ──────────────────────────────────────────────
 
   private handleGatewayEvent(event: GatewayEventFrame): void {
+    this.emit('gatewayEvent', event);
     if (event.event === 'tick') {
       this.lastTickTimestamp = Date.now();
       return;

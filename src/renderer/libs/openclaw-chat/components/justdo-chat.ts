@@ -98,6 +98,7 @@ const MERMAID_BUBBLE_MIN_WIDTH = 500;
 const MERMAID_BUBBLE_MAX_WIDTH = 820;
 const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 2;
+const MAX_SPEECH_AUDIO_BASE64_LENGTH = 64 * 1024 * 1024;
 
 type PacedTerminalProjection = {
   sessionIdentity: string;
@@ -243,20 +244,31 @@ export class JustDoChatElement extends LitElement {
 
   private speechAudio: HTMLAudioElement | null = null;
   private speechObjectUrl: string | null = null;
+  private speechRequestGeneration = 0;
+  private localTtsStatusGeneration = 0;
   private unsubscribeLocalSpeechModels: (() => void) | null = null;
 
   private async refreshLocalTtsStatus(): Promise<void> {
-    const api = window.electron?.localTts;
-    if (!api) return;
+    const generation = this.localTtsStatusGeneration + 1;
+    this.localTtsStatusGeneration = generation;
     try {
       const settings = normalizeLocalSpeechSettings(configService.getConfig().voice);
-      const status = await api.getStatus(settings.ttsModelId);
-      this.localTtsAvailable =
-        status.available &&
-        settings.outputEnabled;
+      if (!settings.outputEnabled) {
+        this.localTtsAvailable = false;
+        this.stopSpeech();
+        return;
+      }
+      const status =
+        settings.synthesisMode === 'online'
+          ? await window.electron.onlineTts.getStatus()
+          : await window.electron.localTts.getStatus(settings.ttsModelId);
+      if (generation !== this.localTtsStatusGeneration) return;
+      this.localTtsAvailable = status.available;
       if (!this.localTtsAvailable) this.stopSpeech();
     } catch {
+      if (generation !== this.localTtsStatusGeneration) return;
       this.localTtsAvailable = false;
+      this.stopSpeech();
     }
   }
 
@@ -265,7 +277,12 @@ export class JustDoChatElement extends LitElement {
   };
 
   private stopSpeech(): void {
-    this.speechAudio?.pause();
+    this.speechRequestGeneration += 1;
+    if (this.speechAudio) {
+      this.speechAudio.onended = null;
+      this.speechAudio.onerror = null;
+      this.speechAudio.pause();
+    }
     this.speechAudio = null;
     if (this.speechObjectUrl) URL.revokeObjectURL(this.speechObjectUrl);
     this.speechObjectUrl = null;
@@ -274,7 +291,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private readonly handleSpeak = async (groupKey: string, text: string): Promise<void> => {
-    if (this.speechPlayingGroupKey === groupKey) {
+    if (this.speechLoadingGroupKey === groupKey || this.speechPlayingGroupKey === groupKey) {
       this.stopSpeech();
       return;
     }
@@ -282,10 +299,24 @@ export class JustDoChatElement extends LitElement {
     if (!controller || !text.trim()) return;
 
     this.stopSpeech();
+    const requestGeneration = this.speechRequestGeneration;
     this.speechLoadingGroupKey = groupKey;
     try {
       const result = await controller.speak(text);
-      if (this.speechLoadingGroupKey !== groupKey) return;
+      if (
+        requestGeneration !== this.speechRequestGeneration ||
+        this.speechLoadingGroupKey !== groupKey
+      ) {
+        return;
+      }
+      if (
+        typeof result.audioBase64 !== 'string' ||
+        !result.audioBase64 ||
+        result.audioBase64.length > MAX_SPEECH_AUDIO_BASE64_LENGTH ||
+        (result.mimeType !== undefined && !result.mimeType.startsWith('audio/'))
+      ) {
+        throw new Error('Invalid speech audio response.');
+      }
       const bytes = Uint8Array.from(atob(result.audioBase64), char => char.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: result.mimeType ?? 'audio/wav' }));
       const audio = new Audio(url);
@@ -293,8 +324,15 @@ export class JustDoChatElement extends LitElement {
       this.speechObjectUrl = url;
       this.speechLoadingGroupKey = null;
       this.speechPlayingGroupKey = groupKey;
-      audio.onended = () => this.stopSpeech();
+      audio.onended = () => {
+        if (requestGeneration === this.speechRequestGeneration && this.speechAudio === audio) {
+          this.stopSpeech();
+        }
+      };
       audio.onerror = () => {
+        if (requestGeneration !== this.speechRequestGeneration || this.speechAudio !== audio) {
+          return;
+        }
         this.stopSpeech();
         window.dispatchEvent(
           new CustomEvent('app:showToast', { detail: i18nService.t('localTtsPlaybackFailed') }),
@@ -302,6 +340,7 @@ export class JustDoChatElement extends LitElement {
       };
       await audio.play();
     } catch {
+      if (requestGeneration !== this.speechRequestGeneration) return;
       this.stopSpeech();
       window.dispatchEvent(
         new CustomEvent('app:showToast', { detail: i18nService.t('localTtsPlaybackFailed') }),
@@ -738,31 +777,6 @@ export class JustDoChatElement extends LitElement {
         opacity: 0.6;
       }
 
-      .chat-group__speech {
-        width: 22px;
-        height: 22px;
-        padding: 0;
-        border: 0;
-        border-radius: 6px;
-        color: inherit;
-        background: transparent;
-        cursor: pointer;
-        font-size: 10px;
-        line-height: 1;
-      }
-
-      .chat-group__speech:hover,
-      .chat-group__speech:focus-visible,
-      .chat-group__speech--playing {
-        color: var(--justdo-chat-text, #1a1a1a);
-        background: var(--justdo-chat-hover, rgba(148, 163, 184, 0.16));
-      }
-
-      .chat-group__speech:disabled {
-        cursor: wait;
-        opacity: 0.7;
-      }
-
       /* ── Chat Bubble ────────────────────────────────────────────────── */
 
       .chat-bubble {
@@ -819,6 +833,107 @@ export class JustDoChatElement extends LitElement {
       .message-copy--copied {
         color: #16a34a;
         opacity: 1;
+      }
+
+      .message-speech {
+        position: absolute;
+        right: 6px;
+        bottom: 6px;
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        border-radius: 5px;
+        background: color-mix(in srgb, var(--justdo-chat-assistant-bg, #ffffff) 86%, transparent);
+        color: var(--justdo-chat-text-secondary, #6b7280);
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        backdrop-filter: blur(4px);
+        transition:
+          opacity 120ms ease,
+          background 120ms ease,
+          color 120ms ease;
+      }
+
+      .chat-bubble:hover .message-speech,
+      .message-speech:focus-visible,
+      .message-speech--loading,
+      .message-speech--playing {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .message-speech:hover,
+      .message-speech--playing {
+        color: var(--justdo-chat-text, #1a1a1a);
+        background: color-mix(
+          in srgb,
+          var(--justdo-chat-assistant-bg, #ffffff) 74%,
+          rgba(0, 0, 0, 0.14)
+        );
+      }
+
+      .message-speech__icon {
+        width: 16px;
+        height: 16px;
+      }
+
+      .message-speech__loading {
+        width: 13px;
+        height: 13px;
+        border: 1.5px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: message-speech-spin 700ms linear infinite;
+      }
+
+      .message-speech__wave {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        width: 16px;
+        height: 16px;
+      }
+
+      .message-speech__wave > span {
+        width: 2px;
+        height: 10px;
+        border-radius: 999px;
+        background: currentColor;
+        transform-origin: center;
+        animation: message-speech-wave 720ms ease-in-out infinite;
+      }
+
+      .message-speech__wave > span:nth-child(2),
+      .message-speech__wave > span:nth-child(4) {
+        animation-delay: -360ms;
+      }
+
+      .message-speech__wave > span:nth-child(3) {
+        animation-delay: -180ms;
+      }
+
+      @keyframes message-speech-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes message-speech-wave {
+        0%,
+        100% {
+          transform: scaleY(0.35);
+        }
+        50% {
+          transform: scaleY(1);
+        }
       }
 
       .chat-bubble--user {
@@ -3479,6 +3594,12 @@ export class JustDoChatElement extends LitElement {
       showAvatar,
       this.editDiffModes,
       this.handleEditDiffModeChange,
+      this.localTtsAvailable
+        ? {
+            state: this.getSpeechState(item.key),
+            onSpeak: this.handleSpeak,
+          }
+        : undefined,
     );
   }
 

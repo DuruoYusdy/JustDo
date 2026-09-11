@@ -33,6 +33,7 @@ type OpenClawConfigSyncServiceDeps = {
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   getBrowserMode?: () => BrowserMode;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
+  getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
 };
 
 type SyncOpenClawConfigOptions = {
@@ -1104,6 +1105,7 @@ export class OpenClawConfigSyncService {
         getAgents: () => this.deps.getCoworkStore().listAgents(),
         getBrowserMode: this.deps.getBrowserMode,
         getLocalTtsConfig: this.deps.getLocalTtsConfig,
+        getSpeechOutputState: this.deps.getSpeechOutputState,
       });
     }
     return this.configSync;

@@ -18,10 +18,6 @@ const models = [
     license: path.join(sourceRoot, 'KOKORO-LICENSE.txt'),
   },
   {
-    id: 'sherpa-onnx-whisper-tiny',
-    license: path.join(sourceRoot, 'WHISPER-LICENSE.txt'),
-  },
-  {
     id: 'sherpa-onnx-whisper-base',
     license: path.join(sourceRoot, 'WHISPER-LICENSE.txt'),
   },

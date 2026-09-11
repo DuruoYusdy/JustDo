@@ -1,6 +1,13 @@
-import { app, BrowserWindow, desktopCapturer, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, nativeImage, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
+
+import { MediaCaptureIpc } from '../../shared/mediaCapture';
+import {
+  shouldAllowAudioMediaCheck,
+  shouldAllowAudioMediaRequest,
+  shouldAllowSystemAudioCapture,
+} from './mediaPermission';
 
 type MainWindowFactoryOptions = {
   appName: string;
@@ -24,6 +31,7 @@ const LOAD_RETRY_DELAY_MS = 3_000;
 const LOAD_TIMEOUT_MS = 30_000;
 const CHAT_TIMELINE_TRACE_PREFIX = '[ChatTimelineTrace] ';
 const CHAT_TIMELINE_TRACE_MAX_BYTES = 64 * 1024;
+const SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS = 5_000;
 
 export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWindow => {
   const mainWindow = new BrowserWindow({
@@ -74,14 +82,25 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
 
   mainWindow.setMenu(null);
   mainWindow.setMinimumSize(800, 600);
+  let systemAudioCaptureAuthorizedUntil = 0;
+  ipcMain.removeHandler(MediaCaptureIpc.ArmSystemAudio);
+  ipcMain.handle(MediaCaptureIpc.ArmSystemAudio, event => {
+    if (
+      event.sender !== mainWindow.webContents ||
+      event.senderFrame !== mainWindow.webContents.mainFrame
+    ) {
+      throw new Error('System audio capture can only be armed by the main application frame.');
+    }
+    systemAudioCaptureAuthorizedUntil = Date.now() + SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS;
+  });
+  mainWindow.once('closed', () => {
+    ipcMain.removeHandler(MediaCaptureIpc.ArmSystemAudio);
+    systemAudioCaptureAuthorizedUntil = 0;
+  });
   const windowSession = mainWindow.webContents.session;
   windowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
     if (permission !== 'media') return true;
-    return (
-      webContents === mainWindow.webContents &&
-      details.isMainFrame &&
-      details.mediaType !== 'video'
-    );
+    return shouldAllowAudioMediaCheck(webContents === mainWindow.webContents, details);
   });
   windowSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (permission !== 'media') {
@@ -89,19 +108,24 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       return;
     }
     const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined;
-    callback(
-      webContents === mainWindow.webContents &&
-        mediaTypes?.includes('audio') === true &&
-        !mediaTypes.includes('video'),
+    const allowed = shouldAllowAudioMediaRequest(
+      webContents === mainWindow.webContents,
+      mediaTypes,
     );
+    callback(allowed);
   });
   windowSession.setDisplayMediaRequestHandler((request, callback) => {
-    if (
-      !request.userGesture ||
-      !request.audioRequested ||
-      request.frame !== mainWindow.webContents.mainFrame ||
-      process.platform !== 'win32'
-    ) {
+    const isMainFrame = request.frame === mainWindow.webContents.mainFrame;
+    const authorizedByRenderer = isMainFrame && Date.now() <= systemAudioCaptureAuthorizedUntil;
+    if (isMainFrame) systemAudioCaptureAuthorizedUntil = 0;
+    const allowed = shouldAllowSystemAudioCapture({
+      audioRequested: request.audioRequested,
+      authorizedByRenderer,
+      isMainFrame,
+      videoRequested: request.videoRequested,
+      isWindows: process.platform === 'win32',
+    });
+    if (!allowed) {
       callback({});
       return;
     }
@@ -110,12 +134,19 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       .then(sources => {
         const primarySource = sources[0];
         if (!primarySource || mainWindow.isDestroyed()) {
+          console.warn('[SystemAudioCapture] No usable desktop source is available.');
           callback({});
           return;
         }
         callback({ video: primarySource, audio: 'loopback' });
       })
-      .catch(() => callback({}));
+      .catch(error => {
+        console.warn(
+          '[SystemAudioCapture] Failed to enumerate desktop sources:',
+          error instanceof Error ? error.message : String(error),
+        );
+        callback({});
+      });
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
