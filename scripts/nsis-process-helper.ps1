@@ -118,7 +118,7 @@ try {
     )
   }
 
-  $managedRuntimeNames = @('cfmind', 'mingit', 'python-win')
+  $managedRuntimeNames = @('cfmind', 'mingit', 'python-win', 'local-tts')
   $installDirectory = $installRoot.TrimEnd(
     [IO.Path]::DirectorySeparatorChar,
     [IO.Path]::AltDirectorySeparatorChar

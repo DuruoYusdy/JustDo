@@ -11,7 +11,7 @@
  *
  * 效果:
  *   输入: $INSTDIR/resources/win-resources.tar.zst
- *   输出: $INSTDIR/resources/cfmind/, python-win/, mingit/
+ *   输出: $INSTDIR/resources/cfmind/, python-win/, mingit/, local-tts/
  *   tar.zst 和进度 metadata 文件由 NSIS 脚本在解压后删除
  *
  * Electron/Node 流式解码 zstd，优先把裸 tar 流交给系统 tar.exe；系统
@@ -465,7 +465,7 @@ async function main() {
 
     // Upgrades used to bundle PortableGit in this directory. Keep a same-volume
     // backup until the replacements have been extracted and validated so a failed
-    // installation can restore the last working runtimes. Replace all three
+    // installation can restore the last working runtimes. Replace every
     // managed runtime trees so removed files cannot survive an upgrade.
     const cfmindDir = path.join(destDir, 'cfmind');
     const cfmindBackupDir = path.join(destDir, '.cfmind-upgrade-backup');
@@ -473,6 +473,8 @@ async function main() {
     const minGitBackupDir = path.join(destDir, '.mingit-upgrade-backup');
     const pythonDir = path.join(destDir, 'python-win');
     const pythonBackupDir = path.join(destDir, '.python-win-upgrade-backup');
+    const localTtsDir = path.join(destDir, 'local-tts');
+    const localTtsBackupDir = path.join(destDir, '.local-tts-upgrade-backup');
     const managedRuntimes = [
       {
         name: 'OpenClaw',
@@ -489,6 +491,11 @@ async function main() {
         dir: pythonDir,
         backupDir: pythonBackupDir,
       },
+      {
+        name: 'LocalTts',
+        dir: localTtsDir,
+        backupDir: localTtsBackupDir,
+      },
     ];
     const transactionStatePath = path.join(destDir, '.runtime-upgrade-in-progress.json');
     const transactionStateTempPath = `${transactionStatePath}.tmp`;
@@ -497,6 +504,7 @@ async function main() {
       existingOpenClaw: fs.existsSync(cfmindDir),
       existingGit: fs.existsSync(minGitDir),
       existingPython: fs.existsSync(pythonDir),
+      existingLocalTts: fs.existsSync(localTtsDir),
     });
 
     if (fs.existsSync(transactionStatePath)) {

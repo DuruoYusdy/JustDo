@@ -186,6 +186,18 @@ describe('group footer helpers', () => {
 });
 
 describe('renderMessageBlock', () => {
+  test('renders read-aloud control only when an assistant speech handler is provided', () => {
+    const handler = vi.fn();
+    const withSpeech = stringifyTemplate(
+      renderMessageBlock(createGroup('assistant'), { onSpeak: handler, speechState: 'idle' }),
+    );
+    const withoutSpeech = stringifyTemplate(renderMessageBlock(createGroup('assistant')));
+
+    expect(withSpeech).toContain('chat-group__speech');
+    expect(withSpeech).toContain(i18nService.t('localTtsPlay'));
+    expect(withoutSpeech).not.toContain('chat-group__speech');
+  });
+
   test('marks ordinary messages as content rows for consistent bubble spacing', () => {
     const rendered = stringifyTemplate(
       renderMessageBlock({

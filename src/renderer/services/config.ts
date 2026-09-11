@@ -1,3 +1,4 @@
+import { normalizeLocalSpeechSettings } from '@shared/localSpeechSettings';
 import { isLegacyCustomProviderKey } from '@shared/providers';
 import { ProxyMode, ProxyProtocol } from '@shared/proxy';
 
@@ -153,6 +154,7 @@ export class ConfigService {
           },
           proxy: normalizeProxyConfig(storedConfig.proxy),
           appearance: normalizeAppearanceConfig(storedConfig.appearance),
+          voice: normalizeLocalSpeechSettings(storedConfig.voice),
           shortcuts: {
             ...defaultConfig.shortcuts!,
             ...(storedConfig.shortcuts ?? {}),
@@ -203,6 +205,7 @@ export class ConfigService {
       },
       proxy: normalizeProxyConfig(storedConfig.proxy),
       appearance: normalizeAppearanceConfig(storedConfig.appearance),
+      voice: normalizeLocalSpeechSettings(storedConfig.voice),
       shortcuts: {
         ...this.config.shortcuts,
         ...(storedConfig.shortcuts ?? {}),
@@ -232,6 +235,7 @@ export class ConfigService {
         ...(newConfig.appearance
           ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }
           : {}),
+        ...(newConfig.voice ? { voice: normalizeLocalSpeechSettings(newConfig.voice) } : {}),
         ...(normalizedProviders ? { providers: normalizedProviders } : {}),
       };
       await localStore.setItem(CONFIG_KEYS.APP_CONFIG, nextConfig);

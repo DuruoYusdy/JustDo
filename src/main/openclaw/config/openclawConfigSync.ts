@@ -6,6 +6,7 @@ import path from 'path';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
+import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/localTts';
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import {
   type AgentRuntimeSettings,
@@ -1749,6 +1750,7 @@ type OpenClawConfigSyncDeps = {
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
   getBrowserMode?: () => BrowserModeValue;
+  getLocalTtsConfig?: () => Record<string, unknown> | null;
 };
 
 export class OpenClawConfigSync {
@@ -1759,6 +1761,7 @@ export class OpenClawConfigSync {
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
   private readonly getBrowserMode?: () => BrowserModeValue;
+  private readonly getLocalTtsConfig: () => Record<string, unknown> | null;
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -1769,6 +1772,7 @@ export class OpenClawConfigSync {
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
     this.getBrowserMode = deps.getBrowserMode;
+    this.getLocalTtsConfig = deps.getLocalTtsConfig ?? (() => null);
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -1911,7 +1915,11 @@ export class OpenClawConfigSync {
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     );
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
-    const bundledExtensionEntries = buildManagedBundledExtensionEntries(agentRuntimeSettings);
+    const localTtsConfig = this.getLocalTtsConfig();
+    const bundledExtensionEntries = {
+      ...buildManagedBundledExtensionEntries(agentRuntimeSettings),
+      ...(localTtsConfig ? { [LOCAL_TTS_PROVIDER_ID]: { enabled: true } } : {}),
+    };
     const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
       ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
       : {};
@@ -1992,6 +2000,7 @@ export class OpenClawConfigSync {
         ...this.buildAgentsEntries(primaryModel, availableModelRefs, resolvedWorkspaceDir),
       },
       session: buildManagedOpenClawSessionConfig(),
+      ...(localTtsConfig ? { tts: localTtsConfig } : {}),
       commands: {
         // Internal `chat.send` turns identify the sender as bare `gateway-client`.
         // Prefixing with `webchat:` does not round-trip through owner resolution,
@@ -2295,7 +2304,11 @@ export class OpenClawConfigSync {
       this.getMcpServers?.() ?? [],
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
     );
-    const bundledExtensionEntries = buildManagedBundledExtensionEntries(agentRuntimeSettings);
+    const localTtsConfig = this.getLocalTtsConfig();
+    const bundledExtensionEntries = {
+      ...buildManagedBundledExtensionEntries(agentRuntimeSettings),
+      ...(localTtsConfig ? { [LOCAL_TTS_PROVIDER_ID]: { enabled: true } } : {}),
+    };
     const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
       ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
       : {};
@@ -2346,6 +2359,7 @@ export class OpenClawConfigSync {
         },
       },
       session: buildManagedOpenClawSessionConfig(),
+      ...(localTtsConfig ? { tts: localTtsConfig } : {}),
       mcp: {
         servers: mcpServers,
       },

@@ -3,6 +3,7 @@ export { registerOpenClawEngineHandlers } from './engine';
 export { registerExtensionHandlers } from './extensions';
 export { registerOpenClawHistoryHandlers } from './history';
 export { registerHookHandlers } from './hooks';
+export { registerLocalTtsHandlers } from './localTts';
 export { registerMarketplaceHandlers } from './marketplace';
 export { registerMcpHandlers } from './mcp';
 export { registerOpenClawMemoryHandlers } from './memory';

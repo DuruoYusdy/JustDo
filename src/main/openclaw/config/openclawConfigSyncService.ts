@@ -32,6 +32,7 @@ type OpenClawConfigSyncServiceDeps = {
   connectGatewayClient: () => Promise<void>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   getBrowserMode?: () => BrowserMode;
+  getLocalTtsConfig?: () => Record<string, unknown> | null;
 };
 
 type SyncOpenClawConfigOptions = {
@@ -1102,6 +1103,7 @@ export class OpenClawConfigSyncService {
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
         getBrowserMode: this.deps.getBrowserMode,
+        getLocalTtsConfig: this.deps.getLocalTtsConfig,
       });
     }
     return this.configSync;

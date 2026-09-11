@@ -25,6 +25,7 @@ import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer
 import { syncDefaultModelSelectionState } from '@/features/cowork/components/composer/defaultModelSelectionState';
 import FolderSelectorPopover from '@/features/cowork/components/composer/FolderSelectorPopover';
 import { LatestSerialTaskQueue } from '@/features/cowork/components/composer/latestSerialTaskQueue';
+import { LocalSpeechInputButton } from '@/features/cowork/components/composer/LocalSpeechInputButton';
 import {
   applyModelSelectionUpdate,
   DefaultModelApplyError,
@@ -653,6 +654,29 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         textarea.setSelectionRange(nextValue.length, nextValue.length);
       });
     }, []);
+
+    const insertSpeechTranscript = useCallback(
+      (transcript: string) => {
+        const currentValue = latestValueRef.current;
+        const textarea = textareaRef.current;
+        const start = textarea?.selectionStart ?? currentValue.length;
+        const end = textarea?.selectionEnd ?? start;
+        const left = currentValue.slice(0, start);
+        const right = currentValue.slice(end);
+        const prefix = left && !/\s$/.test(left) ? ' ' : '';
+        const suffix = right && !/^\s/.test(right) ? ' ' : '';
+        const insertion = `${prefix}${transcript.trim()}${suffix}`;
+        const nextValue = `${left}${insertion}${right}`;
+        const nextCaret = left.length + insertion.length;
+        commitValue(nextValue);
+        resetSlashMenuState();
+        requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
+        });
+      },
+      [commitValue, resetSlashMenuState],
+    );
 
     // 暴露方法给父组件
     React.useImperativeHandle(ref, () => ({
@@ -2508,6 +2532,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                         >
                           <PaperClipIcon className="h-4 w-4" />
                         </button>
+                        <LocalSpeechInputButton
+                          key={draftKey}
+                          disabled={disabled || isRunActive}
+                          onTranscript={insertSpeechTranscript}
+                        />
                         <button
                           type="button"
                           onClick={handleSlashButtonClick}
@@ -2712,6 +2741,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     >
                       <PaperClipIcon className="h-4 w-4" />
                     </button>
+                    <LocalSpeechInputButton
+                      key={draftKey}
+                      disabled={disabled || isRunActive}
+                      onTranscript={insertSpeechTranscript}
+                    />
                     <button
                       type="button"
                       onClick={handleSlashButtonClick}

@@ -1,4 +1,5 @@
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '@shared/browser';
+import { defaultLocalSpeechSettings, type LocalSpeechSettings } from '@shared/localSpeechSettings';
 import {
   getDefaultCustomProviderDisplayName,
   isReservedOpenClawProviderId,
@@ -69,6 +70,8 @@ export interface AppConfig {
   proxy: ProxySettings;
   // 是否启用开发者模式
   developerMode: boolean;
+  // 本地语音输入与朗读配置
+  voice: LocalSpeechSettings;
   // 语言初始化标记 (用于判断是否是首次启动)
   language_initialized?: boolean;
   // 应用配置
@@ -140,6 +143,7 @@ export const defaultConfig: AppConfig = {
   useSystemProxy: false,
   proxy: defaultProxySettings,
   developerMode: false,
+  voice: defaultLocalSpeechSettings,
   app: {
     port: 3000,
     isDevelopment: process.env.NODE_ENV === 'development',

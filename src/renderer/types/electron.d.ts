@@ -852,6 +852,34 @@ interface IElectronAPI {
     listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
     onSubtasksChanged: (callback: (event: CoworkSubtaskChangedEvent) => void) => () => void;
   };
+  localTts: {
+    getStatus: (
+      modelId: import('../../shared/localTts').LocalTtsModelId,
+    ) => Promise<import('../../shared/localTts').LocalTtsStatus>;
+  };
+  localAsr: {
+    getStatus: (
+      modelId: import('../../shared/localAsr').LocalAsrModelId,
+    ) => Promise<import('../../shared/localAsr').LocalAsrStatus>;
+    transcribe: (
+      audio: Uint8Array,
+      options: import('../../shared/localAsr').LocalAsrTranscribeOptions,
+    ) => Promise<import('../../shared/localAsr').LocalAsrTranscribeResult>;
+  };
+  localSpeechModels: {
+    list: () => Promise<import('../../shared/localSpeechModels').LocalSpeechModelListResult>;
+    install: (
+      kind: import('../../shared/localSpeechModels').LocalSpeechModelKind,
+      id: string,
+    ) => Promise<import('../../shared/localSpeechModels').LocalSpeechModelInstallResult>;
+    remove: (
+      kind: import('../../shared/localSpeechModels').LocalSpeechModelKind,
+      id: string,
+    ) => Promise<import('../../shared/localSpeechModels').LocalSpeechModelInstallResult>;
+    onChanged: (
+      callback: (status: import('../../shared/localSpeechModels').LocalSpeechModelStatus) => void,
+    ) => () => void;
+  };
   sessionGroup: {
     list: () => Promise<{ success: boolean; groups?: SessionGroup[]; error?: string }>;
     create: (input: { name: string; color?: string }) => Promise<{

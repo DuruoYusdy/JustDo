@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, nativeImage, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
@@ -74,6 +74,49 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
 
   mainWindow.setMenu(null);
   mainWindow.setMinimumSize(800, 600);
+  const windowSession = mainWindow.webContents.session;
+  windowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
+    if (permission !== 'media') return true;
+    return (
+      webContents === mainWindow.webContents &&
+      details.isMainFrame &&
+      details.mediaType !== 'video'
+    );
+  });
+  windowSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission !== 'media') {
+      callback(true);
+      return;
+    }
+    const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined;
+    callback(
+      webContents === mainWindow.webContents &&
+        mediaTypes?.includes('audio') === true &&
+        !mediaTypes.includes('video'),
+    );
+  });
+  windowSession.setDisplayMediaRequestHandler((request, callback) => {
+    if (
+      !request.userGesture ||
+      !request.audioRequested ||
+      request.frame !== mainWindow.webContents.mainFrame ||
+      process.platform !== 'win32'
+    ) {
+      callback({});
+      return;
+    }
+    void desktopCapturer
+      .getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
+      .then(sources => {
+        const primarySource = sources[0];
+        if (!primarySource || mainWindow.isDestroyed()) {
+          callback({});
+          return;
+        }
+        callback({ video: primarySource, audio: 'loopback' });
+      })
+      .catch(() => callback({}));
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };

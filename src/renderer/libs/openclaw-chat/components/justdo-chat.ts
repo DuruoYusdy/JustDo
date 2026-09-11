@@ -7,6 +7,8 @@
  * 2. Via a ChatController reference (controller property)
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { LocalSpeechModelKind } from '@shared/localSpeechModels';
+import { normalizeLocalSpeechSettings } from '@shared/localSpeechSettings';
 import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -86,6 +88,7 @@ import {
 } from '@/libs/openclaw-chat/model/timeline-render-cache';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
 import { EditDiffMonacoController } from './edit-diff-monaco';
@@ -154,6 +157,15 @@ export class JustDoChatElement extends LitElement {
   @state()
   declare private editDiffModes: ReadonlyMap<string, EditDiffMode>;
 
+  @state()
+  declare private localTtsAvailable: boolean;
+
+  @state()
+  declare private speechLoadingGroupKey: string | null;
+
+  @state()
+  declare private speechPlayingGroupKey: string | null;
+
   private readonly chatScrollController = new ChatScrollController(
     () => this.requestUpdate(),
     () => this._controller?.showOlderHistory() ?? false,
@@ -203,6 +215,9 @@ export class JustDoChatElement extends LitElement {
     this.currentMinimapKey = null;
     this.hoveredMinimapKey = null;
     this.editDiffModes = new Map();
+    this.localTtsAvailable = false;
+    this.speechLoadingGroupKey = null;
+    this.speechPlayingGroupKey = null;
   }
 
   /** ChatController reference (preferred — connects directly to gateway) */
@@ -217,11 +232,87 @@ export class JustDoChatElement extends LitElement {
 
   set controller(ctrl: ChatController | null) {
     if (this._controller === ctrl) return;
+    this.stopSpeech();
     this.unsubscribeController();
     this._controller = ctrl;
     this.editDiffModes = new Map();
     if (ctrl) this.subscribeController(ctrl);
+    void this.refreshLocalTtsStatus();
     this.requestUpdate();
+  }
+
+  private speechAudio: HTMLAudioElement | null = null;
+  private speechObjectUrl: string | null = null;
+  private unsubscribeLocalSpeechModels: (() => void) | null = null;
+
+  private async refreshLocalTtsStatus(): Promise<void> {
+    const api = window.electron?.localTts;
+    if (!api) return;
+    try {
+      const settings = normalizeLocalSpeechSettings(configService.getConfig().voice);
+      const status = await api.getStatus(settings.ttsModelId);
+      this.localTtsAvailable =
+        status.available &&
+        settings.outputEnabled;
+      if (!this.localTtsAvailable) this.stopSpeech();
+    } catch {
+      this.localTtsAvailable = false;
+    }
+  }
+
+  private readonly handleSpeechConfigUpdated = (): void => {
+    void this.refreshLocalTtsStatus();
+  };
+
+  private stopSpeech(): void {
+    this.speechAudio?.pause();
+    this.speechAudio = null;
+    if (this.speechObjectUrl) URL.revokeObjectURL(this.speechObjectUrl);
+    this.speechObjectUrl = null;
+    this.speechLoadingGroupKey = null;
+    this.speechPlayingGroupKey = null;
+  }
+
+  private readonly handleSpeak = async (groupKey: string, text: string): Promise<void> => {
+    if (this.speechPlayingGroupKey === groupKey) {
+      this.stopSpeech();
+      return;
+    }
+    const controller = this._controller;
+    if (!controller || !text.trim()) return;
+
+    this.stopSpeech();
+    this.speechLoadingGroupKey = groupKey;
+    try {
+      const result = await controller.speak(text);
+      if (this.speechLoadingGroupKey !== groupKey) return;
+      const bytes = Uint8Array.from(atob(result.audioBase64), char => char.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: result.mimeType ?? 'audio/wav' }));
+      const audio = new Audio(url);
+      this.speechAudio = audio;
+      this.speechObjectUrl = url;
+      this.speechLoadingGroupKey = null;
+      this.speechPlayingGroupKey = groupKey;
+      audio.onended = () => this.stopSpeech();
+      audio.onerror = () => {
+        this.stopSpeech();
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('localTtsPlaybackFailed') }),
+        );
+      };
+      await audio.play();
+    } catch {
+      this.stopSpeech();
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('localTtsPlaybackFailed') }),
+      );
+    }
+  };
+
+  private getSpeechState(groupKey: string): 'idle' | 'loading' | 'playing' {
+    if (this.speechLoadingGroupKey === groupKey) return 'loading';
+    if (this.speechPlayingGroupKey === groupKey) return 'playing';
+    return 'idle';
   }
 
   // ─── Styles ─────────────────────────────────────────────────────────────
@@ -645,6 +736,31 @@ export class JustDoChatElement extends LitElement {
       .chat-group__footer-separator,
       .active-turn__footer-separator {
         opacity: 0.6;
+      }
+
+      .chat-group__speech {
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        color: inherit;
+        background: transparent;
+        cursor: pointer;
+        font-size: 10px;
+        line-height: 1;
+      }
+
+      .chat-group__speech:hover,
+      .chat-group__speech:focus-visible,
+      .chat-group__speech--playing {
+        color: var(--justdo-chat-text, #1a1a1a);
+        background: var(--justdo-chat-hover, rgba(148, 163, 184, 0.16));
+      }
+
+      .chat-group__speech:disabled {
+        cursor: wait;
+        opacity: 0.7;
       }
 
       /* ── Chat Bubble ────────────────────────────────────────────────── */
@@ -2597,6 +2713,12 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.addEventListener('toggle', this.handleEditDiffToggle, true);
     this.addEventListener('scroll', this.handleMermaidVisibilityScroll, { passive: true });
     this.addEventListener('scroll', this.handleMinimapScroll, { passive: true });
+    window.addEventListener('config-updated', this.handleSpeechConfigUpdated);
+    this.unsubscribeLocalSpeechModels =
+      window.electron?.localSpeechModels?.onChanged?.(status => {
+        if (status.kind === LocalSpeechModelKind.Tts) void this.refreshLocalTtsStatus();
+      }) ?? null;
+    void this.refreshLocalTtsStatus();
   }
 
   disconnectedCallback(): void {
@@ -2607,6 +2729,7 @@ export class JustDoChatElement extends LitElement {
     this.persistedTimelineRenderCache.clear();
     this.processSummaryTakeoverTracker.clear();
     this.collapsedProcessSummaryTakeoverTracker.clear();
+    this.stopSpeech();
     this.processSummarySessionIdentity = null;
     this.renderedOpenProcessSummaryKey = null;
     this.renderedCollapsedProcessSummaryKeys = new Set();
@@ -2617,6 +2740,9 @@ export class JustDoChatElement extends LitElement {
     this.renderRoot?.removeEventListener('toggle', this.handleEditDiffToggle, true);
     this.removeEventListener('scroll', this.handleMermaidVisibilityScroll);
     this.removeEventListener('scroll', this.handleMinimapScroll);
+    window.removeEventListener('config-updated', this.handleSpeechConfigUpdated);
+    this.unsubscribeLocalSpeechModels?.();
+    this.unsubscribeLocalSpeechModels = null;
     if (this.mermaidScrollFrame !== null) cancelAnimationFrame(this.mermaidScrollFrame);
     this.mermaidScrollFrame = null;
     if (this.minimapScrollFrame !== null) cancelAnimationFrame(this.minimapScrollFrame);
@@ -3601,6 +3727,8 @@ export class JustDoChatElement extends LitElement {
           showAvatar,
           assistantName: this.assistantName,
           workingDirectory: this.workingDirectory,
+          speechState: this.getSpeechState(item.key),
+          onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
         });
       }
       if (item.kind === 'stream') {
@@ -3673,6 +3801,8 @@ export class JustDoChatElement extends LitElement {
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
+            speechState: this.getSpeechState(item.key),
+            onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
           }),
         );
         index += 1;
@@ -3693,6 +3823,8 @@ export class JustDoChatElement extends LitElement {
             showAvatar,
             assistantName: this.assistantName,
             workingDirectory: this.workingDirectory,
+            speechState: this.getSpeechState(item.key),
+            onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
           }),
         );
         continue;

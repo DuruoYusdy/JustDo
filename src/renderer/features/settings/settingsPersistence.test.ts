@@ -25,6 +25,7 @@ describe('settings app config updates', () => {
         useSystemProxy: defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
         developerMode: defaultConfig.developerMode,
+        voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
       }),
     ).toEqual({ appearance });
@@ -53,6 +54,7 @@ describe('settings app config updates', () => {
         useSystemProxy: defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
         developerMode: defaultConfig.developerMode,
+        voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
       }),
     ).toMatchObject({ api, providers });
@@ -72,12 +74,34 @@ describe('settings app config updates', () => {
         useSystemProxy: !defaultConfig.useSystemProxy,
         proxy: defaultConfig.proxy,
         developerMode: defaultConfig.developerMode,
+        voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
       }),
     ).toEqual({
       useSystemProxy: !defaultConfig.useSystemProxy,
       proxy: defaultConfig.proxy,
     });
+  });
+
+  test('persists local voice settings independently', () => {
+    const providers = defaultConfig.providers!;
+    const voice = { ...defaultConfig.voice, speechRate: 1.2 };
+
+    expect(
+      buildSettingsAppConfigUpdate(defaultConfig, {
+        api: defaultConfig.api,
+        providers,
+        currentProviders: providers,
+        theme: defaultConfig.theme,
+        appearance: defaultConfig.appearance,
+        language: defaultConfig.language,
+        useSystemProxy: defaultConfig.useSystemProxy,
+        proxy: defaultConfig.proxy,
+        developerMode: defaultConfig.developerMode,
+        voice,
+        shortcuts: defaultConfig.shortcuts!,
+      }),
+    ).toEqual({ voice });
   });
 });
 

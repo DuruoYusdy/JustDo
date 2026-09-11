@@ -75,6 +75,7 @@ export interface GatewayRequestError extends Error {
 
 const CHALLENGE_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 90_000;
+const TTS_REQUEST_TIMEOUT_MS = 125_000;
 const RECONNECT_BASE_MS = 800;
 const RECONNECT_MAX_MS = 15_000;
 const RECONNECT_FACTOR = 1.7;
@@ -144,10 +145,13 @@ export class GatewayClient {
       const timer =
         method === 'sessions.compact'
           ? undefined
-          : setTimeout(() => {
-              this.pendingRequests.delete(id);
-              reject(new Error(`request timeout: ${method}`));
-            }, REQUEST_TIMEOUT_MS);
+          : setTimeout(
+              () => {
+                this.pendingRequests.delete(id);
+                reject(new Error(`request timeout: ${method}`));
+              },
+              method === 'tts.speak' ? TTS_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+            );
       this.pendingRequests.set(id, {
         resolve: resolve as (v: unknown) => void,
         reject,

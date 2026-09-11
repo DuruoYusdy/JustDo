@@ -148,6 +148,7 @@ const writeMinimalConfig = (
   browserMode: BrowserModeValue = BrowserMode.Isolated,
   agents: Array<{ id: string; enabled: boolean }> = [],
   runtimeSettings = createDefaultAgentRuntimeSettings(),
+  localTtsConfig: Record<string, unknown> | null = null,
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
@@ -163,6 +164,7 @@ const writeMinimalConfig = (
     getBrowserMode: () => browserMode,
     getAgents: () => agents,
     getAgentRuntimeSettings: () => runtimeSettings,
+    getLocalTtsConfig: () => localTtsConfig,
   } as never);
   return (
     sync as unknown as {
@@ -211,6 +213,35 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.defaults.modelSelectionScope).toBe('session');
+  });
+
+  test('enables the local speech extension when offline TTS assets are available', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tts-config-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const tts = {
+      enabled: true,
+      auto: 'off',
+      provider: 'tts-local-cli',
+      providers: { 'tts-local-cli': { command: 'sherpa-onnx-offline-tts' } },
+    };
+
+    expect(
+      writeMinimalConfig(
+        configPath,
+        BuiltinModelSyncReason.ManualRefresh,
+        'ask',
+        BrowserMode.Isolated,
+        [],
+        createDefaultAgentRuntimeSettings(),
+        tts,
+      ),
+    ).toMatchObject({ ok: true });
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.tts).toEqual(tts);
+    expect(config.plugins.entries['tts-local-cli']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain('tts-local-cli');
   });
 
   test('projects Agent and SubAgent runtime controls before model setup', () => {

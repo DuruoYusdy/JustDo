@@ -1,3 +1,4 @@
+import { defaultLocalSpeechSettings } from '@shared/localSpeechSettings';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { defaultAppearanceConfig } from '@/app/appearance';
@@ -35,6 +36,36 @@ describe('appearance config persistence', () => {
     await service.init();
 
     expect(service.getConfig().appearance).toEqual(defaultAppearanceConfig);
+  });
+
+  test('loads a legacy stored config without voice settings', async () => {
+    const legacyConfig = { ...defaultConfig } as Partial<AppConfig>;
+    delete legacyConfig.voice;
+    storeMocks.getItem.mockResolvedValue(legacyConfig);
+    const service = new ConfigService();
+
+    await service.init();
+
+    expect(service.getConfig().voice).toEqual(defaultLocalSpeechSettings);
+  });
+
+  test('normalizes voice values before persisting an update', async () => {
+    storeMocks.getItem.mockResolvedValue(null);
+    const service = new ConfigService();
+    await service.init();
+
+    await service.updateConfig({
+      voice: {
+        ...defaultLocalSpeechSettings,
+        maxRecordingSeconds: 500,
+        speechRate: 0.1,
+      },
+    });
+
+    expect(service.getConfig().voice).toMatchObject({
+      maxRecordingSeconds: 120,
+      speechRate: 0.5,
+    });
   });
 
   test('deletes unsupported numbered custom provider configs', async () => {

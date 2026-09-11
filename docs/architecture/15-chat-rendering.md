@@ -1,5 +1,12 @@
 # Chat 渲染架构
 
+已完成的 assistant 消息组在按需下载的 Kokoro 模型与内置 sherpa-onnx 运行时可用时显示离线朗读入口。
+组件通过 OpenClaw Gateway 的 `tts.speak` 获取音频，播放状态只保存在自定义元素内，
+不会把生成的音频写入 transcript 或 Redux。资源和 provider 生命周期见
+[`docs/features/local-tts.md`](../features/local-tts.md)。
+输入区的麦克风在 Renderer 录音并编码单声道 WAV，由 Main 调用本地 Whisper
+CLI 转写；返回文本只写入可编辑 draft，不会自动发送消息。
+
 本文按 `v2026.8.27` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Gateway client 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
 
 ## 1. 目标与不变量
@@ -216,6 +223,8 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 ## 16. Attachments 与路径
 
 附件转换为Gateway content blocks，历史媒体从结构化message提取。OpenClaw 在消息的 `openclawDelivery.mediaUrls` 中记录模型输出的原始 `MEDIA:` 引用；JustDo 保留这个字段并直接生成文件卡片，不依赖 managed `/api/chat/media/outgoing/...` 下载地址。Windows 绝对路径原样用于文件操作，相对路径与当前工作空间目录拼接；白名单扩展名通过 Main 读取真实文件并在可编辑侧边栏打开，“使用系统工具打开”交给系统关联工具，“打开所在的文件夹”交给系统文件管理器。文件是否存在不影响卡片生成；用户点击时若文件已不存在，操作层显示“文件不存在”。对于已经通过本地媒体根目录、常规文件、符号链接和大小检查的 trusted local MEDIA 文件，无法识别 MIME 时以 `application/octet-stream` 的附件交付；不能借此放宽远程或不可信来源。消息复制遵循 OpenClaw WebChat 的可见 Markdown 语义，不承诺复制已被展示投影移除的原始 `MEDIA:` 指令。Markdown本地路径链接经专门utility转成应用操作；图片保存由Main shell IPC执行。双击消息图片通过专用IPC打开无 parent 的独立原生查看窗口，查看器使用单独的沙箱Renderer和最小权限preload，并在自身窗口内处理滚轮缩放、拖动与双击复位；最大化/还原由操作系统窗口框架负责，不受聊天主窗口尺寸限制。Renderer不能直接读 `file://`；`localfile://` 使用需遵守安全文档中的限制。
+
+语音输入同样只写入可编辑 draft，不直接提交消息。Renderer 从选定麦克风、Windows 系统 loopback、两条独立来源或用户选择的媒体文件取得音频，并转换成有大小上限的单声道 PCM16 WAV 分段；Main 只接收 WAV 与白名单模型 ID，调用对应本地 sherpa-onnx 参数布局。会议模式在持续采集时串行转写分段，以时间戳和“我/会议声音”标记插入 draft，避免麦克风与远端播放预先混音后丢失来源。原始音频、识别结果和生成语音均不进入 Redux transcript cache；消息发出后仍由 Gateway transcript 成为唯一持久正文来源。
 
 ## 17. Goal、Compaction 与错误
 

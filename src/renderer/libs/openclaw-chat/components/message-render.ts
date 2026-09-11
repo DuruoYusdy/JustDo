@@ -15,6 +15,7 @@ import {
   toStreamingMarkdownHtml,
 } from '@/libs/openclaw-chat/components/markdown';
 import { formatActiveTurnDuration } from '@/libs/openclaw-chat/model/active-turn-footer';
+import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
@@ -34,6 +35,8 @@ type MessageRenderOptions = {
   showAvatar?: boolean;
   assistantName?: string;
   workingDirectory?: string;
+  speechState?: 'idle' | 'loading' | 'playing';
+  onSpeak?: (groupKey: string, text: string) => void;
 };
 
 type AssistantTimelineContentOptions = Pick<
@@ -504,7 +507,7 @@ export function renderMessageBlock(
       <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
       <div class="chat-group__content">
         ${group.messages.map(m => renderSingleMessage(m.message, role, opts))}
-        ${renderGroupFooter(group, opts?.showFooter ?? true, opts?.assistantName)}
+        ${renderGroupFooter(group, opts)}
       </div>
     </div>
   `;
@@ -678,15 +681,22 @@ export function renderAssistantTimelineContent(
 
 function renderGroupFooter(
   group: MessageGroup,
-  showFooter: boolean,
-  assistantName?: string,
+  opts?: MessageRenderOptions,
 ): TemplateResult | typeof nothing {
-  if (!showFooter) return nothing;
+  if (!(opts?.showFooter ?? true)) return nothing;
   const ts = group.timestamp;
   if (!ts) return nothing;
   const date = new Date(ts);
   const time = formatGroupTimestamp(date);
-  const roleName = getGroupFooterLabel(group, assistantName);
+  const roleName = getGroupFooterLabel(group, opts?.assistantName);
+  const speechText =
+    group.role === 'assistant'
+      ? group.messages
+          .map(message => extractTextCached(message.message)?.trim() ?? '')
+          .filter(Boolean)
+          .join('\n\n')
+      : '';
+  const speechState = opts?.speechState ?? 'idle';
   const duration =
     group.role === 'assistant' &&
     typeof group.durationMs === 'number' &&
@@ -710,6 +720,24 @@ function renderGroupFooter(
               <span
                 >${i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)}</span
               >
+            `
+          : nothing
+      }
+      ${
+        speechText && opts?.onSpeak
+          ? html`
+              <button
+                type="button"
+                class=${`chat-group__speech chat-group__speech--${speechState}`}
+                aria-label=${i18nService.t(
+                  speechState === 'playing' ? 'localTtsStop' : 'localTtsPlay',
+                )}
+                title=${i18nService.t(speechState === 'playing' ? 'localTtsStop' : 'localTtsPlay')}
+                ?disabled=${speechState === 'loading'}
+                @click=${() => opts.onSpeak?.(group.key, speechText)}
+              >
+                ${speechState === 'playing' ? '■' : speechState === 'loading' ? '…' : '▶'}
+              </button>
             `
           : nothing
       }

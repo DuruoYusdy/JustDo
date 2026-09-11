@@ -17,6 +17,7 @@
     "oc-path",
     "openai",
     "policy",
+    "tts-local-cli",
     "web-readability",
     "workboard"
   ],
@@ -60,8 +61,7 @@
         "microsoft",
         "runway",
         "senseaudio",
-        "talk-voice",
-        "tts-local-cli"
+        "talk-voice"
       ]
     },
     {

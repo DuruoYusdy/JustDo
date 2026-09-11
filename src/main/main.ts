@@ -1,5 +1,13 @@
 import type { WebContents } from 'electron';
-import { app, BrowserWindow, Menu, nativeTheme, powerMonitor, powerSaveBlocker } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  nativeTheme,
+  powerMonitor,
+  powerSaveBlocker,
+  session,
+} from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -10,6 +18,8 @@ import { normalizeBrowserMode } from '../shared/browser';
 import { BuiltinModelIpc } from '../shared/builtinModels';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { DeveloperConfig } from '../shared/developerConfig';
+import { LocalSpeechModelIpc } from '../shared/localSpeechModels';
+import { normalizeLocalSpeechSettings } from '../shared/localSpeechSettings';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
@@ -71,7 +81,9 @@ import {
   registerCalendarPermissionHandlers,
   registerDialogHandlers,
   registerImagePreviewHandlers,
+  registerLocalAsrHandlers,
   registerLocalFileHandlers,
+  registerLocalSpeechModelHandlers,
   registerLogHandlers,
   registerNetworkHandlers,
   registerShellHandlers,
@@ -94,6 +106,7 @@ import {
 import {
   registerExtensionHandlers,
   registerHookHandlers,
+  registerLocalTtsHandlers,
   registerMarketplaceHandlers,
   registerMcpHandlers,
   registerOpenClawApprovalHandlers,
@@ -113,6 +126,7 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
+import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
 import {
   buildProviderSelection,
   listManagedOpenClawPluginIds,
@@ -137,6 +151,7 @@ import {
   PluginInstallationService,
   PluginManager,
 } from './plugins';
+import { LocalSpeechModelService } from './speech/localSpeechModelService';
 
 const outboundHeaderProxy = new OutboundHeaderProxy();
 const builtinModelForcedProxyBaseUrls =
@@ -360,6 +375,7 @@ let openClawSkillFileService: OpenClawSkillFileService | null = null;
 let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
+let localSpeechModelService: LocalSpeechModelService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let customerRegistrationService: CustomerRegistrationService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
@@ -540,6 +556,11 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getCoworkEngineService().requestGateway<T>(method, params),
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
+      getLocalTtsConfig: () =>
+        buildManagedLocalTtsConfig(
+          undefined,
+          normalizeLocalSpeechSettings(getStore().get<AppConfigSettings>('app_config')?.voice),
+        ),
     });
   }
   return openClawConfigSyncService;
@@ -553,6 +574,25 @@ const syncOpenClawConfig = (
     retiredProviderIds?: readonly string[];
   } = { reason: 'unknown' },
 ) => getOpenClawConfigSyncService().syncConfig(options);
+
+const getLocalSpeechModelService = (): LocalSpeechModelService => {
+  if (!localSpeechModelService) {
+    localSpeechModelService = new LocalSpeechModelService({
+      userDataPath: app.getPath('userData'),
+      fetch: (url, init) => session.defaultSession.fetch(url, init),
+      notify: status => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send(LocalSpeechModelIpc.Changed, status);
+        }
+      },
+      syncOpenClawConfig: async reason => {
+        const result = await syncOpenClawConfig({ reason });
+        if (!result.success) throw new Error(result.error || 'Failed to apply speech model.');
+      },
+    });
+  }
+  return localSpeechModelService;
+};
 
 const notifyBuiltinModelsChanged = (): void => {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -696,15 +736,23 @@ type AppConfigSettings = {
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
   providers?: unknown;
+  voice?: unknown;
 };
 
 const getOpenClawAppConfigSignature = (config: unknown): string => {
   const appConfig = (config ?? {}) as AppConfigSettings;
+  const voice = normalizeLocalSpeechSettings(appConfig.voice);
   return JSON.stringify({
     api: appConfig.api,
     browserMode: appConfig.browserMode,
     model: appConfig.model,
     providers: appConfig.providers,
+    voice: {
+      outputEnabled: voice.outputEnabled,
+      voiceId: voice.voiceId,
+      speechRate: voice.speechRate,
+      synthesisThreads: voice.synthesisThreads,
+    },
   });
 };
 
@@ -874,6 +922,7 @@ if (!gotTheLock) {
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
   });
+  registerLocalTtsHandlers();
   registerOpenClawUsageHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawWorkboardHandlers({ getRuntime: getOpenClawRuntimeAdapter });
   registerOpenClawApprovalHandlers({ getRuntime: getOpenClawRuntimeAdapter });
@@ -1062,6 +1111,8 @@ if (!gotTheLock) {
 
   registerDialogHandlers();
   registerLocalFileHandlers();
+  registerLocalAsrHandlers();
+  registerLocalSpeechModelHandlers({ getService: getLocalSpeechModelService });
 
   registerShellHandlers();
 

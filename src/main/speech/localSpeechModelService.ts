@@ -1,0 +1,440 @@
+import { createHash } from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { Readable, Transform } from 'stream';
+import { pipeline } from 'stream/promises';
+import * as tar from 'tar';
+import { createZstdDecompress } from 'zlib';
+
+import appUpdateConfig from '../../shared/appUpdateConfig.json';
+import { LOCAL_ASR_MODEL_ID } from '../../shared/localAsr';
+import {
+  type LocalSpeechModelInstallResult,
+  LocalSpeechModelKind,
+  type LocalSpeechModelKind as LocalSpeechModelKindValue,
+  type LocalSpeechModelListResult,
+  type LocalSpeechModelStatus,
+} from '../../shared/localSpeechModels';
+import { LOCAL_TTS_MODEL_ID } from '../../shared/localTts';
+import { resolveLocalSpeechModelDir, resolveLocalSpeechModelsRoot } from './localSpeechPaths';
+
+export interface LocalSpeechModelArtifact {
+  id: string;
+  kind: LocalSpeechModelKindValue;
+  file: string;
+  sha256: string;
+  compressedBytes: number;
+  estimatedBytes?: number;
+  requiredFiles: string[];
+}
+
+interface LocalSpeechServerManifest {
+  version: 1;
+  models: Array<{
+    id: string;
+    file: string;
+    sha256: string;
+    compressedBytes: number;
+  }>;
+}
+
+export const LOCAL_SPEECH_MODEL_ARTIFACTS: LocalSpeechModelArtifact[] = [
+  {
+    id: LOCAL_TTS_MODEL_ID,
+    kind: LocalSpeechModelKind.Tts,
+    file: `${LOCAL_TTS_MODEL_ID}.tar.zst`,
+    sha256: '9747b508672de5ad7994ac69cc5480e9a2aa8b0adc892d6eab3d625c8c84763b',
+    compressedBytes: 144_319_265,
+    requiredFiles: [
+      'model.int8.onnx',
+      'voices.bin',
+      'tokens.txt',
+      'espeak-ng-data',
+      'lexicon-us-en.txt',
+      'lexicon-zh.txt',
+      'phone-zh.fst',
+      'date-zh.fst',
+      'number-zh.fst',
+      'MODEL-LICENSE.txt',
+    ],
+  },
+  {
+    id: LOCAL_ASR_MODEL_ID,
+    kind: LocalSpeechModelKind.Asr,
+    file: `${LOCAL_ASR_MODEL_ID}.tar.zst`,
+    sha256: 'f14129a4a5bcaf675770bd4e30753c38d5967a96466e0912e5ee2c27175f7d9e',
+    compressedBytes: 55_282_846,
+    requiredFiles: [
+      'tiny-encoder.int8.onnx',
+      'tiny-decoder.int8.onnx',
+      'tiny-tokens.txt',
+      'MODEL-LICENSE.txt',
+    ],
+  },
+  {
+    id: 'sherpa-onnx-whisper-base',
+    kind: LocalSpeechModelKind.Asr,
+    file: 'sherpa-onnx-whisper-base.tar.zst',
+    sha256: 'def1d8cd94ddb368deb60964a97f75f0f1a5ca928beb7f6930d3ce989f4534ce',
+    compressedBytes: 87_430_450,
+    requiredFiles: [
+      'base-encoder.int8.onnx',
+      'base-decoder.int8.onnx',
+      'base-tokens.txt',
+      'MODEL-LICENSE.txt',
+    ],
+  },
+  {
+    id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
+    kind: LocalSpeechModelKind.Asr,
+    file: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.zst',
+    sha256: '52883e8e75c869d95006451d786fa91678f3af196210d4ec55f5b96c086b2444',
+    compressedBytes: 155_381_132,
+    requiredFiles: ['model.int8.onnx', 'tokens.txt', 'MODEL-LICENSE.txt'],
+  },
+  {
+    id: 'vits-icefall-zh-aishell3',
+    kind: LocalSpeechModelKind.Tts,
+    file: 'vits-icefall-zh-aishell3.tar.zst',
+    sha256: '0d14917e6936085cc1c63af8b755305539bf3e712f3e16adf833420c3f70f205',
+    compressedBytes: 27_270_347,
+    requiredFiles: [
+      'model.onnx',
+      'tokens.txt',
+      'lexicon.txt',
+      'phone.fst',
+      'date.fst',
+      'number.fst',
+      'MODEL-LICENSE.txt',
+    ],
+  },
+  {
+    id: 'vits-piper-en_US-lessac-medium-int8',
+    kind: LocalSpeechModelKind.Tts,
+    file: 'vits-piper-en_US-lessac-medium-int8.tar.zst',
+    sha256: '118ab6cfe59416b52b89c1f1d74d9ad2fa19fb5af0c25067d6cfa39318ce93be',
+    compressedBytes: 21_181_920,
+    requiredFiles: [
+      'en_US-lessac-medium.onnx',
+      'tokens.txt',
+      'espeak-ng-data',
+      'MODEL-LICENSE.txt',
+    ],
+  },
+];
+
+interface LocalSpeechModelServiceDependencies {
+  userDataPath: string;
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
+  notify: (status: LocalSpeechModelStatus) => void;
+  syncOpenClawConfig: (reason: string) => Promise<void>;
+  artifacts?: LocalSpeechModelArtifact[];
+  baseUrl?: string;
+  resolveModelDir?: (modelId: string) => string | null;
+}
+
+const isModelComplete = (modelDir: string, artifact: LocalSpeechModelArtifact): boolean =>
+  artifact.requiredFiles.every(file => fs.existsSync(path.join(modelDir, file)));
+
+export class LocalSpeechModelService {
+  private readonly statuses = new Map<string, LocalSpeechModelStatus>();
+  private readonly installs = new Map<string, Promise<LocalSpeechModelInstallResult>>();
+  private readonly artifacts: LocalSpeechModelArtifact[];
+  private manifestLoad: Promise<void> | null = null;
+
+  constructor(private readonly dependencies: LocalSpeechModelServiceDependencies) {
+    this.artifacts = dependencies.artifacts ?? LOCAL_SPEECH_MODEL_ARTIFACTS;
+    for (const artifact of this.artifacts) {
+      const installed = this.isInstalled(artifact);
+      this.statuses.set(artifact.id, {
+        id: artifact.id,
+        kind: artifact.kind,
+        phase: installed ? 'ready' : 'not-installed',
+        installed,
+        downloadBytes: artifact.compressedBytes || artifact.estimatedBytes,
+        downloadBytesExact: artifact.compressedBytes > 0,
+      });
+    }
+  }
+
+  list(): LocalSpeechModelListResult {
+    return {
+      supported: process.platform === 'win32' && process.arch === 'x64',
+      models: this.artifacts.map(artifact => ({
+        ...this.statuses.get(artifact.id)!,
+      })),
+    };
+  }
+
+  install(kind: unknown, id: unknown): Promise<LocalSpeechModelInstallResult> {
+    const artifact = this.artifacts.find(
+      model => model.kind === kind && model.id === id,
+    );
+    if (!artifact) {
+      return Promise.resolve({
+        success: false,
+        status: {
+          id: typeof id === 'string' ? id : '',
+          kind: kind === LocalSpeechModelKind.Tts ? kind : LocalSpeechModelKind.Asr,
+          phase: 'error',
+          installed: false,
+          error: 'Unknown local speech model.',
+        },
+      });
+    }
+    const current = this.installs.get(artifact.id);
+    if (current) return current;
+    const operation = this.ensureArtifactMetadata(artifact)
+      .then(() => this.installArtifact(artifact))
+      .catch(error => this.fail(artifact, error instanceof Error ? error.message : String(error)))
+      .finally(() => this.installs.delete(artifact.id));
+    this.installs.set(artifact.id, operation);
+    return operation;
+  }
+
+  async remove(kind: unknown, id: unknown): Promise<LocalSpeechModelInstallResult> {
+    const artifact = this.artifacts.find(model => model.kind === kind && model.id === id);
+    if (!artifact) {
+      return {
+        success: false,
+        status: {
+          id: typeof id === 'string' ? id : '',
+          kind: kind === LocalSpeechModelKind.Tts ? kind : LocalSpeechModelKind.Asr,
+          phase: 'error',
+          installed: false,
+          error: 'Unknown local speech model.',
+        },
+      };
+    }
+    if (this.installs.has(artifact.id)) {
+      return {
+        success: false,
+        status: {
+          ...this.statuses.get(artifact.id)!,
+          error: 'Model installation is in progress.',
+        },
+      };
+    }
+    const modelDir = this.dependencies.resolveModelDir
+      ? this.dependencies.resolveModelDir(artifact.id)
+      : resolveLocalSpeechModelDir(artifact.id, {
+          userDataPath: this.dependencies.userDataPath,
+        });
+    if (modelDir) fs.rmSync(modelDir, { recursive: true, force: true });
+    this.update(artifact, {
+      phase: 'not-installed',
+      installed: false,
+      downloadPercent: undefined,
+      error: undefined,
+    });
+    if (artifact.kind === LocalSpeechModelKind.Tts) {
+      try {
+        await this.dependencies.syncOpenClawConfig('local-speech-model-removed');
+      } catch {
+        // The next settings/config synchronization will remove the now-unavailable provider.
+      }
+    }
+    return { success: true, status: { ...this.statuses.get(artifact.id)! } };
+  }
+
+  private resolveBaseUrl(): URL {
+    return this.dependencies.baseUrl
+      ? new URL(this.dependencies.baseUrl)
+      : new URL(
+          `${appUpdateConfig.speechModels.path.replace(/^\/+|\/+$/g, '')}/`,
+          `${appUpdateConfig.feedUrl.replace(/\/+$/, '')}/`,
+        );
+  }
+
+  private async ensureArtifactMetadata(artifact: LocalSpeechModelArtifact): Promise<void> {
+    if (artifact.compressedBytes > 0 && /^[a-f0-9]{64}$/.test(artifact.sha256)) return;
+    if (!this.manifestLoad) {
+      this.manifestLoad = (async () => {
+        const response = await this.dependencies.fetch(
+          new URL('manifest.json', this.resolveBaseUrl()).toString(),
+          { cache: 'no-store', redirect: 'follow' },
+        );
+        if (!response.ok) throw new Error(`Model catalog download failed with HTTP ${response.status}.`);
+        const manifest = (await response.json()) as Partial<LocalSpeechServerManifest>;
+        if (manifest.version !== 1 || !Array.isArray(manifest.models)) {
+          throw new Error('Model catalog is invalid.');
+        }
+        for (const entry of manifest.models) {
+          const known = this.artifacts.find(candidate => candidate.id === entry?.id);
+          if (
+            !known ||
+            entry.file !== known.file ||
+            !Number.isSafeInteger(entry.compressedBytes) ||
+            entry.compressedBytes <= 0 ||
+            !/^[a-f0-9]{64}$/.test(entry.sha256)
+          ) {
+            continue;
+          }
+          known.compressedBytes = entry.compressedBytes;
+          known.sha256 = entry.sha256;
+          const status = this.statuses.get(known.id);
+          if (status) {
+            this.statuses.set(known.id, {
+              ...status,
+              downloadBytes: entry.compressedBytes,
+              downloadBytesExact: true,
+            });
+          }
+        }
+      })().catch(error => {
+        this.manifestLoad = null;
+        throw error;
+      });
+    }
+    await this.manifestLoad;
+    if (artifact.compressedBytes <= 0 || !/^[a-f0-9]{64}$/.test(artifact.sha256)) {
+      throw new Error('This model is not published on the update server.');
+    }
+  }
+
+  private isInstalled(artifact: LocalSpeechModelArtifact): boolean {
+    const modelDir = this.dependencies.resolveModelDir
+      ? this.dependencies.resolveModelDir(artifact.id)
+      : resolveLocalSpeechModelDir(artifact.id, {
+          userDataPath: this.dependencies.userDataPath,
+        });
+    return Boolean(modelDir && isModelComplete(modelDir, artifact));
+  }
+
+  private update(
+    artifact: LocalSpeechModelArtifact,
+    patch: Partial<LocalSpeechModelStatus>,
+  ): void {
+    const status = { ...this.statuses.get(artifact.id)!, ...patch };
+    this.statuses.set(artifact.id, status);
+    this.dependencies.notify({ ...status });
+  }
+
+  private async installArtifact(
+    artifact: LocalSpeechModelArtifact,
+  ): Promise<LocalSpeechModelInstallResult> {
+    const modelsRoot = resolveLocalSpeechModelsRoot({ userDataPath: this.dependencies.userDataPath });
+    if (!modelsRoot) return this.fail(artifact, 'Local speech models are unsupported.');
+
+    const downloadDir = path.join(modelsRoot, '.downloads');
+    const archivePath = path.join(downloadDir, `${artifact.id}.download`);
+    const stagingRoot = path.join(modelsRoot, `.install-${artifact.id}`);
+    const stagedModel = path.join(stagingRoot, artifact.id);
+    const targetModel = path.join(modelsRoot, artifact.id);
+    const backupModel = path.join(modelsRoot, `.backup-${artifact.id}`);
+    try {
+      if (this.isInstalled(artifact)) {
+        if (artifact.kind === LocalSpeechModelKind.Tts) {
+          await this.dependencies.syncOpenClawConfig('local-speech-model-installed');
+        }
+        this.update(artifact, {
+          phase: 'ready',
+          installed: true,
+          downloadPercent: undefined,
+          error: undefined,
+        });
+        return { success: true, status: { ...this.statuses.get(artifact.id)! } };
+      }
+      fs.mkdirSync(downloadDir, { recursive: true });
+      fs.rmSync(archivePath, { force: true });
+      this.update(artifact, {
+        phase: 'downloading',
+        installed: this.isInstalled(artifact),
+        downloadPercent: 0,
+        error: undefined,
+      });
+
+      const baseUrl = this.resolveBaseUrl();
+      const response = await this.dependencies.fetch(new URL(artifact.file, baseUrl).toString(), {
+        redirect: 'follow',
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Model download failed with HTTP ${response.status}.`);
+      }
+      const contentLength = response.headers.get('content-length');
+      if (contentLength !== null && Number(contentLength) !== artifact.compressedBytes) {
+        throw new Error('Downloaded model has an unexpected size.');
+      }
+
+      const hash = createHash('sha256');
+      let received = 0;
+      let lastPercent = -1;
+      const progress = new Transform({
+        transform: (chunk: Buffer, _encoding, callback) => {
+          received += chunk.length;
+          if (received > artifact.compressedBytes) {
+            callback(new Error('Downloaded model exceeds the expected size.'));
+            return;
+          }
+          hash.update(chunk);
+          const percent = Math.min(100, Math.floor((received / artifact.compressedBytes) * 100));
+          if (percent !== lastPercent) {
+            lastPercent = percent;
+            this.update(artifact, { downloadPercent: percent });
+          }
+          callback(null, chunk);
+        },
+      });
+      await pipeline(
+        Readable.fromWeb(response.body as never),
+        progress,
+        fs.createWriteStream(archivePath),
+      );
+      if (received !== artifact.compressedBytes || hash.digest('hex') !== artifact.sha256) {
+        throw new Error('Downloaded model failed integrity verification.');
+      }
+
+      this.update(artifact, { phase: 'installing', downloadPercent: 100 });
+      fs.rmSync(stagingRoot, { recursive: true, force: true });
+      fs.mkdirSync(stagingRoot, { recursive: true });
+      await pipeline(
+        fs.createReadStream(archivePath),
+        createZstdDecompress(),
+        tar.extract({ cwd: stagingRoot, strict: true }),
+      );
+      if (!isModelComplete(stagedModel, artifact)) {
+        throw new Error('Downloaded model archive is incomplete.');
+      }
+
+      fs.rmSync(backupModel, { recursive: true, force: true });
+      if (fs.existsSync(targetModel)) fs.renameSync(targetModel, backupModel);
+      try {
+        fs.renameSync(stagedModel, targetModel);
+        fs.rmSync(backupModel, { recursive: true, force: true });
+      } catch (error) {
+        fs.rmSync(targetModel, { recursive: true, force: true });
+        if (fs.existsSync(backupModel)) fs.renameSync(backupModel, targetModel);
+        throw error;
+      }
+
+      if (artifact.kind === LocalSpeechModelKind.Tts) {
+        await this.dependencies.syncOpenClawConfig('local-speech-model-installed');
+      }
+      this.update(artifact, {
+        phase: 'ready',
+        installed: true,
+        downloadPercent: undefined,
+        error: undefined,
+      });
+      return { success: true, status: { ...this.statuses.get(artifact.id)! } };
+    } catch (error) {
+      return this.fail(artifact, error instanceof Error ? error.message : String(error));
+    } finally {
+      fs.rmSync(archivePath, { force: true });
+      fs.rmSync(stagingRoot, { recursive: true, force: true });
+    }
+  }
+
+  private fail(
+    artifact: LocalSpeechModelArtifact,
+    error: string,
+  ): LocalSpeechModelInstallResult {
+    this.update(artifact, {
+      phase: 'error',
+      installed: this.isInstalled(artifact),
+      downloadPercent: undefined,
+      error,
+    });
+    return { success: false, status: { ...this.statuses.get(artifact.id)! } };
+  }
+}

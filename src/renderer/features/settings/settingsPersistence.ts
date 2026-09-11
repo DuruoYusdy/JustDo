@@ -17,6 +17,7 @@ interface SettingsAppConfigDraft {
   useSystemProxy: AppConfig['useSystemProxy'];
   proxy: AppConfig['proxy'];
   developerMode: AppConfig['developerMode'];
+  voice: AppConfig['voice'];
   shortcuts: NonNullable<AppConfig['shortcuts']>;
 }
 
@@ -61,6 +62,9 @@ export const buildSettingsAppConfigUpdate = (
   }
   if (current.developerMode !== draft.developerMode) {
     update.developerMode = draft.developerMode;
+  }
+  if (hasConfigValueChanged(current.voice, draft.voice)) {
+    update.voice = draft.voice;
   }
   if (hasConfigValueChanged(current.shortcuts, draft.shortcuts)) {
     update.shortcuts = draft.shortcuts;

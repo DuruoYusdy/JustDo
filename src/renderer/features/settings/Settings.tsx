@@ -8,12 +8,17 @@ import {
   CubeIcon,
   ExclamationTriangleIcon,
   GlobeAltIcon,
+  MicrophoneIcon,
   PaintBrushIcon,
   PencilSquareIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
+import {
+  type LocalSpeechSettings,
+  normalizeLocalSpeechSettings,
+} from '@shared/localSpeechSettings';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
@@ -80,6 +85,7 @@ import ShortcutsSettings, {
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
+import VoiceSettingsTab from '@/features/settings/components/VoiceSettingsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
 import {
   buildModelConnectionTestRequestBody,
@@ -111,6 +117,7 @@ type TabType =
   | 'model'
   | 'runtime'
   | 'browser'
+  | 'voice'
   | 'im'
   | 'shortcuts'
   | 'help';
@@ -379,6 +386,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [proxyMode, setProxyMode] = useState<ProxyMode>(ProxyMode.DIRECT);
   const [customProxy, setCustomProxy] = useState<CustomProxyConfig>(defaultCustomProxyConfig);
   const [developerMode, setDeveloperMode] = useState(false);
+  const [voice, setVoice] = useState<LocalSpeechSettings>(() =>
+    normalizeLocalSpeechSettings(configService.getConfig().voice),
+  );
   const [maxGoalContinuationTurns, setMaxGoalContinuationTurns] = useState(
     DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
   );
@@ -715,6 +725,7 @@ const Settings: React.FC<SettingsProps> = ({
         ...(config.proxy?.custom ?? {}),
       });
       setDeveloperMode(config.developerMode ?? false);
+      setVoice(normalizeLocalSpeechSettings(config.voice));
 
       void window.electron.cowork.getConfig().then(result => {
         if (result.success && result.config) {
@@ -1297,6 +1308,7 @@ const Settings: React.FC<SettingsProps> = ({
             useSystemProxy: proxyMode === ProxyMode.SYSTEM,
             proxy: normalizedProxy,
             developerMode,
+            voice,
             shortcuts,
           });
           const renamedDefaultProvider = resolveProviderKeyAfterRename(
@@ -1947,6 +1959,11 @@ const Settings: React.FC<SettingsProps> = ({
       key: 'browser',
       label: i18nService.t('browserSettings'),
       icon: <GlobeAltIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'voice',
+      label: i18nService.t('voiceSettings'),
+      icon: <MicrophoneIcon className="h-5 w-5" />,
     },
     {
       key: 'usage',
@@ -2717,6 +2734,8 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'browser':
         return <BrowserSettingsTab />;
+      case 'voice':
+        return <VoiceSettingsTab value={voice} onChange={setVoice} />;
 
       case 'shortcuts':
         return <ShortcutsSettings shortcuts={shortcuts} onShortcutChange={handleShortcutChange} />;

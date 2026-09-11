@@ -22,6 +22,7 @@ const asar = require('@electron/asar');
 const yaml = require('js-yaml');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { ensurePortableGit } = require('./setup-mingit.js');
+const { ensureLocalTts } = require('./setup-local-tts.js');
 const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resources.cjs');
 const { precompileOpenClawExtensions } = require('./precompile-openclaw-extensions.cjs');
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
@@ -649,6 +650,10 @@ async function beforePack(context) {
     await ensurePortableGit({ required: true });
     const mingitRoot = path.join(__dirname, '..', 'resources', 'mingit');
 
+    console.log('[electron-builder-hooks] Ensuring local speech runtime is prepared...');
+    await ensureLocalTts();
+    const localTtsRoot = path.join(__dirname, '..', 'resources', 'local-tts');
+
     // ── Build combined tar for NSIS ──
     // Pack all large resource directories into one pre-compressed tarball.
     // NSIS only writes that single file; the installer then streams it through
@@ -680,6 +685,23 @@ async function beforePack(context) {
         dir: mingitRoot,
         prefix: 'mingit',
       },
+      {
+        label: 'Local speech runtime',
+        dir: localTtsRoot,
+        prefix: 'local-tts',
+        preservePythonLicenses: true,
+        exclude: [
+          'win-x64/kokoro-int8-multi-lang-v1_1',
+          'win-x64/sherpa-onnx-whisper-tiny',
+          'win-x64/sherpa-onnx-whisper-base',
+          'win-x64/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
+          'win-x64/vits-icefall-zh-aishell3',
+          'win-x64/vits-piper-en_US-lessac-medium-int8',
+          'win-x64/KOKORO-LICENSE.txt',
+          'win-x64/WHISPER-LICENSE.txt',
+          'win-x64/.justdo-local-tts-version',
+        ],
+      },
     ];
 
     console.log(`[electron-builder-hooks] Packing combined Windows tar: ${outputTar}`);
@@ -701,7 +723,7 @@ async function beforePack(context) {
     // ── Validate the combined tar ──
     // Verify that each expected prefix actually has content in the archive.
     // This catches build misconfigurations early instead of at install time.
-    const requiredPrefixes = ['cfmind/', 'python-win/', 'mingit/'];
+    const requiredPrefixes = ['cfmind/', 'python-win/', 'mingit/', 'local-tts/'];
     const tarEntries = [];
     const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
     const normalizedTarPath = outputTar.replace(/\\/g, '/');
@@ -746,6 +768,10 @@ async function beforePack(context) {
       'python-win/python312._pth',
       'python-win/Lib/site-packages/sitecustomize.py',
       'python-win/Lib/site-packages/pip/__main__.py',
+      'local-tts/win-x64/runtime/bin/sherpa-onnx-offline-tts.exe',
+      'local-tts/win-x64/SHERPA-ONNX-LICENSE.txt',
+      'local-tts/win-x64/.justdo-local-speech-runtime-version',
+      'local-tts/win-x64/runtime/bin/sherpa-onnx-offline.exe',
       ...['requests', 'yaml', 'openpyxl', 'pypdf', 'bs4'].map(
         importName => `python-win/Lib/bundled-site-packages/${importName}/__init__.py`,
       ),

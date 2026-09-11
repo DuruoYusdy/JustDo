@@ -290,6 +290,18 @@ function main() {
         prefix: 'python-win',
         preservePythonLicenses: true,
       },
+      {
+        dir: path.join(projectRoot, 'resources', 'local-tts'),
+        prefix: 'local-tts',
+        preservePythonLicenses: true,
+        exclude: [
+          'win-x64/kokoro-int8-multi-lang-v1_1',
+          'win-x64/sherpa-onnx-whisper-tiny',
+          'win-x64/KOKORO-LICENSE.txt',
+          'win-x64/WHISPER-LICENSE.txt',
+          'win-x64/.justdo-local-tts-version',
+        ],
+      },
     ];
 
     console.log(`[pack-openclaw-tar] Packing combined Windows tar: ${outputTar}`);

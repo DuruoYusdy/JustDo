@@ -13,6 +13,21 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test('requests local speech from the Gateway for assistant text', async () => {
+  const controller = new ChatController();
+  const response = {
+    audioBase64: 'UklGRg==',
+    provider: 'tts-local-cli',
+    outputFormat: 'wav',
+  };
+  const request = vi.fn().mockResolvedValue(response);
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+
+  await expect(controller.speak('你好')).resolves.toEqual(response);
+  expect(request).toHaveBeenCalledWith('tts.speak', { text: '你好' });
+});
+
 test('waits through pre-registration no-active replies and cancels the later manual compaction handle', async () => {
   vi.useFakeTimers();
   const controller = new ChatController();

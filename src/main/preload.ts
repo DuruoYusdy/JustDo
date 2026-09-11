@@ -39,6 +39,17 @@ import {
   type ImagePreviewOpenRequest,
   type ImagePreviewOpenResult,
 } from '../shared/imagePreview';
+import {
+  LocalAsrIpc,
+  type LocalAsrModelId,
+  type LocalAsrTranscribeOptions,
+} from '../shared/localAsr';
+import {
+  LocalSpeechModelIpc,
+  type LocalSpeechModelKind,
+  type LocalSpeechModelStatus,
+} from '../shared/localSpeechModels';
+import { LocalTtsIpc, type LocalTtsModelId } from '../shared/localTts';
 import { LogIpc } from '../shared/logIpc';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
@@ -516,6 +527,28 @@ contextBridge.exposeInMainWorld('electron', {
         callback(event);
       ipcRenderer.on(CoworkSubagentDetailsIpc.Changed, handler);
       return () => ipcRenderer.removeListener(CoworkSubagentDetailsIpc.Changed, handler);
+    },
+  },
+  localTts: {
+    getStatus: (modelId: LocalTtsModelId) => ipcRenderer.invoke(LocalTtsIpc.GetStatus, modelId),
+  },
+  localAsr: {
+    getStatus: (modelId: LocalAsrModelId) =>
+      ipcRenderer.invoke(LocalAsrIpc.GetStatus, modelId),
+    transcribe: (audio: Uint8Array, options: LocalAsrTranscribeOptions) =>
+      ipcRenderer.invoke(LocalAsrIpc.Transcribe, audio, options),
+  },
+  localSpeechModels: {
+    list: () => ipcRenderer.invoke(LocalSpeechModelIpc.List),
+    install: (kind: LocalSpeechModelKind, id: string) =>
+      ipcRenderer.invoke(LocalSpeechModelIpc.Install, kind, id),
+    remove: (kind: LocalSpeechModelKind, id: string) =>
+      ipcRenderer.invoke(LocalSpeechModelIpc.Remove, kind, id),
+    onChanged: (callback: (status: LocalSpeechModelStatus) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: LocalSpeechModelStatus) =>
+        callback(status);
+      ipcRenderer.on(LocalSpeechModelIpc.Changed, handler);
+      return () => ipcRenderer.removeListener(LocalSpeechModelIpc.Changed, handler);
     },
   },
   sessionGroup: {
