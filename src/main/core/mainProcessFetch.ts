@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
 import { ProxyAgent } from 'proxy-agent';
+import { Readable } from 'stream';
 
 import {
   getOutboundHeaderPolicyConfig,
@@ -110,6 +111,78 @@ export const mainProcessFetch = async (
   });
 };
 
+const mainProcessStreamingFetch = async (
+  requestUrl: string,
+  init?: RequestInit,
+): Promise<Response> => {
+  const proxyUrl = await resolveConfiguredProxy(requestUrl);
+  if (!proxyUrl) return globalThis.fetch(requestUrl, init);
+
+  const url = new URL(requestUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Unsupported proxy fetch protocol: ${url.protocol}`);
+  }
+  const body = init?.body;
+  if (
+    body !== undefined &&
+    body !== null &&
+    typeof body !== 'string' &&
+    !ArrayBuffer.isView(body)
+  ) {
+    throw new Error('Proxy fetch only supports string and typed-array request bodies.');
+  }
+
+  const agent = new ProxyAgent({ getProxyForUrl: () => proxyUrl });
+  const transport = url.protocol === 'https:' ? https : http;
+  return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const destroyAgent = (): void => agent.destroy();
+    const request = transport.request(
+      url,
+      {
+        method: init?.method || 'GET',
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        agent,
+        signal: init?.signal ?? undefined,
+      },
+      response => {
+        response.once('close', destroyAgent);
+        const status = response.statusCode || 500;
+        if (init?.redirect === 'error' && status >= 300 && status < 400) {
+          response.resume();
+          settled = true;
+          reject(new Error(`Redirect response is not allowed for ${requestUrl}.`));
+          return;
+        }
+
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(response.headers)) {
+          if (Array.isArray(value)) value.forEach(item => headers.append(name, item));
+          else if (value !== undefined) headers.set(name, value);
+        }
+        const responseBody =
+          init?.method?.toUpperCase() === 'HEAD' || [204, 205, 304].includes(status)
+            ? null
+            : (Readable.toWeb(response) as ReadableStream<Uint8Array>);
+        settled = true;
+        resolve(
+          new Response(responseBody, {
+            status,
+            statusText: response.statusMessage,
+            headers,
+          }),
+        );
+      },
+    );
+    request.once('error', error => {
+      destroyAgent();
+      if (!settled) reject(error);
+    });
+    if (body !== undefined && body !== null) request.write(body);
+    request.end();
+  });
+};
+
 export const applyMainProcessOutboundHeaderPolicy = (
   requestUrl: string,
   requestHeaders: HeadersInit | undefined,
@@ -161,5 +234,5 @@ export const mainProcessMcpProbeFetch = async (
     init?.headers,
     MainProcessOutboundHeaderSource.McpProbe,
   );
-  return globalThis.fetch(requestUrl, { ...init, headers, redirect: 'error' });
+  return mainProcessStreamingFetch(normalizedUrl, { ...init, headers, redirect: 'error' });
 };

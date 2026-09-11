@@ -111,6 +111,8 @@ Renderer 的 `skillSlice` 只是列表/loading/error 缓存。`skillGroups` 和 
 
 “设置 → 配置”提供用户 MCP Server 的默认单请求 timeout，单位为秒，默认 60，范围 1–86400。该值保存在 `agentRuntimeSettings:v1`；“编辑 MCP 服务”在表单末尾显示当前 Server 的覆盖值，未配置覆盖时直接显示当前全局值。仅在用户改为不同值时写入该记录的 `config_json.requestTimeoutSeconds`，未修改则继续继承全局配置。配置同步按“单 Server 覆盖 → 全局默认”的优先级换算为毫秒并写入 `mcp.servers.<name>.requestTimeoutMs`；它控制已连接 Server 的请求等待，不等于 `connectionTimeoutMs`。Extension 自带的只读 MCP Server 由 Extension 配置负责，不套用此用户 Server 默认值。
 
+HTTP/SSE MCP 的“测试”探测由 Main 发起，使用当前系统/自定义代理设置并保持响应流式传递，以兼容 SSE 与 Streamable HTTP；探测拒绝自动重定向，出站 Header 仍只按白名单在每次请求时注入。
+
 主要能力：
 
 - create/update/delete/setEnabled 后触发串行 config sync；

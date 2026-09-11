@@ -230,6 +230,56 @@ test('injects configured headers into a whitelisted MCP probe fetch', async () =
   }
 });
 
+test('streams MCP probe responses through the configured proxy', async () => {
+  let receivedUrl = '';
+  let receivedBody = '';
+  let finishResponse: (() => void) | undefined;
+  const proxyServer = http.createServer((request, response) => {
+    receivedUrl = request.url || '';
+    request.on('data', chunk => {
+      receivedBody += chunk.toString();
+    });
+    request.on('end', () => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write('data: first\n\n');
+      finishResponse = () => response.end('data: second\n\n');
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    proxyServer.once('error', reject);
+    proxyServer.listen(0, '127.0.0.1', resolve);
+  });
+
+  try {
+    const address = proxyServer.address();
+    if (!address || typeof address === 'string') throw new Error('Proxy server did not start.');
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(`http://127.0.0.1:${address.port}`);
+
+    const response = await mainProcessMcpProbeFetch('http://mcp.example/messages', {
+      method: 'POST',
+      body: '{"jsonrpc":"2.0"}',
+    });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Expected a streaming MCP response body.');
+    const firstChunk = await reader.read();
+
+    expect(response.status).toBe(200);
+    expect(receivedUrl).toBe('http://mcp.example/messages');
+    expect(receivedBody).toBe('{"jsonrpc":"2.0"}');
+    expect(new TextDecoder().decode(firstChunk.value)).toBe('data: first\n\n');
+
+    finishResponse?.();
+    const secondChunk = await reader.read();
+    expect(new TextDecoder().decode(secondChunk.value)).toBe('data: second\n\n');
+  } finally {
+    finishResponse?.();
+    const { setFixedProxyUrl } = await import('./systemProxy');
+    setFixedProxyUrl(null);
+    await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
+
 test('injects only the headers assigned to each matching policy group', () => {
   const userInfoPath = writeUserInfo(
     JSON.stringify({
