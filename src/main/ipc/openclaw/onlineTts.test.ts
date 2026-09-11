@@ -165,4 +165,14 @@ describe('OpenClaw online speech IPC', () => {
     ).rejects.toThrow(/API key/i);
     expect(requestGateway).not.toHaveBeenCalledWith('config.patch', expect.anything());
   });
+
+  it('clears the Gateway speech configuration', async () => {
+    requestGateway.mockResolvedValueOnce({ hash: 'config-hash' }).mockResolvedValueOnce({ ok: true });
+
+    await handlers.get(OnlineTtsIpc.ClearConfiguration)?.({});
+
+    expect(JSON.parse((requestGateway.mock.calls[1]?.[1] as { raw: string }).raw)).toEqual({
+      tts: null,
+    });
+  });
 });

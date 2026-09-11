@@ -84,6 +84,9 @@ import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
+import UnifiedModelSettingsTab, {
+  type ModelKind,
+} from '@/features/settings/components/UnifiedModelSettingsTab';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
 import VoiceSettingsTab from '@/features/settings/components/VoiceSettingsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
@@ -376,6 +379,7 @@ const Settings: React.FC<SettingsProps> = ({
   const dispatch = useDispatch();
   // 状态
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
+  const [activeModelKind, setActiveModelKind] = useState<ModelKind>('language');
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
   const [appearance, setAppearance] = useState<AppearanceConfig>(() =>
@@ -2683,35 +2687,41 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'model':
         return (
-          <ModelSettingsTab
-            activeProvider={activeProvider}
-            providers={providers}
-            isTesting={isTesting}
-            displayNameError={displayNameError}
-            providerRequiresApiKey={providerRequiresApiKey}
-            isProviderReadOnly={isProviderReadOnly}
-            getProviderDefaultBaseUrl={getProviderDefaultBaseUrl}
-            handleProviderChange={handleProviderChange}
-            handleProviderConfigChange={handleProviderConfigChange}
-            toggleProviderEnabled={toggleProviderEnabled}
-            handleAddCustomProvider={handleAddCustomProvider}
-            handleAddModel={handleAddModel}
-            handleDetectModels={handleDetectModels}
-            handleEditModel={handleEditModel}
-            handleDeleteModel={handleDeleteModel}
-            handleModelEnabledChange={handleModelEnabledChange}
-            handleSetAllModelsEnabled={handleSetAllModelsEnabled}
-            handleTestConnection={() => handleTestConnection()}
-            handleTestModelConnection={modelId => handleTestConnection(modelId)}
-            handleRefreshBuiltinModels={handleRefreshBuiltinModels}
-            isRefreshingBuiltinModels={isRefreshingBuiltinModels}
-            isDetectingModels={isDetectingModels}
-            modelDiscoveryMessage={modelDiscoveryMessage}
-            modelConnectionTestStatuses={modelConnectionTestStatuses[activeProvider] ?? {}}
-            setDisplayNameError={setDisplayNameError}
-            setProviders={setProviders}
-            setError={setError}
-            onRequestDeleteProvider={setPendingDeleteProvider}
+          <UnifiedModelSettingsTab
+            activeKind={activeModelKind}
+            onKindChange={setActiveModelKind}
+            languageModels={
+              <ModelSettingsTab
+                activeProvider={activeProvider}
+                providers={providers}
+                isTesting={isTesting}
+                displayNameError={displayNameError}
+                providerRequiresApiKey={providerRequiresApiKey}
+                isProviderReadOnly={isProviderReadOnly}
+                getProviderDefaultBaseUrl={getProviderDefaultBaseUrl}
+                handleProviderChange={handleProviderChange}
+                handleProviderConfigChange={handleProviderConfigChange}
+                toggleProviderEnabled={toggleProviderEnabled}
+                handleAddCustomProvider={handleAddCustomProvider}
+                handleAddModel={handleAddModel}
+                handleDetectModels={handleDetectModels}
+                handleEditModel={handleEditModel}
+                handleDeleteModel={handleDeleteModel}
+                handleModelEnabledChange={handleModelEnabledChange}
+                handleSetAllModelsEnabled={handleSetAllModelsEnabled}
+                handleTestConnection={() => handleTestConnection()}
+                handleTestModelConnection={modelId => handleTestConnection(modelId)}
+                handleRefreshBuiltinModels={handleRefreshBuiltinModels}
+                isRefreshingBuiltinModels={isRefreshingBuiltinModels}
+                isDetectingModels={isDetectingModels}
+                modelDiscoveryMessage={modelDiscoveryMessage}
+                modelConnectionTestStatuses={modelConnectionTestStatuses[activeProvider] ?? {}}
+                setDisplayNameError={setDisplayNameError}
+                setProviders={setProviders}
+                setError={setError}
+                onRequestDeleteProvider={setPendingDeleteProvider}
+              />
+            }
           />
         );
 

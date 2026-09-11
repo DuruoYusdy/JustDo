@@ -58,6 +58,25 @@ export interface AppConfig {
       }>;
     };
   };
+  onlineModelProviders?: Partial<
+    Record<
+      'speech-recognition' | 'speech-synthesis' | 'image' | 'video',
+      {
+        defaultProviderId?: string;
+        providers: Record<
+          string,
+          {
+            displayName: string;
+            baseUrl: string;
+            apiKey: string;
+            defaultModel?: string;
+            voice?: string;
+            models: Array<{ id: string; name: string }>;
+          }
+        >;
+      }
+    >
+  >;
   // 主题配置
   theme: 'light' | 'dark' | 'system';
   // 界面与消息阅读体验配置
@@ -137,6 +156,7 @@ export const defaultConfig: AppConfig = {
     defaultModelProvider: BUILTIN_MODELS_PROVIDER_KEY,
   },
   providers: buildDefaultProviders(),
+  onlineModelProviders: {},
   theme: 'light',
   appearance: defaultAppearanceConfig,
   language: 'zh',

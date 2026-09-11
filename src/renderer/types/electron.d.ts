@@ -872,6 +872,7 @@ interface IElectronAPI {
     saveConfiguration: (
       update: import('../../shared/onlineAsr').OnlineAsrConfigurationUpdate,
     ) => Promise<void>;
+    clearConfiguration: () => Promise<void>;
     start: (
       options: import('../../shared/onlineAsr').OnlineAsrStartOptions,
     ) => Promise<import('../../shared/onlineAsr').OnlineAsrSession>;
@@ -886,6 +887,18 @@ interface IElectronAPI {
     getConfiguration: () => Promise<import('../../shared/onlineTts').OnlineTtsConfiguration>;
     saveConfiguration: (
       update: import('../../shared/onlineTts').OnlineTtsConfigurationUpdate,
+    ) => Promise<void>;
+    clearConfiguration: () => Promise<void>;
+  };
+  mediaGenerationModels: {
+    getConfiguration: (
+      kind: import('../../shared/mediaGenerationModels').MediaGenerationModelKind,
+    ) => Promise<
+      import('../../shared/mediaGenerationModels').MediaGenerationModelConfigurationResult
+    >;
+    saveConfiguration: (
+      kind: import('../../shared/mediaGenerationModels').MediaGenerationModelKind,
+      configuration: import('../../shared/mediaGenerationModels').MediaGenerationModelConfiguration,
     ) => Promise<void>;
   };
   mediaCapture: {

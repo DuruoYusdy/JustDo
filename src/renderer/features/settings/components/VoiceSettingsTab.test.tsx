@@ -2,15 +2,45 @@
 
 import { defaultLocalSpeechSettings } from '@shared/localSpeechSettings';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
 import VoiceSettingsTab from './VoiceSettingsTab';
 
-afterEach(cleanup);
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { onlineModelProviders: {} } as {
+    onlineModelProviders: Record<string, unknown>;
+  },
+}));
+
+vi.mock('@/services/config', () => ({
+  configService: {
+    getConfig: () => mockConfig,
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('VoiceSettingsTab', () => {
+  beforeEach(() => {
+    mockConfig.onlineModelProviders = {};
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132,
+      height: 36,
+      left: 24,
+      right: 280,
+      top: 96,
+      width: 256,
+      x: 24,
+      y: 96,
+      toJSON: () => ({}),
+    });
+  });
+
   it('shows local model status and exposes both feature switches', async () => {
     Object.defineProperty(window, 'electron', {
       configurable: true,
@@ -153,9 +183,26 @@ describe('VoiceSettingsTab', () => {
     expect(screen.getByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeTruthy();
   });
 
-  it('configures an online provider without offering a local model download', async () => {
-    const saveConfiguration = vi.fn().mockResolvedValue(undefined);
-    const dispatchEvent = vi.spyOn(window, 'dispatchEvent');
+  it('selects an online recognition model from the user provider catalog', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': {
+        defaultProviderId: 'office',
+        providers: {
+          office: {
+            displayName: 'Office speech',
+            baseUrl: 'http://10.0.0.8:8000/v1',
+            apiKey: '',
+            defaultModel: 'whisper-large',
+            models: [
+              { id: 'whisper-large', name: 'Whisper Large' },
+              { id: 'sense-voice', name: 'SenseVoice' },
+            ],
+          },
+        },
+      },
+    };
+    const saveConfiguration = vi.fn().mockResolvedValue({ success: true });
+    const onChange = vi.fn();
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
@@ -165,21 +212,7 @@ describe('VoiceSettingsTab', () => {
           onChanged: vi.fn().mockReturnValue(() => undefined),
         },
         onlineAsr: {
-          getConfiguration: vi.fn().mockResolvedValue({
-            available: true,
-            provider: 'deepgram',
-            selectedProvider: 'deepgram',
-            baseUrl: 'ws://speech.internal:8000',
-            credentialConfigured: true,
-            providers: [
-              {
-                id: 'deepgram',
-                label: 'Deepgram',
-                configured: true,
-                defaultModel: 'nova-3',
-              },
-            ],
-          }),
+          getStatus: vi.fn().mockResolvedValue({ available: true, provider: 'openai' }),
           saveConfiguration,
         },
       },
@@ -192,41 +225,56 @@ describe('VoiceSettingsTab', () => {
           inputEnabled: true,
           recognitionMode: 'online',
         }}
-        onChange={vi.fn()}
+        onChange={onChange}
       />,
     );
 
     expect(await screen.findByText(i18nService.t('voiceOnlineReady'))).toBeTruthy();
-    expect(screen.getByText('deepgram')).toBeTruthy();
-    const modelInput = screen.getByLabelText<HTMLInputElement>(i18nService.t('voiceOnlineModel'));
-    expect(modelInput.value).toBe('');
-    fireEvent.change(modelInput, { target: { value: 'nova-3' } });
-    const apiKeyInput = screen.getByLabelText<HTMLInputElement>(i18nService.t('voiceOnlineApiKey'));
-    expect(apiKeyInput.type).toBe('password');
-    fireEvent.change(apiKeyInput, {
-      target: { value: 'new-key' },
+    const selector = screen.getByRole('combobox', {
+      name: i18nService.t('voiceRecognitionModel'),
     });
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceOnlineShowApiKey') }));
-    expect(apiKeyInput.type).toBe('text');
-    expect(
-      screen.getByRole('button', { name: i18nService.t('voiceOnlineHideApiKey') }),
-    ).toBeTruthy();
-    dispatchEvent.mockClear();
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceOnlineSave') }));
-    await vi.waitFor(() =>
+    expect(selector.textContent).toContain('Office speech / Whisper Large');
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole('option', { name: 'Office speech / SenseVoice' }));
+
+    await vi.waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({
+        ...defaultLocalSpeechSettings,
+        inputEnabled: true,
+        recognitionMode: 'online',
+        onlineAsrModelRef: 'office/sense-voice',
+      });
       expect(saveConfiguration).toHaveBeenCalledWith({
-        provider: 'deepgram',
-        baseUrl: 'ws://speech.internal:8000',
-        apiKey: 'new-key',
-        model: 'nova-3',
-      }),
-    );
-    expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'config-updated' }));
+        provider: 'openai',
+        baseUrl: 'http://10.0.0.8:8000/v1',
+        apiKey: 'local',
+        model: 'sense-voice',
+      });
+    });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
   });
 
-  it('configures OpenAI-compatible online response reading', async () => {
-    const saveConfiguration = vi.fn().mockResolvedValue(undefined);
+  it('selects an online synthesis model from the user provider catalog', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-synthesis': {
+        defaultProviderId: 'lan-tts',
+        providers: {
+          'lan-tts': {
+            displayName: 'LAN voice',
+            baseUrl: 'http://speech.local/v1',
+            apiKey: 'secret',
+            defaultModel: 'voice-small',
+            voice: 'alloy',
+            models: [
+              { id: 'voice-small', name: 'Voice Small' },
+              { id: 'voice-hq', name: 'Voice HQ' },
+            ],
+          },
+        },
+      },
+    };
+    const saveConfiguration = vi.fn().mockResolvedValue({ success: true });
+    const onChange = vi.fn();
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
@@ -236,20 +284,7 @@ describe('VoiceSettingsTab', () => {
           onChanged: vi.fn().mockReturnValue(() => undefined),
         },
         onlineTts: {
-          getConfiguration: vi.fn().mockResolvedValue({
-            available: false,
-            selectedProvider: 'openai',
-            credentialConfigured: false,
-            providers: [
-              {
-                id: 'openai',
-                label: 'OpenAI',
-                configured: false,
-                models: ['gpt-4o-mini-tts'],
-                voices: ['coral'],
-              },
-            ],
-          }),
+          getStatus: vi.fn().mockResolvedValue({ available: false }),
           saveConfiguration,
         },
       },
@@ -262,34 +297,89 @@ describe('VoiceSettingsTab', () => {
           outputEnabled: true,
           synthesisMode: 'online',
         }}
-        onChange={vi.fn()}
+        onChange={onChange}
       />,
     );
 
     expect(await screen.findByText(i18nService.t('voiceOnlineTtsUnavailable'))).toBeTruthy();
-    fireEvent.change(screen.getByLabelText(i18nService.t('voiceOnlineBaseUrl')), {
-      target: { value: 'http://speech.internal:8000/v1' },
+    const selector = screen.getByRole('combobox', {
+      name: i18nService.t('voiceSynthesisModel'),
     });
-    fireEvent.change(screen.getByLabelText(i18nService.t('voiceSynthesisModel')), {
-      target: { value: 'internal-tts' },
-    });
-    fireEvent.change(screen.getByLabelText(i18nService.t('voiceSpeaker')), {
-      target: { value: 'speaker-1' },
-    });
-    fireEvent.change(screen.getByLabelText(i18nService.t('voiceOnlineApiKey')), {
-      target: { value: 'secret' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: i18nService.t('voiceOnlineSave') }));
+    expect(selector.textContent).toContain('LAN voice / Voice Small');
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole('option', { name: 'LAN voice / Voice HQ' }));
 
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({
+        ...defaultLocalSpeechSettings,
+        outputEnabled: true,
+        synthesisMode: 'online',
+        onlineTtsModelRef: 'lan-tts/voice-hq',
+      });
       expect(saveConfiguration).toHaveBeenCalledWith({
         provider: 'openai',
-        baseUrl: 'http://speech.internal:8000/v1',
+        baseUrl: 'http://speech.local/v1',
         apiKey: 'secret',
-        model: 'internal-tts',
-        voice: 'speaker-1',
-      }),
-    );
+        model: 'voice-hq',
+        voice: 'alloy',
+      });
+    });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
+  });
+
+  it('keeps the previous selection and reports a Gateway model switch failure', async () => {
+    mockConfig.onlineModelProviders = {
+      'speech-recognition': {
+        defaultProviderId: 'office',
+        providers: {
+          office: {
+            displayName: 'Office speech',
+            baseUrl: 'http://speech.lan/v1',
+            apiKey: 'key',
+            defaultModel: 'model-a',
+            models: [
+              { id: 'model-a', name: 'Model A' },
+              { id: 'model-b', name: 'Model B' },
+            ],
+          },
+        },
+      },
+    };
+    const onChange = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localSpeechModels: {
+          list: vi.fn().mockResolvedValue({ supported: true, models: [] }),
+          install: vi.fn(),
+          onChanged: vi.fn().mockReturnValue(() => undefined),
+        },
+        onlineAsr: {
+          getStatus: vi.fn().mockResolvedValue({ available: true }),
+          saveConfiguration: vi.fn().mockRejectedValue(new Error('Gateway rejected config')),
+        },
+      },
+    });
+
+    render(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          inputEnabled: true,
+          recognitionMode: 'online',
+          onlineAsrModelRef: 'office/model-a',
+        }}
+        onChange={onChange}
+      />,
+    );
+    const selector = screen.getByRole('combobox', {
+      name: i18nService.t('voiceRecognitionModel'),
+    });
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole('option', { name: 'Office speech / Model B' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Gateway rejected config');
+    expect(onChange).not.toHaveBeenCalled();
+    expect(selector.textContent).toContain('Office speech / Model A');
   });
 });

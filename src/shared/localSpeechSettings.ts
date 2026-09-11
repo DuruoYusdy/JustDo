@@ -24,6 +24,7 @@ export interface LocalSpeechSettings {
   inputEnabled: boolean;
   recognitionMode: SpeechRecognitionMode;
   asrModelId: LocalAsrModelId;
+  onlineAsrModelRef: string;
   inputSource: LocalSpeechInputSource;
   inputDeviceId: string;
   inputLanguage: LocalSpeechInputLanguage;
@@ -34,6 +35,7 @@ export interface LocalSpeechSettings {
   outputEnabled: boolean;
   synthesisMode: SpeechSynthesisMode;
   ttsModelId: LocalTtsModelId;
+  onlineTtsModelRef: string;
   voiceId: number;
   speechRate: number;
   synthesisThreads: number;
@@ -43,6 +45,7 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   inputEnabled: false,
   recognitionMode: 'local',
   asrModelId: LOCAL_ASR_DEFAULT_MODEL_ID,
+  onlineAsrModelRef: '',
   inputSource: 'microphone',
   inputDeviceId: '',
   inputLanguage: 'app',
@@ -53,6 +56,7 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   outputEnabled: false,
   synthesisMode: 'local',
   ttsModelId: LOCAL_TTS_MODEL_ID,
+  onlineTtsModelRef: '',
   voiceId: LOCAL_TTS_DEFAULT_VOICE_ID,
   speechRate: 1,
   synthesisThreads: 2,
@@ -113,6 +117,8 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
         : defaultLocalSpeechSettings.inputEnabled,
     recognitionMode,
     asrModelId,
+    onlineAsrModelRef:
+      typeof candidate.onlineAsrModelRef === 'string' ? candidate.onlineAsrModelRef : '',
     inputSource,
     inputDeviceId: typeof candidate.inputDeviceId === 'string' ? candidate.inputDeviceId : '',
     inputLanguage,
@@ -144,6 +150,8 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
         : defaultLocalSpeechSettings.outputEnabled,
     synthesisMode,
     ttsModelId,
+    onlineTtsModelRef:
+      typeof candidate.onlineTtsModelRef === 'string' ? candidate.onlineTtsModelRef : '',
     voiceId: clampInteger(
       candidate.voiceId,
       ttsModelId === LOCAL_TTS_MODEL_ID ? defaultLocalSpeechSettings.voiceId : 0,

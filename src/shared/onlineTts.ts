@@ -2,6 +2,7 @@ export const OnlineTtsIpc = {
   GetStatus: 'online-tts:get-status',
   GetConfiguration: 'online-tts:get-configuration',
   SaveConfiguration: 'online-tts:save-configuration',
+  ClearConfiguration: 'online-tts:clear-configuration',
 } as const;
 
 export interface OnlineTtsProvider {

@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import fs from 'fs';
+import OpenCC from 'opencc-js/t2cn';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
@@ -22,6 +23,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const TRANSCRIPTION_TIMEOUT_MS = 120_000;
+const traditionalToSimplifiedChinese = OpenCC.Converter({ from: 't', to: 'cn' });
 
 export interface LocalAsrAssetPaths {
   executablePath: string;
@@ -115,7 +117,7 @@ export async function transcribeLocalAudio(
       [...modelArgs, `--num-threads=${numThreads}`, audioPath],
       { windowsHide: true, timeout: TRANSCRIPTION_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
     );
-    const text = parseSherpaTranscription(stdout);
+    const text = normalizeLocalAsrTranscript(parseSherpaTranscription(stdout), language);
     if (!text) throw new Error('No speech was recognized.');
     return text;
   } finally {
@@ -124,6 +126,10 @@ export async function transcribeLocalAudio(
 }
 
 export { isLocalAsrModelId };
+
+export function normalizeLocalAsrTranscript(text: string, language: LocalAsrLanguage): string {
+  return language === 'zh' ? traditionalToSimplifiedChinese(text) : text;
+}
 
 export function buildLocalAsrModelArgs(
   modelId: LocalAsrModelId,

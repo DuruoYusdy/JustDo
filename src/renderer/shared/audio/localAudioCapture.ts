@@ -13,7 +13,7 @@ function downmixAudioBuffer(audio: AudioBuffer): Float32Array {
 }
 
 /**
- * Convert browser audio to the mono 16 kHz input used by the local ASR models.
+ * Normalize browser audio to the mono 16 kHz input used by the local ASR models.
  * sherpa-onnx can resample internally, but normalizing here bounds IPC payloads
  * and avoids browser/codec-specific sample-rate behavior.
  */

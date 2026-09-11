@@ -52,6 +52,11 @@ import {
 import { LocalTtsIpc, type LocalTtsModelId } from '../shared/localTts';
 import { LogIpc } from '../shared/logIpc';
 import { MediaCaptureIpc } from '../shared/mediaCapture';
+import {
+  type MediaGenerationModelConfiguration,
+  type MediaGenerationModelKind,
+  MediaGenerationModelsIpc,
+} from '../shared/mediaGenerationModels';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
   type OnlineAsrConfigurationUpdate,
@@ -550,6 +555,7 @@ contextBridge.exposeInMainWorld('electron', {
     getConfiguration: () => ipcRenderer.invoke(OnlineAsrIpc.GetConfiguration),
     saveConfiguration: (update: OnlineAsrConfigurationUpdate) =>
       ipcRenderer.invoke(OnlineAsrIpc.SaveConfiguration, update),
+    clearConfiguration: () => ipcRenderer.invoke(OnlineAsrIpc.ClearConfiguration),
     start: (options: OnlineAsrStartOptions) => ipcRenderer.invoke(OnlineAsrIpc.Start, options),
     appendAudio: (sessionId: string, audioBase64: string) =>
       ipcRenderer.invoke(OnlineAsrIpc.AppendAudio, sessionId, audioBase64),
@@ -565,6 +571,15 @@ contextBridge.exposeInMainWorld('electron', {
     getConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.GetConfiguration),
     saveConfiguration: (update: OnlineTtsConfigurationUpdate) =>
       ipcRenderer.invoke(OnlineTtsIpc.SaveConfiguration, update),
+    clearConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.ClearConfiguration),
+  },
+  mediaGenerationModels: {
+    getConfiguration: (kind: MediaGenerationModelKind) =>
+      ipcRenderer.invoke(MediaGenerationModelsIpc.GetConfiguration, kind),
+    saveConfiguration: (
+      kind: MediaGenerationModelKind,
+      configuration: MediaGenerationModelConfiguration,
+    ) => ipcRenderer.invoke(MediaGenerationModelsIpc.SaveConfiguration, kind, configuration),
   },
   mediaCapture: {
     armSystemAudio: () => ipcRenderer.invoke(MediaCaptureIpc.ArmSystemAudio),

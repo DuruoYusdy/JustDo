@@ -10,16 +10,13 @@ import type { OnlineAsrEvent, OnlineAsrSession } from '@shared/onlineAsr';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  recordedAudioToWav,
-  recordedAudioToWavSegments,
-} from '@/features/cowork/components/composer/localAudioCapture';
-import {
   bytesToBase64,
   floatToG711Ulaw,
   OnlineAsrAudioPump,
 } from '@/features/cowork/components/composer/onlineAudioCapture';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import { recordedAudioToWav, recordedAudioToWavSegments } from '@/shared/audio/localAudioCapture';
 
 type RecordingState = 'idle' | 'requesting' | 'recording' | 'transcribing';
 type CaptureTrack = { source: 'microphone' | 'system'; stream: MediaStream };

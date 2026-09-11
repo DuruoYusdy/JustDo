@@ -15,6 +15,7 @@ import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRunti
 interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 interface OwnedSession {
@@ -125,7 +126,11 @@ const hasExplicitIntranetConfiguration = (
   };
 };
 
-export function registerOnlineAsrHandlers({ getRuntime, requestGateway }: Dependencies): void {
+export function registerOnlineAsrHandlers({
+  getRuntime,
+  requestGateway,
+  runConfigMutationExclusive,
+}: Dependencies): void {
   const sessions = new Map<string, OwnedSession>();
   const attachedRuntimes = new WeakSet<OpenClawRuntimeAdapter>();
 
@@ -289,6 +294,7 @@ export function registerOnlineAsrHandlers({ getRuntime, requestGateway }: Depend
       if (!apiKey && !selectedProvider.configured) {
         throw new Error('Online transcription API key is required.');
       }
+      const mutate = async (): Promise<void> => {
       const snapshot = await requestGateway<{ hash?: unknown; config?: unknown }>('config.get');
       if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
         throw new Error('Online transcription configuration is unavailable.');
@@ -332,8 +338,27 @@ export function registerOnlineAsrHandlers({ getRuntime, requestGateway }: Depend
         }),
         baseHash: snapshot.hash,
       });
+      };
+      await (runConfigMutationExclusive ? runConfigMutationExclusive(mutate) : mutate());
     },
   );
+
+  ipcMain.handle(OnlineAsrIpc.ClearConfiguration, async (): Promise<void> => {
+    attachRuntime();
+    const mutate = async (): Promise<void> => {
+    const snapshot = await requestGateway<{ hash?: unknown }>('config.get');
+    if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
+      throw new Error('Online transcription configuration is unavailable.');
+    }
+    await requestGateway('config.patch', {
+      raw: JSON.stringify({
+        plugins: { entries: { 'voice-call': { config: { streaming: null } } } },
+      }),
+      baseHash: snapshot.hash,
+    });
+    };
+    await (runConfigMutationExclusive ? runConfigMutationExclusive(mutate) : mutate());
+  });
 
   ipcMain.handle(
     OnlineAsrIpc.Start,

@@ -11,6 +11,7 @@ import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRunti
 interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 type TtsCatalog = {
@@ -152,7 +153,11 @@ const resolveConfiguration = (
   };
 };
 
-export function registerOnlineTtsHandlers({ getRuntime, requestGateway }: Dependencies): void {
+export function registerOnlineTtsHandlers({
+  getRuntime,
+  requestGateway,
+  runConfigMutationExclusive,
+}: Dependencies): void {
   const requireRuntime = (): void => {
     if (!getRuntime()) throw new Error('OpenClaw Gateway is unavailable.');
   };
@@ -231,6 +236,7 @@ export function registerOnlineTtsHandlers({ getRuntime, requestGateway }: Depend
       if (!apiKey && !selectedProvider.configured) {
         throw new Error('Online speech API key is required.');
       }
+      const mutate = async (): Promise<void> => {
       const snapshot = await requestGateway<{ hash?: unknown; config?: unknown }>('config.get');
       if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
         throw new Error('Online speech configuration is unavailable.');
@@ -265,6 +271,23 @@ export function registerOnlineTtsHandlers({ getRuntime, requestGateway }: Depend
         }),
         baseHash: snapshot.hash,
       });
+      };
+      await (runConfigMutationExclusive ? runConfigMutationExclusive(mutate) : mutate());
     },
   );
+
+  ipcMain.handle(OnlineTtsIpc.ClearConfiguration, async (): Promise<void> => {
+    requireRuntime();
+    const mutate = async (): Promise<void> => {
+    const snapshot = await requestGateway<{ hash?: unknown }>('config.get');
+    if (typeof snapshot.hash !== 'string' || !snapshot.hash) {
+      throw new Error('Online speech configuration is unavailable.');
+    }
+    await requestGateway('config.patch', {
+      raw: JSON.stringify({ tts: null }),
+      baseHash: snapshot.hash,
+    });
+    };
+    await (runConfigMutationExclusive ? runConfigMutationExclusive(mutate) : mutate());
+  });
 }

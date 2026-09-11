@@ -6,6 +6,7 @@ export { registerHookHandlers } from './hooks';
 export { registerLocalTtsHandlers } from './localTts';
 export { registerMarketplaceHandlers } from './marketplace';
 export { registerMcpHandlers } from './mcp';
+export { registerMediaGenerationModelHandlers } from './mediaGenerationModels';
 export { registerOpenClawMemoryHandlers } from './memory';
 export { registerOpenClawModelHandlers } from './models';
 export { registerOnlineAsrHandlers } from './onlineAsr';

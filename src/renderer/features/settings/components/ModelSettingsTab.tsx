@@ -6,6 +6,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
   MagnifyingGlassIcon,
+  PlusIcon,
   SignalIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -342,6 +343,7 @@ const ModelSettingsTab: React.FC<Props> = ({
           disabled={isModelActionBusy}
           className="mt-2 h-9 w-full rounded-xl border border-dashed border-border px-3 text-xs font-medium text-secondary transition-all hover:border-primary/50 hover:bg-primary-muted/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
+          <PlusIcon className="mr-1 inline h-3.5 w-3.5" />
           {i18nService.t('addCustomProvider')}
         </button>
       </div>

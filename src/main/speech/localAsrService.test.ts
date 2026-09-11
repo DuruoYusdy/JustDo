@@ -8,6 +8,7 @@ import {
   buildLocalAsrModelArgs,
   getLocalAsrStatus,
   type LocalAsrAssetPaths,
+  normalizeLocalAsrTranscript,
   parseSherpaTranscription,
 } from './localAsrService';
 
@@ -55,6 +56,14 @@ describe('local ASR service', () => {
     ].join('\n');
 
     expect(parseSherpaTranscription(output)).toBe('今天天气很好');
+  });
+
+  it('normalizes explicit Mandarin transcripts to simplified Chinese', () => {
+    const transcript = '今天天氣很好，我們測試語音識別。';
+
+    expect(normalizeLocalAsrTranscript(transcript, 'zh')).toBe('今天天气很好，我们测试语音识别。');
+    expect(normalizeLocalAsrTranscript(transcript, 'yue')).toBe(transcript);
+    expect(normalizeLocalAsrTranscript(transcript, 'auto')).toBe(transcript);
   });
 
   it('uses multilingual short-audio arguments without forcing a language in auto mode', () => {

@@ -29,21 +29,27 @@ The reproducible release artifacts currently measure:
 
 ## User flow
 
-1. Open Settings > Voice.
-2. Choose Local offline or Online recognition and an audio source.
-3. For online recognition, select the protocol implemented by the intranet
+1. Open Settings > Voice to select and download offline models, then choose
+   Local offline or Online recognition and an audio source.
+2. Open Settings > Models > Speech recognition for online recognition. Select
+   the protocol implemented by the intranet
    service, enter its URL, model name, and API key, and save. Leaving the key
    blank preserves an existing credential. OpenAI Realtime is the default
    protocol; its configured HTTP(S) base URL is converted to WS(S), with
    `/realtime?intent=transcription` appended when needed.
-4. For online reply reading, select OpenAI-compatible or ElevenLabs, then enter
-   the intranet URL, model, voice, and API key. OpenAI-compatible is the default.
-5. Enable Voice input or Reply reading.
-6. In offline mode, JustDo downloads the selected model and shows progress and
+3. Open Settings > Models > Speech synthesis for online reply reading. Select
+   OpenAI-compatible or ElevenLabs, then enter the intranet URL, model, voice,
+   and API key. OpenAI-compatible is the default.
+4. Enable Voice input or Reply reading under Settings > Voice.
+5. In offline mode, JustDo downloads the selected model and shows progress and
    download size. In online mode, it checks the configured transcription provider.
-7. The archive size and SHA-256 digest are checked, then it is extracted to
+   For a local microphone source, the Voice page also provides a bounded 10-second
+   diagnostic that shows the live input level, keeps a playable recording, and
+   transcribes the same recording with the selected local model. This separates
+   silent or incorrectly routed devices from recognition-quality problems.
+6. The archive size and SHA-256 digest are checked, then it is extracted to
    `<userData>/local-speech-models/<model-id>` using staging and atomic replace.
-8. Once ready, the composer capture/import control or reply-reading control is
+7. Once ready, the composer capture/import control or reply-reading control is
    available.
 
 Partial downloads and staging files are removed after success or failure. A
@@ -71,6 +77,11 @@ labelled "Me" and system segments "Meeting audio" with elapsed timestamps. This
 distinguishes the local participant from remote playback; it does not perform
 remote-speaker diarization. Imported files are decoded locally and transcribed
 in the same bounded WAV segments.
+
+When the resolved offline recognition language is Mandarin (`zh`), JustDo
+normalizes the model transcript to Mainland simplified Chinese with OpenCC.
+Automatic detection and explicit Cantonese keep the model's original script so
+Japanese kanji and Cantonese wording are not rewritten accidentally.
 
 Online mode follows OpenClaw WebChat's transcription-only Talk session:
 `talk.catalog` gates availability, `talk.session.create` selects

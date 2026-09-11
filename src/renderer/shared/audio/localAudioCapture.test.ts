@@ -6,7 +6,7 @@ import {
   normalizeAudioForLocalAsr,
 } from './localAudioCapture';
 
-describe('local audio capture', () => {
+describe('shared local audio capture', () => {
   it('encodes and downmixes browser audio into mono PCM16 WAV', () => {
     const audio = {
       numberOfChannels: 2,

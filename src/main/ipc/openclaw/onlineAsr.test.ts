@@ -340,4 +340,14 @@ describe('OpenClaw online transcription IPC', () => {
       handlers.get(OnlineAsrIpc.AppendAudio)?.({ sender: {} }, 'talk-1', 'AQ=='),
     ).rejects.toThrow('Invalid online transcription audio request.');
   });
+
+  it('clears the Gateway transcription configuration', async () => {
+    requestGateway.mockResolvedValueOnce({ hash: 'config-hash' }).mockResolvedValueOnce({ ok: true });
+
+    await handlers.get(OnlineAsrIpc.ClearConfiguration)?.({});
+
+    expect(JSON.parse((requestGateway.mock.calls[1]?.[1] as { raw: string }).raw)).toEqual({
+      plugins: { entries: { 'voice-call': { config: { streaming: null } } } },
+    });
+  });
 });

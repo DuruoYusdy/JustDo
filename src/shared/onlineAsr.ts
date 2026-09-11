@@ -4,6 +4,7 @@ export const OnlineAsrIpc = {
   GetStatus: 'online-asr:get-status',
   GetConfiguration: 'online-asr:get-configuration',
   SaveConfiguration: 'online-asr:save-configuration',
+  ClearConfiguration: 'online-asr:clear-configuration',
   Start: 'online-asr:start',
   AppendAudio: 'online-asr:append-audio',
   Close: 'online-asr:close',

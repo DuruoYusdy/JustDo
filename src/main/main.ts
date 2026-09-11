@@ -109,6 +109,7 @@ import {
   registerLocalTtsHandlers,
   registerMarketplaceHandlers,
   registerMcpHandlers,
+  registerMediaGenerationModelHandlers,
   registerOnlineAsrHandlers,
   registerOnlineTtsHandlers,
   registerOpenClawApprovalHandlers,
@@ -946,11 +947,22 @@ if (!gotTheLock) {
     getRuntime: getOpenClawRuntimeAdapter,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
   registerOnlineTtsHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+  });
+  registerMediaGenerationModelHandlers({
+    getRuntime: getOpenClawRuntimeAdapter,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
 
   registerSlashCommandHandlers({

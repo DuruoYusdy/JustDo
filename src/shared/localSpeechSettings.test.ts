@@ -9,6 +9,9 @@ import {
 describe('local speech settings', () => {
   it('uses stable defaults for missing settings', () => {
     expect(normalizeLocalSpeechSettings(undefined)).toEqual(defaultLocalSpeechSettings);
+    expect(defaultLocalSpeechSettings.asrModelId).toBe(
+      'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
+    );
   });
 
   it('accepts online synthesis mode and rejects unknown values', () => {

@@ -38,6 +38,7 @@ const EXPECTED_PATCH_FILES = [
   '018-mixed-tool-commentary-order.cjs',
   '019-disable-configured-plugin-auto-install.cjs',
   '020-openai-realtime-transcription-base-url.cjs',
+  '021-isolated-openai-compatible-media-providers.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
@@ -178,7 +179,7 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
-  test('keeps exactly seventeen independently auditable v2026.9.2 patches', () => {
+  test('keeps the independently auditable v2026.9.2 patch inventory exact', () => {
     const patchDir = path.resolve('scripts', 'patches', 'v2026.9.2');
     const patchFiles = fs
       .readdirSync(patchDir)

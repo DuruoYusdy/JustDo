@@ -1,9 +1,4 @@
-import {
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  EyeIcon,
-  EyeSlashIcon,
-} from '@heroicons/react/24/outline';
+import { CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import {
   isLocalAsrLanguageSupported,
   LOCAL_ASR_MODEL_IDS,
@@ -22,12 +17,15 @@ import {
   type LocalSpeechSettings,
 } from '@shared/localSpeechSettings';
 import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_MODEL_IDS, type LocalTtsModelId } from '@shared/localTts';
-import type { OnlineAsrConfiguration } from '@shared/onlineAsr';
-import type { OnlineTtsConfiguration } from '@shared/onlineTts';
+import type { OnlineAsrStatus } from '@shared/onlineAsr';
+import type { OnlineTtsStatus } from '@shared/onlineTts';
 import React, { useEffect, useState } from 'react';
 
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
+
+import VoiceInputDiagnostics from './VoiceInputDiagnostics';
 
 interface VoiceSettingsTabProps {
   value: LocalSpeechSettings;
@@ -188,26 +186,103 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
   const [statuses, setStatuses] = useState<LocalSpeechModelStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
-  const [onlineStatus, setOnlineStatus] = useState<OnlineAsrConfiguration | null>(null);
+  const [microphoneRefreshKey, setMicrophoneRefreshKey] = useState(0);
+  const [onlineStatus, setOnlineStatus] = useState<OnlineAsrStatus | null>(null);
   const [onlineStatusLoading, setOnlineStatusLoading] = useState(false);
-  const [onlineProvider, setOnlineProvider] = useState('');
-  const [onlineBaseUrl, setOnlineBaseUrl] = useState('');
-  const [onlineModel, setOnlineModel] = useState('');
-  const [onlineApiKey, setOnlineApiKey] = useState('');
-  const [showOnlineApiKey, setShowOnlineApiKey] = useState(false);
-  const [onlineSaving, setOnlineSaving] = useState(false);
-  const [onlineSaveState, setOnlineSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
-  const [onlineTtsStatus, setOnlineTtsStatus] = useState<OnlineTtsConfiguration | null>(null);
+  const [onlineModelSaving, setOnlineModelSaving] = useState(false);
+  const [onlineModelError, setOnlineModelError] = useState('');
+  const [onlineTtsStatus, setOnlineTtsStatus] = useState<OnlineTtsStatus | null>(null);
   const [onlineTtsStatusLoading, setOnlineTtsStatusLoading] = useState(false);
-  const [onlineTtsProvider, setOnlineTtsProvider] = useState('');
-  const [onlineTtsBaseUrl, setOnlineTtsBaseUrl] = useState('');
-  const [onlineTtsModel, setOnlineTtsModel] = useState('');
-  const [onlineTtsVoice, setOnlineTtsVoice] = useState('');
-  const [onlineTtsApiKey, setOnlineTtsApiKey] = useState('');
-  const [showOnlineTtsApiKey, setShowOnlineTtsApiKey] = useState(false);
-  const [onlineTtsSaving, setOnlineTtsSaving] = useState(false);
-  const [onlineTtsSaveState, setOnlineTtsSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [onlineTtsModelSaving, setOnlineTtsModelSaving] = useState(false);
+  const [onlineTtsModelError, setOnlineTtsModelError] = useState('');
   const update = (patch: Partial<LocalSpeechSettings>) => onChange({ ...value, ...patch });
+  const onlineModelProviders = configService.getConfig().onlineModelProviders;
+  const recognitionCategory = onlineModelProviders?.['speech-recognition'];
+  const synthesisCategory = onlineModelProviders?.['speech-synthesis'];
+  const buildOnlineModelOptions = (
+    category: typeof recognitionCategory,
+  ): Array<{ value: string; label: string }> =>
+    Object.entries(category?.providers ?? {}).flatMap(([providerId, provider]) =>
+      provider.models.map(model => ({
+        value: `${providerId}/${model.id}`,
+        label: `${provider.displayName} / ${model.name}`,
+      })),
+    );
+  const recognitionModelOptions = buildOnlineModelOptions(recognitionCategory);
+  const synthesisModelOptions = buildOnlineModelOptions(synthesisCategory);
+  const resolveCategoryDefault = (category: typeof recognitionCategory): string => {
+    const providerId = category?.defaultProviderId;
+    const modelId = providerId ? category.providers[providerId]?.defaultModel : undefined;
+    return providerId && modelId ? `${providerId}/${modelId}` : '';
+  };
+  const resolveSelectedModel = (
+    options: Array<{ value: string; label: string }>,
+    savedReference: string,
+    defaultReference: string,
+  ): string =>
+    [savedReference, defaultReference].find(reference =>
+      options.some(option => option.value === reference),
+    ) ??
+    options[0]?.value ??
+    '';
+  const selectedRecognitionModel = resolveSelectedModel(
+    recognitionModelOptions,
+    value.onlineAsrModelRef,
+    resolveCategoryDefault(recognitionCategory),
+  );
+  const selectedSynthesisModel = resolveSelectedModel(
+    synthesisModelOptions,
+    value.onlineTtsModelRef,
+    resolveCategoryDefault(synthesisCategory),
+  );
+  const resolveOnlineProvider = (category: typeof recognitionCategory, reference: string) => {
+    const separator = reference.indexOf('/');
+    if (separator <= 0) return null;
+    const provider = category?.providers[reference.slice(0, separator)];
+    const model = reference.slice(separator + 1);
+    return provider && model ? { provider, model } : null;
+  };
+  const applyOnlineRecognitionModel = async (reference: string): Promise<void> => {
+    const selection = resolveOnlineProvider(recognitionCategory, reference);
+    if (!selection) return;
+    setOnlineModelSaving(true);
+    setOnlineModelError('');
+    try {
+      await window.electron.onlineAsr.saveConfiguration({
+        provider: 'openai',
+        baseUrl: selection.provider.baseUrl,
+        apiKey: selection.provider.apiKey || 'local',
+        model: selection.model,
+      });
+      update({ onlineAsrModelRef: reference });
+      setOnlineStatus(await window.electron.onlineAsr.getStatus());
+    } catch (error) {
+      setOnlineModelError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOnlineModelSaving(false);
+    }
+  };
+  const applyOnlineSynthesisModel = async (reference: string): Promise<void> => {
+    const selection = resolveOnlineProvider(synthesisCategory, reference);
+    if (!selection) return;
+    setOnlineTtsModelSaving(true);
+    setOnlineTtsModelError('');
+    try {
+      await window.electron.onlineTts.saveConfiguration({
+        provider: 'openai',
+        baseUrl: selection.provider.baseUrl,
+        apiKey: selection.provider.apiKey || 'local',
+        model: selection.model,
+        voice: selection.provider.voice || 'coral',
+      });
+      update({ onlineTtsModelRef: reference });
+      setOnlineTtsStatus(await window.electron.onlineTts.getStatus());
+    } catch (error) {
+      setOnlineTtsModelError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOnlineTtsModelSaving(false);
+    }
+  };
   const asrStatus = statuses.find(status => status.id === value.asrModelId) ?? null;
   const ttsStatus = statuses.find(status => status.id === value.ttsModelId) ?? null;
 
@@ -243,24 +318,14 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     let active = true;
     setOnlineStatusLoading(true);
     void window.electron.onlineAsr
-      .getConfiguration()
-      .then(configuration => {
-        if (!active) return;
-        setOnlineStatus(configuration);
-        const provider = configuration.selectedProvider ?? configuration.providers[0]?.id ?? '';
-        setOnlineProvider(provider);
-        setOnlineBaseUrl(configuration.baseUrl ?? '');
-        setOnlineModel(configuration.model ?? '');
-        setOnlineApiKey('');
-        setShowOnlineApiKey(false);
-        setOnlineSaveState('idle');
+      .getStatus()
+      .then(status => {
+        if (active) setOnlineStatus(status);
       })
       .catch(error => {
         if (active) {
           setOnlineStatus({
             available: false,
-            providers: [],
-            credentialConfigured: false,
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -273,50 +338,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     };
   }, [value.recognitionMode]);
 
-  const selectedOnlineProvider = onlineStatus?.providers.find(
-    provider => provider.id === onlineProvider,
-  );
-  const saveOnlineConfiguration = () => {
-    if (!onlineProvider || onlineSaving) return;
-    setOnlineSaving(true);
-    setOnlineSaveState('idle');
-    void window.electron.onlineAsr
-      .saveConfiguration({
-        provider: onlineProvider,
-        baseUrl: onlineBaseUrl.trim(),
-        ...(onlineApiKey.trim() ? { apiKey: onlineApiKey.trim() } : {}),
-        model: onlineModel.trim(),
-      })
-      .then(() => {
-        const suppliedCredential = Boolean(onlineApiKey.trim());
-        setOnlineApiKey('');
-        setShowOnlineApiKey(false);
-        setOnlineSaveState('saved');
-        setOnlineStatus(current =>
-          current
-            ? {
-                ...current,
-                available: true,
-                provider: onlineProvider,
-                selectedProvider: onlineProvider,
-                baseUrl: onlineBaseUrl.trim(),
-                model: onlineModel.trim(),
-                credentialConfigured:
-                  suppliedCredential || selectedOnlineProvider?.configured === true,
-                providers: current.providers.map(provider =>
-                  provider.id === onlineProvider && suppliedCredential
-                    ? { ...provider, configured: true }
-                    : provider,
-                ),
-              }
-            : current,
-        );
-        window.dispatchEvent(new CustomEvent('config-updated'));
-      })
-      .catch(() => setOnlineSaveState('error'))
-      .finally(() => setOnlineSaving(false));
-  };
-
   useEffect(() => {
     if (value.synthesisMode !== 'online') {
       setOnlineTtsStatus(null);
@@ -326,25 +347,14 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     let active = true;
     setOnlineTtsStatusLoading(true);
     void window.electron.onlineTts
-      .getConfiguration()
-      .then(configuration => {
-        if (!active) return;
-        setOnlineTtsStatus(configuration);
-        const provider = configuration.selectedProvider ?? configuration.providers[0]?.id ?? '';
-        setOnlineTtsProvider(provider);
-        setOnlineTtsBaseUrl(configuration.baseUrl ?? '');
-        setOnlineTtsModel(configuration.model ?? '');
-        setOnlineTtsVoice(configuration.voice ?? '');
-        setOnlineTtsApiKey('');
-        setShowOnlineTtsApiKey(false);
-        setOnlineTtsSaveState('idle');
+      .getStatus()
+      .then(status => {
+        if (active) setOnlineTtsStatus(status);
       })
       .catch(error => {
         if (!active) return;
         setOnlineTtsStatus({
           available: false,
-          providers: [],
-          credentialConfigured: false,
           error: error instanceof Error ? error.message : String(error),
         });
       })
@@ -355,52 +365,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
       active = false;
     };
   }, [value.synthesisMode]);
-
-  const selectedOnlineTtsProvider = onlineTtsStatus?.providers.find(
-    provider => provider.id === onlineTtsProvider,
-  );
-  const saveOnlineTtsConfiguration = () => {
-    if (!onlineTtsProvider || onlineTtsSaving) return;
-    setOnlineTtsSaving(true);
-    setOnlineTtsSaveState('idle');
-    void window.electron.onlineTts
-      .saveConfiguration({
-        provider: onlineTtsProvider,
-        baseUrl: onlineTtsBaseUrl.trim(),
-        ...(onlineTtsApiKey.trim() ? { apiKey: onlineTtsApiKey.trim() } : {}),
-        model: onlineTtsModel.trim(),
-        voice: onlineTtsVoice.trim(),
-      })
-      .then(() => {
-        const suppliedCredential = Boolean(onlineTtsApiKey.trim());
-        setOnlineTtsApiKey('');
-        setShowOnlineTtsApiKey(false);
-        setOnlineTtsSaveState('saved');
-        setOnlineTtsStatus(current =>
-          current
-            ? {
-                ...current,
-                available: true,
-                provider: onlineTtsProvider,
-                selectedProvider: onlineTtsProvider,
-                baseUrl: onlineTtsBaseUrl.trim(),
-                model: onlineTtsModel.trim(),
-                voice: onlineTtsVoice.trim(),
-                credentialConfigured:
-                  suppliedCredential || selectedOnlineTtsProvider?.configured === true,
-                providers: current.providers.map(provider =>
-                  provider.id === onlineTtsProvider && suppliedCredential
-                    ? { ...provider, configured: true }
-                    : provider,
-                ),
-              }
-            : current,
-        );
-        window.dispatchEvent(new CustomEvent('config-updated'));
-      })
-      .catch(() => setOnlineTtsSaveState('error'))
-      .finally(() => setOnlineTtsSaving(false));
-  };
 
   useEffect(() => {
     let active = true;
@@ -455,7 +419,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
       active = false;
       navigator.mediaDevices.removeEventListener('devicechange', refresh);
     };
-  }, [value.inputEnabled]);
+  }, [microphoneRefreshKey, value.inputEnabled]);
 
   return (
     <div className="space-y-6">
@@ -505,10 +469,10 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   ? i18nService.t('voiceOnlineReady')
                   : i18nService.t('voiceOnlineUnavailable')}
             </span>
-            {onlineStatus?.provider ? (
-              <code className="rounded bg-surface-raised px-1.5 py-0.5">
-                {onlineStatus.provider}
-              </code>
+            {onlineModelError ? (
+              <span className="text-red-500" role="alert">
+                {onlineModelError}
+              </span>
             ) : null}
           </div>
         )}
@@ -580,134 +544,32 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               </div>
             </div>
           ) : (
-            <div className="mb-5 space-y-3 rounded-lg border border-border bg-surface-raised/40 p-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="voice-online-provider" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineProvider')}
-                  </label>
-                  <div className="mt-1.5">
-                    <ThemedSelect
-                      id="voice-online-provider"
-                      value={onlineProvider}
-                      disabled={onlineStatusLoading || !onlineStatus?.providers.length}
-                      onChange={providerId => {
-                        setOnlineProvider(providerId);
-                        setOnlineBaseUrl('');
-                        setOnlineModel('');
-                        setOnlineApiKey('');
-                        setShowOnlineApiKey(false);
-                        setOnlineSaveState('idle');
-                      }}
-                      options={(onlineStatus?.providers ?? []).map(provider => ({
-                        value: provider.id,
-                        label: provider.label,
-                      }))}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="voice-online-base-url" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineBaseUrl')}
-                  </label>
-                  <input
-                    id="voice-online-base-url"
-                    type="url"
-                    value={onlineBaseUrl}
-                    disabled={!onlineProvider}
-                    onChange={event => {
-                      setOnlineBaseUrl(event.target.value);
-                      setOnlineSaveState('idle');
-                    }}
-                    placeholder={i18nService.t('voiceOnlineBaseUrlPlaceholder')}
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                </div>
+            <div className="mb-5 flex items-center justify-between gap-8">
+              <div>
+                <label
+                  htmlFor="voice-online-asr-model"
+                  className="text-sm font-medium text-foreground"
+                >
+                  {i18nService.t('voiceRecognitionModel')}
+                </label>
+                <p className="mt-1 text-xs leading-5 text-secondary">
+                  {i18nService.t('voiceOnlineModelSelectionDescription')}
+                </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="voice-online-model" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineModel')}
-                  </label>
-                  <input
-                    id="voice-online-model"
-                    value={onlineModel}
-                    disabled={!onlineProvider}
-                    onChange={event => {
-                      setOnlineModel(event.target.value);
-                      setOnlineSaveState('idle');
-                    }}
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="voice-online-api-key" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineApiKey')}
-                  </label>
-                  <div className="mt-1.5 flex min-w-0 gap-2">
-                    <div className="relative min-w-0 flex-1">
-                      <input
-                        id="voice-online-api-key"
-                        type={showOnlineApiKey ? 'text' : 'password'}
-                        autoComplete="off"
-                        value={onlineApiKey}
-                        disabled={!onlineProvider}
-                        onChange={event => {
-                          setOnlineApiKey(event.target.value);
-                          setOnlineSaveState('idle');
-                        }}
-                        placeholder={
-                          selectedOnlineProvider?.configured
-                            ? i18nService.t('voiceOnlineApiKeyConfigured')
-                            : i18nService.t('voiceOnlineApiKeyPlaceholder')
-                        }
-                        className="h-9 w-full rounded-lg border border-border bg-surface py-2 pl-3 pr-10 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                      <button
-                        type="button"
-                        disabled={!onlineProvider}
-                        aria-label={i18nService.t(
-                          showOnlineApiKey ? 'voiceOnlineHideApiKey' : 'voiceOnlineShowApiKey',
-                        )}
-                        onClick={() => setShowOnlineApiKey(current => !current)}
-                        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-secondary transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {showOnlineApiKey ? (
-                          <EyeSlashIcon className="h-4 w-4" />
-                        ) : (
-                          <EyeIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={
-                        !onlineProvider ||
-                        !onlineBaseUrl.trim() ||
-                        !onlineModel.trim() ||
-                        onlineSaving ||
-                        (!onlineApiKey.trim() && selectedOnlineProvider?.configured !== true)
-                      }
-                      title={
-                        onlineSaveState === 'saved'
-                          ? i18nService.t('voiceOnlineSaved')
-                          : onlineSaveState === 'error'
-                            ? i18nService.t('voiceOnlineSaveFailed')
-                            : undefined
-                      }
-                      onClick={saveOnlineConfiguration}
-                      className="h-9 shrink-0 rounded-lg bg-primary px-4 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {onlineSaving
-                        ? i18nService.t('voiceOnlineSaving')
-                        : onlineSaveState === 'saved'
-                          ? i18nService.t('voiceOnlineSavedShort')
-                          : onlineSaveState === 'error'
-                            ? i18nService.t('retry')
-                            : i18nService.t('voiceOnlineSave')}
-                    </button>
-                  </div>
-                </div>
+              <div className="w-64 shrink-0">
+                <ThemedSelect
+                  id="voice-online-asr-model"
+                  value={selectedRecognitionModel}
+                  disabled={
+                    !value.inputEnabled || recognitionModelOptions.length === 0 || onlineModelSaving
+                  }
+                  onChange={applyOnlineRecognitionModel}
+                  options={
+                    recognitionModelOptions.length > 0
+                      ? recognitionModelOptions
+                      : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
+                  }
+                />
               </div>
             </div>
           )}
@@ -813,6 +675,15 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             </div>
           ) : null}
         </div>
+        {value.inputEnabled &&
+        value.recognitionMode === 'local' &&
+        (value.inputSource === 'microphone' || value.inputSource === 'microphone-system') ? (
+          <VoiceInputDiagnostics
+            settings={value}
+            modelReady={asrStatus?.phase === 'ready'}
+            onMicrophoneAccess={() => setMicrophoneRefreshKey(current => current + 1)}
+          />
+        ) : null}
         <NumberSetting
           id="voice-max-recording"
           label={i18nService.t('voiceMaxRecording')}
@@ -910,10 +781,10 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   ? i18nService.t('voiceOnlineTtsReady')
                   : i18nService.t('voiceOnlineTtsUnavailable')}
             </span>
-            {onlineTtsStatus?.provider ? (
-              <code className="rounded bg-surface-raised px-1.5 py-0.5">
-                {onlineTtsStatus.provider}
-              </code>
+            {onlineTtsModelError ? (
+              <span className="text-red-500" role="alert">
+                {onlineTtsModelError}
+              </span>
             ) : null}
           </div>
         )}
@@ -1004,151 +875,34 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               </div>
             </>
           ) : (
-            <div className="space-y-3 rounded-lg border border-border bg-surface-raised/40 p-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="voice-online-tts-provider" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineProvider')}
-                  </label>
-                  <div className="mt-1.5">
-                    <ThemedSelect
-                      id="voice-online-tts-provider"
-                      value={onlineTtsProvider}
-                      disabled={onlineTtsStatusLoading || !onlineTtsStatus?.providers.length}
-                      onChange={providerId => {
-                        setOnlineTtsProvider(providerId);
-                        setOnlineTtsBaseUrl('');
-                        setOnlineTtsModel('');
-                        setOnlineTtsVoice('');
-                        setOnlineTtsApiKey('');
-                        setShowOnlineTtsApiKey(false);
-                        setOnlineTtsSaveState('idle');
-                      }}
-                      options={(onlineTtsStatus?.providers ?? []).map(provider => ({
-                        value: provider.id,
-                        label: provider.label,
-                      }))}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="voice-online-tts-base-url" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineBaseUrl')}
-                  </label>
-                  <input
-                    id="voice-online-tts-base-url"
-                    type="url"
-                    value={onlineTtsBaseUrl}
-                    disabled={!onlineTtsProvider}
-                    onChange={event => {
-                      setOnlineTtsBaseUrl(event.target.value);
-                      setOnlineTtsSaveState('idle');
-                    }}
-                    placeholder={i18nService.t('voiceOnlineBaseUrlPlaceholder')}
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                </div>
+            <div className="flex items-center justify-between gap-8">
+              <div>
+                <label
+                  htmlFor="voice-online-tts-model"
+                  className="text-sm font-medium text-foreground"
+                >
+                  {i18nService.t('voiceSynthesisModel')}
+                </label>
+                <p className="mt-1 text-xs leading-5 text-secondary">
+                  {i18nService.t('voiceOnlineModelSelectionDescription')}
+                </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)]">
-                <div>
-                  <label htmlFor="voice-online-tts-model" className="text-xs text-secondary">
-                    {i18nService.t('voiceSynthesisModel')}
-                  </label>
-                  <input
-                    id="voice-online-tts-model"
-                    value={onlineTtsModel}
-                    disabled={!onlineTtsProvider}
-                    onChange={event => {
-                      setOnlineTtsModel(event.target.value);
-                      setOnlineTtsSaveState('idle');
-                    }}
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="voice-online-tts-voice" className="text-xs text-secondary">
-                    {i18nService.t('voiceSpeaker')}
-                  </label>
-                  <input
-                    id="voice-online-tts-voice"
-                    value={onlineTtsVoice}
-                    disabled={!onlineTtsProvider}
-                    onChange={event => {
-                      setOnlineTtsVoice(event.target.value);
-                      setOnlineTtsSaveState('idle');
-                    }}
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="voice-online-tts-api-key" className="text-xs text-secondary">
-                    {i18nService.t('voiceOnlineApiKey')}
-                  </label>
-                  <div className="mt-1.5 flex min-w-0 gap-2">
-                    <div className="relative min-w-0 flex-1">
-                      <input
-                        id="voice-online-tts-api-key"
-                        type={showOnlineTtsApiKey ? 'text' : 'password'}
-                        autoComplete="off"
-                        value={onlineTtsApiKey}
-                        disabled={!onlineTtsProvider}
-                        onChange={event => {
-                          setOnlineTtsApiKey(event.target.value);
-                          setOnlineTtsSaveState('idle');
-                        }}
-                        placeholder={
-                          selectedOnlineTtsProvider?.configured
-                            ? i18nService.t('voiceOnlineApiKeyConfigured')
-                            : i18nService.t('voiceOnlineApiKeyPlaceholder')
-                        }
-                        className="h-9 w-full rounded-lg border border-border bg-surface py-2 pl-3 pr-10 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                      <button
-                        type="button"
-                        disabled={!onlineTtsProvider}
-                        aria-label={i18nService.t(
-                          showOnlineTtsApiKey ? 'voiceOnlineHideApiKey' : 'voiceOnlineShowApiKey',
-                        )}
-                        onClick={() => setShowOnlineTtsApiKey(current => !current)}
-                        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-secondary transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {showOnlineTtsApiKey ? (
-                          <EyeSlashIcon className="h-4 w-4" />
-                        ) : (
-                          <EyeIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={
-                        !onlineTtsProvider ||
-                        !onlineTtsBaseUrl.trim() ||
-                        !onlineTtsModel.trim() ||
-                        !onlineTtsVoice.trim() ||
-                        onlineTtsSaving ||
-                        (!onlineTtsApiKey.trim() && selectedOnlineTtsProvider?.configured !== true)
-                      }
-                      title={
-                        onlineTtsSaveState === 'saved'
-                          ? i18nService.t('voiceOnlineSaved')
-                          : onlineTtsSaveState === 'error'
-                            ? i18nService.t('voiceOnlineSaveFailed')
-                            : undefined
-                      }
-                      onClick={saveOnlineTtsConfiguration}
-                      className="h-9 shrink-0 rounded-lg bg-primary px-4 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {onlineTtsSaving
-                        ? i18nService.t('voiceOnlineSaving')
-                        : onlineTtsSaveState === 'saved'
-                          ? i18nService.t('voiceOnlineSavedShort')
-                          : onlineTtsSaveState === 'error'
-                            ? i18nService.t('retry')
-                            : i18nService.t('voiceOnlineSave')}
-                    </button>
-                  </div>
-                </div>
+              <div className="w-64 shrink-0">
+                <ThemedSelect
+                  id="voice-online-tts-model"
+                  value={selectedSynthesisModel}
+                  disabled={
+                    !value.outputEnabled ||
+                    synthesisModelOptions.length === 0 ||
+                    onlineTtsModelSaving
+                  }
+                  onChange={applyOnlineSynthesisModel}
+                  options={
+                    synthesisModelOptions.length > 0
+                      ? synthesisModelOptions
+                      : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
+                  }
+                />
               </div>
             </div>
           )}
