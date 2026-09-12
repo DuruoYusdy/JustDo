@@ -13,5 +13,6 @@ export { registerOnlineAsrHandlers } from './onlineAsr';
 export { registerOnlineTtsHandlers } from './onlineTts';
 export { registerSkillHandlers } from './skills';
 export { registerSlashCommandHandlers } from './slashCommands';
+export { registerSpeechSynthesisHandlers } from './speechSynthesis';
 export { registerOpenClawUsageHandlers } from './usage';
 export { registerOpenClawWorkboardHandlers } from './workboard';

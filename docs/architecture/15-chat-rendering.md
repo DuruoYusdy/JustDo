@@ -4,6 +4,9 @@
 组件通过 OpenClaw Gateway 的 `tts.speak` 获取音频，播放状态只保存在自定义元素内，
 不会把生成的音频写入 transcript 或 Redux。资源和 provider 生命周期见
 [`docs/features/local-tts.md`](../features/local-tts.md)。
+语音设置页的朗读效果测试通过受限 Main IPC 调用同一个 `tts.speak` 方法，Renderer
+仅提交最多 500 字的试听文本并接收内联音频，因此试听与消息朗读使用相同 provider，
+也不会暴露在线服务凭据。
 输入区的麦克风在 Renderer 录音并编码单声道 WAV，由 Main 调用本地 Whisper
 CLI 转写；返回文本只写入可编辑 draft，不会自动发送消息。
 

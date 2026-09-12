@@ -47,6 +47,8 @@ The reproducible release artifacts currently measure:
    diagnostic that shows the live input level, keeps a playable recording, and
    transcribes the same recording with the selected local model. This separates
    silent or incorrectly routed devices from recognition-quality problems.
+   When reply reading is enabled, the same page provides editable sample text and
+   a play/stop preview using the configured local or online TTS provider.
 6. The archive size and SHA-256 digest are checked, then it is extracted to
    `<userData>/local-speech-models/<model-id>` using staging and atomic replace.
 7. Once ready, the composer capture/import control or reply-reading control is

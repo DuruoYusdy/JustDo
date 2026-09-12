@@ -26,6 +26,7 @@ import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import VoiceInputDiagnostics from './VoiceInputDiagnostics';
+import VoiceOutputDiagnostics from './VoiceOutputDiagnostics';
 
 interface VoiceSettingsTabProps {
   value: LocalSpeechSettings;
@@ -933,6 +934,23 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               onChange={synthesisThreads => update({ synthesisThreads })}
             />
           </>
+        ) : null}
+        {value.outputEnabled ? (
+          <VoiceOutputDiagnostics
+            available={
+              value.synthesisMode === 'local'
+                ? ttsStatus?.phase === 'ready'
+                : onlineTtsStatus?.available === true
+            }
+            configurationKey={[
+              value.synthesisMode,
+              value.ttsModelId,
+              value.voiceId,
+              value.speechRate,
+              value.synthesisThreads,
+              value.onlineTtsModelRef,
+            ].join(':')}
+          />
         ) : null}
       </section>
     </div>

@@ -890,6 +890,9 @@ interface IElectronAPI {
     ) => Promise<void>;
     clearConfiguration: () => Promise<void>;
   };
+  speechSynthesis: {
+    speak: (text: string) => Promise<import('../../shared/speechSynthesis').SpeechSynthesisResult>;
+  };
   mediaGenerationModels: {
     getConfiguration: (
       kind: import('../../shared/mediaGenerationModels').MediaGenerationModelKind,

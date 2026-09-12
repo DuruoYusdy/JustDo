@@ -121,6 +121,7 @@ import {
   registerOpenClawWorkboardHandlers,
   registerSkillHandlers,
   registerSlashCommandHandlers,
+  registerSpeechSynthesisHandlers,
 } from './ipc/openclaw';
 import {
   getCronJobService,
@@ -956,6 +957,10 @@ if (!gotTheLock) {
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+  });
+  registerSpeechSynthesisHandlers({
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
   });
   registerMediaGenerationModelHandlers({
     getRuntime: getOpenClawRuntimeAdapter,

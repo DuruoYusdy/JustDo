@@ -131,6 +131,7 @@ import {
   type SessionGoalMutationRequest,
 } from '../shared/sessionGoal';
 import { SlashCommandIpc } from '../shared/slashCommands';
+import { SpeechSynthesisIpc } from '../shared/speechSynthesis';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -572,6 +573,9 @@ contextBridge.exposeInMainWorld('electron', {
     saveConfiguration: (update: OnlineTtsConfigurationUpdate) =>
       ipcRenderer.invoke(OnlineTtsIpc.SaveConfiguration, update),
     clearConfiguration: () => ipcRenderer.invoke(OnlineTtsIpc.ClearConfiguration),
+  },
+  speechSynthesis: {
+    speak: (text: string) => ipcRenderer.invoke(SpeechSynthesisIpc.Speak, text),
   },
   mediaGenerationModels: {
     getConfiguration: (kind: MediaGenerationModelKind) =>
