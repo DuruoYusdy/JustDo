@@ -37,12 +37,33 @@ Image understanding is a separate OpenClaw capability configured by
 The non-language tabs do not display public provider catalogs or pre-populated
 models. Their provider collections start empty and are persisted only after the
 user adds a provider, its endpoint and credentials, and one or more
-models. The current integration targets local endpoints with
+models. After a base URL is entered, the form previews the capability-specific
+request URL. The automatic discovery action first reads the provider's
+OpenAI-compatible `/models` endpoint. If that route is unavailable or empty, it
+also checks the service-root `/openapi.json` for model defaults or enum values in
+the endpoint request schema. Newly returned model IDs are merged without removing
+models that were added manually. If a user pastes the complete capability endpoint, the
+form removes its known suffix before saving and discovery, so Gateway request
+construction does not duplicate the path. Discovery requests time out, are
+cancelled when their provider/model context changes, and ignore stale responses.
+The current integration targets local endpoints with
 capability-specific OpenAI protocols: Realtime transcription WebSocket with
 PCMU 8 kHz for speech recognition, `/audio/speech` for synthesis, the Images
 generation/edit routes for images, and the Videos submission/poll/download
 routes for video. A generic REST transcription endpoint or a provider-specific
 media API is not sufficient.
+
+Provider names follow the same OpenClaw-safe format, reserved-name, and
+case-insensitive uniqueness rules as language-model providers. Speech synthesis
+voices belong to individual model entries rather than providers, so selecting a
+different synthesis model also selects that model's voice. Because custom providers
+do not share a standard
+voice-discovery API, the model editor performs best-effort discovery through `/audio/voices`,
+`/voices`, and a service-root `/api/voices`. It accepts common string and object
+catalog shapes, including `builtins` plus `custom` collections and optional model
+associations. Manual voice-ID entry remains available when none of the routes is
+implemented. Synthesis models without a configured voice are omitted from the
+Voice settings selector instead of receiving an arbitrary fallback voice.
 
 All four custom-provider tabs follow the language-model layout: providers
 appear in a left sidebar, provider connection fields appear on the right, and

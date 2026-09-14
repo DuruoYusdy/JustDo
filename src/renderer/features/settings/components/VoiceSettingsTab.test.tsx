@@ -261,13 +261,13 @@ describe('VoiceSettingsTab', () => {
         providers: {
           'lan-tts': {
             displayName: 'LAN voice',
-            baseUrl: 'http://speech.local/v1',
+            baseUrl: 'http://speech.local/v1/audio/speech',
             apiKey: 'secret',
             defaultModel: 'voice-small',
-            voice: 'alloy',
             models: [
-              { id: 'voice-small', name: 'Voice Small' },
-              { id: 'voice-hq', name: 'Voice HQ' },
+              { id: 'voice-small', name: 'Voice Small', voice: 'alloy' },
+              { id: 'voice-hq', name: 'Voice HQ', voice: 'nova' },
+              { id: 'voice-unconfigured', name: 'Voice Missing' },
             ],
           },
         },
@@ -306,6 +306,7 @@ describe('VoiceSettingsTab', () => {
       name: i18nService.t('voiceSynthesisModel'),
     });
     expect(selector.textContent).toContain('LAN voice / Voice Small');
+    expect(selector.textContent).not.toContain('Voice Missing');
     fireEvent.click(selector);
     fireEvent.click(screen.getByRole('option', { name: 'LAN voice / Voice HQ' }));
 
@@ -321,7 +322,7 @@ describe('VoiceSettingsTab', () => {
         baseUrl: 'http://speech.local/v1',
         apiKey: 'secret',
         model: 'voice-hq',
-        voice: 'alloy',
+        voice: 'nova',
       });
     });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();

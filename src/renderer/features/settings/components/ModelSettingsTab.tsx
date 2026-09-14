@@ -222,7 +222,7 @@ const ModelSettingsTab: React.FC<Props> = ({
   };
 
   return (
-    <div className="flex max-w-[980px] items-start gap-5">
+    <div className="mx-auto flex w-full max-w-[980px] items-start gap-5">
       <div className="shrink-0 space-y-1.5 overflow-y-auto" style={{ width: 240 }}>
         {/* Heading with import/export */}
         <div className="mb-2 flex h-8 items-center justify-between px-1">

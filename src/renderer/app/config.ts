@@ -70,8 +70,7 @@ export interface AppConfig {
             baseUrl: string;
             apiKey: string;
             defaultModel?: string;
-            voice?: string;
-            models: Array<{ id: string; name: string }>;
+            models: Array<{ id: string; name: string; voice?: string }>;
           }
         >;
       }
