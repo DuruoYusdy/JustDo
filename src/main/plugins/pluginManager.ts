@@ -1,10 +1,14 @@
 import type {
+  MarketplaceCategoriesResult,
+  MarketplaceCategoryRequest,
   MarketplaceDetailRequest,
   MarketplaceInstallRequest,
   MarketplacePluginDetail,
   MarketplaceQuery,
   MarketplaceSearchResult,
   MarketplaceSource,
+  MarketplaceUpdateCheckRequest,
+  MarketplaceUpdateCheckResult,
 } from '../../shared/plugins/marketplace';
 import type { PluginInstallResult } from './installation';
 import type { PluginMarketplaceService } from './marketplace';
@@ -22,12 +26,32 @@ export class PluginManager {
     return this.marketplace.listSources(kind);
   }
 
+  listMarketplaceCategories(
+    request: MarketplaceCategoryRequest,
+  ): Promise<MarketplaceCategoriesResult> {
+    return this.marketplace.listCategories(request);
+  }
+
   searchMarketplace(query: MarketplaceQuery): Promise<MarketplaceSearchResult> {
     return this.marketplace.search(query);
   }
 
+  checkMarketplaceUpdates(
+    request: MarketplaceUpdateCheckRequest,
+  ): Promise<MarketplaceUpdateCheckResult> {
+    return this.marketplace.checkUpdates(request);
+  }
+
   installFromMarketplace(request: MarketplaceInstallRequest): Promise<PluginInstallResult> {
     return this.marketplace.install(request);
+  }
+
+  forgetMarketplaceInstallation(
+    kind: MarketplaceQuery['kind'],
+    runtimeId: string,
+    installPath?: string,
+  ): void {
+    this.marketplace.forgetInstallation(kind, runtimeId, installPath);
   }
 
   getMarketplaceDetail(request: MarketplaceDetailRequest): Promise<MarketplacePluginDetail | null> {

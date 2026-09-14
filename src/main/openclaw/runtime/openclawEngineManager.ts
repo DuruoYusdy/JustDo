@@ -464,6 +464,10 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.baseDir;
   }
 
+  getRuntimeRoot(): string | null {
+    return this.resolveRuntimeMetadata().root;
+  }
+
   getStateDir(): string {
     return this.stateDir;
   }

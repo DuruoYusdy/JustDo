@@ -68,6 +68,7 @@
 | 当前版本能力快照               | [v2026.8.12 当前实现状态](features/current-state-v2026.8.10.md)                               |
 | OpenClaw session progress card | [openclaw-progress-card-ui](features/openclaw-progress-card-ui.md)                            |
 | 权限管理与 fail-closed 约束    | [openclaw-permission-management](features/openclaw-permission-management-remediation-plan.md) |
+| Plugin Hub 体验与管理模型      | [plugin-hub-experience](features/plugin-hub-experience-plan.md)                               |
 | 薄前端重构状态                 | [openclaw-thin-frontend](features/openclaw-thin-frontend-refactor-plan.md)                    |
 | 出站 Header 代理               | [outbound-header-proxy](features/outbound-header-proxy-analysis-and-redesign.md)              |
 | 定时任务应用内结果             | [scheduled-task-results](features/scheduled-task-in-app-results-implementation-plan.md)       |

@@ -108,11 +108,13 @@ import {
   type WorkboardStopIdentity,
 } from '../shared/openclaw/workboard';
 import {
+  type MarketplaceCategoryRequest,
   type MarketplaceDetailRequest,
   type MarketplaceInstallRequest,
   MarketplaceIpc,
+  type MarketplacePluginKind,
   type MarketplaceQuery,
-  type PluginKind,
+  type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
@@ -143,8 +145,13 @@ contextBridge.exposeInMainWorld('electron', {
     remove: (key: string) => ipcRenderer.invoke('store:remove', key),
   },
   marketplace: {
-    listSources: (kind?: PluginKind) => ipcRenderer.invoke(MarketplaceIpc.ListSources, kind),
+    listSources: (kind?: MarketplacePluginKind) =>
+      ipcRenderer.invoke(MarketplaceIpc.ListSources, kind),
+    listCategories: (request: MarketplaceCategoryRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.ListCategories, request),
     search: (query: MarketplaceQuery) => ipcRenderer.invoke(MarketplaceIpc.Search, query),
+    checkUpdates: (request: MarketplaceUpdateCheckRequest) =>
+      ipcRenderer.invoke(MarketplaceIpc.CheckUpdates, request),
     detail: (request: MarketplaceDetailRequest) =>
       ipcRenderer.invoke(MarketplaceIpc.Detail, request),
     install: (request: MarketplaceInstallRequest) =>

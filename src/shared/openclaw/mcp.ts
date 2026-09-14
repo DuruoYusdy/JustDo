@@ -18,4 +18,7 @@ export type ExtensionProvidedMcpServer = {
   providerDescription: string;
   enabled: boolean;
   supported: boolean;
+  scope?: PluginHubScope;
+  management?: PluginManagementCapabilities;
 };
+import type { PluginHubScope, PluginManagementCapabilities } from '../plugins/management';

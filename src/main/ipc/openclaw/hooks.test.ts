@@ -43,7 +43,7 @@ test('uses hooks.status as the authoritative hook inventory', async () => {
     installationService: new PluginInstallationService(),
   });
 
-  await expect(handlers.get(HookIpc.List)?.()).resolves.toEqual({
+  await expect(handlers.get(HookIpc.List)?.()).resolves.toMatchObject({
     success: true,
     ...hookReport,
   });
@@ -178,4 +178,76 @@ test('rejects malformed and plugin-managed hook mutations', async () => {
     handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'session-memory', enabled: false }),
   ).resolves.toEqual({ success: false, error: 'Plugin-managed Hooks cannot be changed here' });
   expect(setEnabled).not.toHaveBeenCalled();
+});
+
+test.each([
+  [
+    'name collision before authoritative key',
+    [
+      {
+        name: 'target-hook',
+        hookKey: 'plugin-hook',
+        managedByPlugin: true,
+      },
+      {
+        name: 'Custom target',
+        hookKey: 'target-hook',
+        source: 'openclaw-managed',
+      },
+    ],
+  ],
+  [
+    'name collision after authoritative key',
+    [
+      {
+        name: 'Custom target',
+        hookKey: 'target-hook',
+        source: 'openclaw-managed',
+      },
+      {
+        name: 'target-hook',
+        hookKey: 'plugin-hook',
+        managedByPlugin: true,
+      },
+    ],
+  ],
+])('prefers hookKey when resolving a mutation: %s', async (_case, hooks) => {
+  const setEnabled = vi.fn();
+  registerHookHandlers({
+    getStore: () =>
+      ({
+        getHook: vi.fn().mockReturnValue({ id: 'target-hook', enabled: true }),
+        setEnabled,
+      }) as unknown as OpenClawHookStore,
+    requestGateway: vi.fn().mockResolvedValue({ ...hookReport, hooks }),
+    syncConfig: vi.fn().mockResolvedValue({ hooks: 1 }),
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(
+    handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'target-hook', enabled: false }),
+  ).resolves.toMatchObject({ success: true });
+  expect(setEnabled).toHaveBeenCalledWith('target-hook', false);
+});
+
+test('falls back to name only for legacy hook entries without hookKey', async () => {
+  const setEnabled = vi.fn();
+  registerHookHandlers({
+    getStore: () =>
+      ({
+        getHook: vi.fn().mockReturnValue({ id: 'legacy-hook', enabled: true }),
+        setEnabled,
+      }) as unknown as OpenClawHookStore,
+    requestGateway: vi.fn().mockResolvedValue({
+      ...hookReport,
+      hooks: [{ name: 'legacy-hook', source: 'openclaw-managed' }],
+    }),
+    syncConfig: vi.fn().mockResolvedValue({ hooks: 1 }),
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(
+    handlers.get(HookIpc.SetEnabled)?.(undefined, { id: 'legacy-hook', enabled: false }),
+  ).resolves.toMatchObject({ success: true });
+  expect(setEnabled).toHaveBeenCalledWith('legacy-hook', false);
 });

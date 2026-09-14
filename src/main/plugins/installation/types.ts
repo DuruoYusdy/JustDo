@@ -31,6 +31,8 @@ export interface PluginInstallRequest {
 export interface PluginInstallResult {
   success: boolean;
   pluginId?: string;
+  /** Internal install location used to disambiguate layered capabilities. Never expose over IPC. */
+  installPath?: string;
   restartRequired?: boolean;
   failedStage?: string;
   error?: string;

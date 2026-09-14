@@ -4,12 +4,17 @@ import {
   FolderIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { PluginKind } from '@shared/plugins/marketplace';
+import { PluginHubScope } from '@shared/plugins/management';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { groupHooksBySource, HookGroupId } from '@/features/plugins/components/hooks/hookGroups';
-import MarketplaceView from '@/features/plugins/components/marketplace/MarketplaceView';
+import { getPluginArtworkTone } from '@/features/plugins/components/pluginArtwork';
+import PluginGroupSection from '@/features/plugins/components/PluginGroupSection';
+import type { PluginHubManagerProps } from '@/features/plugins/components/pluginHubTypes';
+import PluginMarkdownDescription from '@/features/plugins/components/PluginMarkdownDescription';
+import PluginStateButton, {
+  PluginLockedIndicator,
+} from '@/features/plugins/components/PluginStateButton';
 import { hookService } from '@/features/plugins/services/hookService';
 import { HookEntry } from '@/features/plugins/types/hook';
 import { i18nService } from '@/services/i18n';
@@ -19,8 +24,6 @@ import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
-
-type HookTab = 'installed' | 'marketplace';
 
 const getMissingSummary = (hook: HookEntry): string => {
   const missing = hook.missing;
@@ -40,12 +43,20 @@ const getMissingSummary = (hook: HookEntry): string => {
   return parts.join('; ');
 };
 
-const HookManager: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<HookTab>('installed');
+interface HookManagerProps extends PluginHubManagerProps {
+  onOpenExtension?: (extensionId: string) => void;
+}
+
+const HookManager: React.FC<HookManagerProps> = ({
+  searchQuery: sharedSearchQuery,
+  visibility = 'all',
+  onOpenExtension,
+}) => {
   const [hooks, setHooks] = useState<HookEntry[]>([]);
   const [workspaceDir, setWorkspaceDir] = useState('');
   const [managedHooksDir, setManagedHooksDir] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [actionError, setActionError] = useState('');
   const [gatewayOffline, setGatewayOffline] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,7 +91,7 @@ const HookManager: React.FC = () => {
   }, []);
 
   const filteredHooks = useMemo(() => {
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.trim().toLowerCase();
     if (!query) return hooks;
     return hooks.filter(
       hook =>
@@ -91,12 +102,21 @@ const HookManager: React.FC = () => {
     );
   }, [hooks, searchQuery]);
 
-  const groupedHooks = useMemo(() => groupHooksBySource(filteredHooks), [filteredHooks]);
-
-  const getGroupLabel = (groupId: HookGroupId) => i18nService.t(`hookGroup.${groupId}.label`);
-
-  const getGroupDescription = (groupId: HookGroupId) =>
-    i18nService.t(`hookGroup.${groupId}.description`);
+  const groupedHooks = useMemo(() => {
+    const isSystemHook = (hook: HookEntry) =>
+      hook.scope === PluginHubScope.SYSTEM ||
+      hook.scope === PluginHubScope.EXTENSION ||
+      hook.source === 'openclaw-bundled' ||
+      hook.managedByPlugin;
+    const userHooks = filteredHooks.filter(hook => !isSystemHook(hook));
+    const systemHooks = filteredHooks.filter(isSystemHook);
+    return [
+      ...(userHooks.length > 0 || !searchQuery.trim()
+        ? [{ id: 'user' as const, hooks: userHooks }]
+        : []),
+      ...(systemHooks.length > 0 ? [{ id: 'system' as const, hooks: systemHooks }] : []),
+    ];
+  }, [filteredHooks, searchQuery]);
 
   const setHookUpdating = (hookId: string, updating: boolean) => {
     setUpdatingHookIds(current => {
@@ -111,7 +131,8 @@ const HookManager: React.FC = () => {
   };
 
   const handleToggleHook = async (hook: HookEntry) => {
-    if (hook.managedByPlugin) {
+    const capability = hook.enabled ? hook.management?.disable : hook.management?.enable;
+    if (capability && !capability.allowed) {
       setActionError(i18nService.t('hookManagedByPlugin'));
       return;
     }
@@ -205,6 +226,7 @@ const HookManager: React.FC = () => {
   };
 
   const handleDeleteClick = (hook: HookEntry) => {
+    if (hook.management && !hook.management.remove.allowed) return;
     setSelectedHook(null);
     setHookPendingDelete(hook);
   };
@@ -229,36 +251,40 @@ const HookManager: React.FC = () => {
     }
   };
 
-  const tabClass = (tab: HookTab) =>
-    `px-4 py-2 text-sm font-medium transition-colors relative ${
-      activeTab === tab ? 'text-foreground' : 'text-secondary hover:text-foreground'
-    }`;
-
-  const tabIndicatorClass = (tab: HookTab) =>
-    `absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
-      activeTab === tab ? 'bg-primary' : 'bg-transparent'
-    }`;
-
   const renderToggle = (hook: HookEntry) => {
-    const disabled = gatewayOffline || updatingHookIds.has(hook.id) || hook.managedByPlugin;
+    const capability = hook.enabled ? hook.management?.disable : hook.management?.enable;
+    if (capability && !capability.allowed && capability.reason === 'managed-by-extension') {
+      return <PluginLockedIndicator label={i18nService.t('hookManagedByPlugin')} />;
+    }
+    const disabled =
+      gatewayOffline || updatingHookIds.has(hook.id) || capability?.allowed === false;
     return (
-      <div
-        className={`w-9 h-5 rounded-full flex items-center transition-colors flex-shrink-0 ${
-          disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-        } ${hook.enabled ? 'bg-primary' : 'bg-border'}`}
-        onClick={event => {
-          event.stopPropagation();
+      <PluginStateButton
+        checked={hook.enabled}
+        label={i18nService.t(hook.enabled ? 'disableHook' : 'enableHook')}
+        disabled={disabled}
+        busy={updatingHookIds.has(hook.id)}
+        onToggle={() => {
           if (!disabled) void handleToggleHook(hook);
         }}
-      >
-        <div
-          className={`w-3.5 h-3.5 rounded-full bg-white shadow-md transform transition-transform ${
-            hook.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-          }`}
-        />
-      </div>
+      />
     );
   };
+  const importHookAction = !gatewayOffline ? (
+    <Tooltip content={i18nService.t('importHookTooltip')} position="bottom">
+      <button
+        type="button"
+        onClick={() => setImportPickerOpen(true)}
+        disabled={importing}
+        className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground ${
+          importing ? 'cursor-not-allowed opacity-50' : ''
+        }`}
+      >
+        <ArrowUpTrayIcon className="h-4 w-4" />
+        {importing ? i18nService.t('importHookProgress') : i18nService.t('importHook')}
+      </button>
+    </Tooltip>
+  ) : undefined;
 
   return (
     <div className="space-y-4">
@@ -317,177 +343,161 @@ const HookManager: React.FC = () => {
         </div>
       )}
 
-      <div className="sticky top-0 z-10 bg-background pb-4 shadow-sm">
-        <div className="flex items-center justify-between gap-4 border-b border-border">
-          <div className="flex items-center">
-            <button
-              type="button"
-              onClick={() => setActiveTab('installed')}
-              className={tabClass('installed')}
-            >
-              {i18nService.t('hookInstalled')}
-              {hooks.length > 0 && (
-                <span className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px]">
-                  {hooks.length}
-                </span>
-              )}
-              <div className={tabIndicatorClass('installed')} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('marketplace')}
-              className={tabClass('marketplace')}
-            >
-              {i18nService.t('hookMarketplace')}
-              <div className={tabIndicatorClass('marketplace')} />
-            </button>
-          </div>
-          <p className="min-w-0 truncate pb-2 text-right text-sm text-secondary">
-            {i18nService.t('hooksDescription')}
-          </p>
-        </div>
-      </div>
-
-      {activeTab === 'installed' && (
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
-            <div className="relative min-w-0 flex-1 sm:max-w-md">
-              <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-              <input
-                type="text"
-                placeholder={i18nService.t('searchHooks')}
-                value={searchQuery}
-                onChange={event => setSearchQuery(event.target.value)}
-                disabled={gatewayOffline}
-                className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </div>
-            {!gatewayOffline && (
-              <Tooltip
-                className="w-full sm:ml-auto sm:w-auto"
-                content={i18nService.t('importHookTooltip')}
-                position="bottom"
-              >
-                <button
-                  type="button"
-                  onClick={() => setImportPickerOpen(true)}
-                  disabled={importing}
-                  className={`flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-foreground sm:w-auto ${
-                    importing ? 'cursor-not-allowed opacity-50' : ''
-                  }`}
-                >
-                  <ArrowUpTrayIcon className="h-4 w-4" />
-                  {importing ? i18nService.t('importHookProgress') : i18nService.t('importHook')}
-                </button>
-              </Tooltip>
+      {visibility !== 'available' ? (
+        <section className="space-y-4">
+          <div className="space-y-4">
+            {sharedSearchQuery === undefined && (
+              <div className="relative min-w-0 sm:max-w-md">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+                <input
+                  type="text"
+                  placeholder={i18nService.t('searchHooks')}
+                  value={searchQuery}
+                  onChange={event => setLocalSearchQuery(event.target.value)}
+                  disabled={gatewayOffline}
+                  className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </div>
+            )}
+            {isLoading ? (
+              <div className="py-8 text-center text-sm text-secondary">
+                {i18nService.t('loading')}
+              </div>
+            ) : filteredHooks.length === 0 && searchQuery.trim() ? (
+              <div className="py-8 text-center text-sm text-secondary">
+                {gatewayOffline
+                  ? i18nService.t('gatewayOffline')
+                  : i18nService.t('noHooksAvailable')}
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {groupedHooks.map(group => (
+                  <PluginGroupSection
+                    key={group.id}
+                    title={i18nService.t(`pluginGroup.${group.id}.label`)}
+                    count={group.hooks.length}
+                    action={group.id === 'user' ? importHookAction : undefined}
+                    collapsible={group.id === 'system'}
+                    defaultExpanded={group.id !== 'system'}
+                    forceExpanded={Boolean(searchQuery.trim())}
+                  >
+                    {group.hooks.length === 0 ? (
+                      <p className="px-2 py-3 text-xs text-secondary">
+                        {i18nService.t('noHooksAvailable')}
+                      </p>
+                    ) : (
+                      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                        {group.hooks.map((hook, visualIndex) => {
+                          const missingSummary = getMissingSummary(hook);
+                          return (
+                            <article
+                              key={`${group.id}:${hook.id}`}
+                              className="group relative min-h-16 min-w-0 cursor-pointer rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
+                              onClick={() => setSelectedHook(hook)}
+                            >
+                              <button
+                                type="button"
+                                className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+                                aria-label={`${i18nService.t('subtaskShowInfo')}: ${hook.name}`}
+                                onClick={event => {
+                                  event.stopPropagation();
+                                  setSelectedHook(hook);
+                                }}
+                              />
+                              <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div
+                                    className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-sm ${getPluginArtworkTone(`hooks:${group.id}`, visualIndex)}`}
+                                  >
+                                    {hook.emoji || <ConnectorIcon className="h-4 w-4" />}
+                                  </div>
+                                  <span className="truncate text-sm font-medium text-foreground">
+                                    {hook.name}
+                                  </span>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-2">
+                                  {renderToggle(hook)}
+                                </div>
+                              </div>
+                              <Tooltip
+                                content={hook.description}
+                                position="bottom"
+                                maxWidth="360px"
+                                className="ml-10 block min-w-0 pr-2"
+                              >
+                                <p className="truncate text-xs text-secondary">
+                                  {hook.description}
+                                </p>
+                              </Tooltip>
+                              <div className="ml-10 mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
+                                {hook.managedByPlugin && hook.pluginId && (
+                                  <button
+                                    type="button"
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      onOpenExtension?.(hook.pluginId as string);
+                                    }}
+                                    disabled={!onOpenExtension}
+                                    aria-label={i18nService
+                                      .t('openExtensionDetails')
+                                      .replace('{name}', hook.pluginId)}
+                                    className="relative z-10 min-w-0 max-w-28 truncate text-[10px] font-medium text-purple-600 transition-colors enabled:hover:text-primary disabled:cursor-default dark:text-purple-400"
+                                  >
+                                    {hook.pluginId}
+                                  </button>
+                                )}
+                                {hook.events.slice(0, 2).map(event => (
+                                  <span
+                                    key={event}
+                                    className="min-w-0 max-w-24 truncate rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary"
+                                  >
+                                    {event}
+                                  </span>
+                                ))}
+                                {hook.events.length > 2 && (
+                                  <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
+                                    +{hook.events.length - 2}
+                                  </span>
+                                )}
+                                {missingSummary && (
+                                  <Tooltip
+                                    content={missingSummary}
+                                    position="bottom"
+                                    maxWidth="360px"
+                                    className="shrink-0"
+                                  >
+                                    <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
+                                      {i18nService.t('hookStatusMissing')}
+                                    </span>
+                                  </Tooltip>
+                                )}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </PluginGroupSection>
+                ))}
+              </div>
             )}
           </div>
-          {isLoading ? (
-            <div className="py-8 text-center text-sm text-secondary">
-              {i18nService.t('loading')}
-            </div>
-          ) : filteredHooks.length === 0 ? (
-            <div className="py-8 text-center text-sm text-secondary">
-              {gatewayOffline ? i18nService.t('gatewayOffline') : i18nService.t('noHooksAvailable')}
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {groupedHooks.map(group => (
-                <section key={group.id}>
-                  <div className="mb-2.5 flex min-w-0 items-center gap-2">
-                    <h3 className="shrink-0 text-sm font-semibold text-foreground">
-                      {getGroupLabel(group.id)}
-                    </h3>
-                    <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
-                      {group.hooks.length}
-                    </span>
-                    <p className="min-w-0 truncate text-xs text-secondary">
-                      {getGroupDescription(group.id)}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(17rem,100%),1fr))] items-start gap-3">
-                    {group.hooks.map(hook => {
-                      const missingSummary = getMissingSummary(hook);
-                      return (
-                        <div
-                          key={`${group.id}:${hook.id}`}
-                          className="cursor-pointer rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary"
-                          onClick={() => setSelectedHook(hook)}
-                        >
-                          <div className="mb-2 flex items-start justify-between gap-2">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-background text-sm">
-                                {hook.emoji || <ConnectorIcon className="h-4 w-4 text-secondary" />}
-                              </div>
-                              <span className="truncate text-sm font-medium text-foreground">
-                                {hook.name}
-                              </span>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              {hook.source === 'openclaw-managed' && !hook.managedByPlugin && (
-                                <button
-                                  type="button"
-                                  title={i18nService.t('deleteHook')}
-                                  onClick={event => {
-                                    event.stopPropagation();
-                                    handleDeleteClick(hook);
-                                  }}
-                                  className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
-                                >
-                                  <TrashIcon className="h-4 w-4" />
-                                </button>
-                              )}
-                              {renderToggle(hook)}
-                            </div>
-                          </div>
-                          <Tooltip content={hook.description} position="bottom" maxWidth="360px">
-                            <p className="line-clamp-2 text-xs text-secondary">
-                              {hook.description}
-                            </p>
-                          </Tooltip>
-                          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                            {hook.events.slice(0, 2).map(event => (
-                              <span
-                                key={event}
-                                className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary"
-                              >
-                                {event}
-                              </span>
-                            ))}
-                            {hook.events.length > 2 && (
-                              <span className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
-                                +{hook.events.length - 2}
-                              </span>
-                            )}
-                            {missingSummary && (
-                              <Tooltip content={missingSummary} position="bottom" maxWidth="360px">
-                                <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
-                                  {i18nService.t('hookStatusMissing')}
-                                </span>
-                              </Tooltip>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </div>
+        </section>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-border bg-surface px-6 py-10 text-center text-sm text-secondary">
+          <p>{i18nService.t('pluginHubHooksMarketplaceUnavailable')}</p>
+          {!gatewayOffline && (
+            <button
+              type="button"
+              onClick={() => setImportPickerOpen(true)}
+              disabled={importing}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface-raised px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary disabled:opacity-50"
+            >
+              <ArrowUpTrayIcon className="h-4 w-4" />
+              {i18nService.t('importHook')}
+            </button>
           )}
         </div>
-      )}
-
-      {activeTab === 'marketplace' && (
-        <MarketplaceView
-          kind={PluginKind.HOOK}
-          icon={<ConnectorIcon className="h-4 w-4" />}
-          installed={hooks.map(hook => ({ id: hook.id }))}
-          onInstalled={async () => {
-            const result = await hookService.loadHooks();
-            setHooks(result.hooks ?? []);
-          }}
-        />
       )}
 
       {selectedHook &&
@@ -524,7 +534,7 @@ const HookManager: React.FC = () => {
               </button>
             </div>
 
-            <p className="mb-4 text-sm text-secondary">{selectedHook.description}</p>
+            <PluginMarkdownDescription className="mb-4" content={selectedHook.description} />
 
             <div className="mb-5 space-y-3">
               <div>
@@ -570,14 +580,36 @@ const HookManager: React.FC = () => {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleOpenFolder(selectedHook)}
-              className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
-            >
-              <FolderIcon className="h-3.5 w-3.5" />
-              {i18nService.t('openFolder')}
-            </button>
+            <div className="flex items-center justify-between gap-3">
+              <Tooltip content={i18nService.t('openFolder')} position="top">
+                <button
+                  type="button"
+                  onClick={() => handleOpenFolder(selectedHook)}
+                  className="rounded-lg border border-border p-2 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                  aria-label={i18nService.t('openFolder')}
+                >
+                  <FolderIcon className="h-4 w-4" />
+                </button>
+              </Tooltip>
+              {(selectedHook.management?.remove.allowed ??
+                (selectedHook.source === 'openclaw-managed' &&
+                  !selectedHook.managedByPlugin)) && (
+                <Tooltip content={i18nService.t('deleteHook')} position="top">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const hook = selectedHook;
+                      setSelectedHook(null);
+                      handleDeleteClick(hook);
+                    }}
+                    className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
+                    aria-label={i18nService.t('deleteHook')}
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
           </Modal>,
           document.body,
         )}

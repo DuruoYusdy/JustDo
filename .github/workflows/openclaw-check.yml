@@ -179,7 +179,7 @@ jobs:
       - name: Run OpenClaw capability contracts
         env:
           OPENCLAW_RUNTIME_CONTRACT_REQUIRED: '1'
-        run: npx vitest run tests/openclaw/patches/v2026.9.2 tests/openclaw/runtime/pristine-contracts.test.ts tests/openclaw/runtime/runtime-patch-manifest.test.ts
+        run: npx vitest run tests/openclaw/patches/v2026.9.2 tests/openclaw/runtime/pristine-contracts.test.ts tests/openclaw/runtime/runtime-patch-manifest.test.ts tests/openclaw/runtime/skill-resolution-contract.test.ts
 
       - name: Smoke-test the gateway bundle under Electron Node
         if: ${{ matrix.electron_smoke }}

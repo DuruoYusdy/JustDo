@@ -110,4 +110,34 @@ describe('McpServerFormModal request timeout override', () => {
     expect(screen.getByText('mcpRequestTimeoutInvalid')).toBeTruthy();
     expect(onSave).not.toHaveBeenCalled();
   });
+
+  test('offers deletion only from an existing server detail form', () => {
+    const onDelete = vi.fn();
+    const { rerender } = render(
+      <McpServerFormModal
+        isOpen
+        server={server}
+        existingNames={[server.name]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    const deleteButton = screen.getByRole('button', { name: 'deleteMcpServer' });
+    expect(deleteButton.textContent).toBe('');
+    fireEvent.click(deleteButton);
+    expect(onDelete).toHaveBeenCalledOnce();
+
+    rerender(
+      <McpServerFormModal
+        isOpen
+        existingNames={[]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'deleteMcpServer' })).toBeNull();
+  });
 });

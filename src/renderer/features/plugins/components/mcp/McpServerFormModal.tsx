@@ -8,6 +8,8 @@ import React, { useEffect, useState } from 'react';
 import { McpRegistryEntry, McpServerConfig, McpServerFormData } from '@/features/plugins/types/mcp';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
+import TrashIcon from '@/shared/components/icons/TrashIcon';
+import Tooltip from '@/shared/components/ui/Tooltip';
 
 interface McpServerFormModalProps {
   isOpen: boolean;
@@ -17,6 +19,7 @@ interface McpServerFormModalProps {
   existingNames: string[];
   onClose: () => void;
   onSave: (data: McpServerFormData) => void;
+  onDelete?: () => void;
 }
 
 const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
@@ -27,6 +30,7 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
   existingNames,
   onClose,
   onSave,
+  onDelete,
 }) => {
   const isEdit = !!server;
   const isRegistry = !!registryEntry && !isEdit;
@@ -510,21 +514,37 @@ const McpServerFormModal: React.FC<McpServerFormModalProps> = ({
 
         {error && <div className="text-xs text-red-500">{error}</div>}
 
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
-          >
-            {i18nService.t('cancel')}
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="px-3 py-1.5 text-xs rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
-          >
-            {saveText}
-          </button>
+        <div className="flex items-center justify-between gap-3 pt-2">
+          {isEdit && onDelete ? (
+            <Tooltip content={i18nService.t('deleteMcpServer')} position="top">
+              <button
+                type="button"
+                onClick={onDelete}
+                className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10"
+                aria-label={i18nService.t('deleteMcpServer')}
+              >
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            </Tooltip>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs rounded-lg border border-border text-secondary hover:bg-surface-raised transition-colors"
+            >
+              {i18nService.t('cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-3 py-1.5 text-xs rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
+            >
+              {saveText}
+            </button>
+          </div>
         </div>
       </div>
     </Modal>

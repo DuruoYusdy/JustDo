@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import { HookIpc } from '../../../shared/openclaw/hooks';
+import { getHookManagement } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import { DEFAULT_MANAGED_AGENT_ID } from '../../openclaw/sessions/openclawSessionKeys';
 import { OpenClawHookFiles, type OpenClawHookStore } from '../../plugins/hooks';
@@ -19,6 +20,16 @@ type HookReport = {
   managedHooksDir: string;
   hooks: Array<Record<string, unknown>>;
 };
+
+const findHookByAuthoritativeId = (
+  hooks: HookReport['hooks'],
+  id: string,
+): Record<string, unknown> | undefined =>
+  hooks.find(entry => entry.hookKey === id) ||
+  hooks.find(
+    entry =>
+      (typeof entry.hookKey !== 'string' || !entry.hookKey.trim()) && entry.name === id,
+  );
 
 const syncHookConfigInBackground = (
   syncConfig: HookHandlerDependencies['syncConfig'],
@@ -71,8 +82,24 @@ export const registerHookHandlers = ({
       release();
     }
   };
-  const buildAuthoritativeHookReport = (): Promise<HookReport> =>
-    requestGateway<HookReport>('hooks.status', { agentId: DEFAULT_MANAGED_AGENT_ID });
+  const buildAuthoritativeHookReport = async (): Promise<HookReport> => {
+    const report = await requestGateway<HookReport>('hooks.status', {
+      agentId: DEFAULT_MANAGED_AGENT_ID,
+    });
+    return {
+      ...report,
+      hooks: report.hooks.map(hook => ({
+        ...hook,
+        ...getHookManagement({
+          source: typeof hook.source === 'string' ? hook.source : undefined,
+          managedByPlugin: hook.managedByPlugin === true,
+          pluginId: typeof hook.pluginId === 'string' ? hook.pluginId : undefined,
+          requirementsSatisfied: hook.requirementsSatisfied !== false,
+          filePath: typeof hook.filePath === 'string' ? hook.filePath : undefined,
+        }),
+      })),
+    };
+  };
   installationService.registerInstaller({
     kind: PluginKind.HOOK,
     install: async request => {
@@ -147,13 +174,11 @@ export const registerHookHandlers = ({
       const id = hookId.trim();
       const hookStore = getStore();
       const currentReport = await buildAuthoritativeHookReport();
-      const hook = currentReport.hooks.find(
-        entry =>
-          (entry.hookKey === id || entry.name === id) &&
-          entry.source === 'openclaw-managed' &&
-          entry.managedByPlugin !== true,
-      );
+      const hook = findHookByAuthoritativeId(currentReport.hooks, id);
       if (!hook) {
+        return { success: false, error: 'Only custom Hooks can be deleted' };
+      }
+      if (hook.source !== 'openclaw-managed' || hook.managedByPlugin === true) {
         return { success: false, error: 'Only custom Hooks can be deleted' };
       }
       if (typeof hook.baseDir !== 'string' || !hook.baseDir) {
@@ -239,9 +264,7 @@ export const registerHookHandlers = ({
 
       const hookStore = getStore();
       const currentReport = await buildAuthoritativeHookReport();
-      const hook = currentReport.hooks.find(
-        entry => entry.hookKey === hookId || entry.name === hookId,
-      );
+      const hook = findHookByAuthoritativeId(currentReport.hooks, hookId);
       if (!hook) {
         return { success: false, error: `Hook "${hookId}" not found` };
       }

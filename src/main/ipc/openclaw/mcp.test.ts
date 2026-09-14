@@ -29,8 +29,8 @@ const createStore = () => ({
   ]),
   updateServer: vi.fn((id: string) => ({ id })),
   createServer: vi.fn(() => ({ id: 'created-record' })),
-  deleteServer: vi.fn(),
-  setEnabled: vi.fn(),
+  deleteServer: vi.fn(() => true),
+  setEnabled: vi.fn(() => true),
 });
 
 const register = (
@@ -56,7 +56,7 @@ test('lists user-configured MCP servers without waiting for extension discovery'
   const listExtensionServers = vi.fn(() => new Promise<never>(() => undefined));
   register(store, listExtensionServers);
 
-  expect(handlers.get('mcp:list')?.()).toEqual({
+  expect(handlers.get('mcp:list')?.()).toMatchObject({
     success: true,
     servers: store.listServers(),
   });
@@ -68,7 +68,7 @@ test('discovers OpenClaw-managed MCP servers before returning the list', () => {
   const discoverExternalServers = vi.fn();
   register(store, vi.fn(async () => []), discoverExternalServers);
 
-  expect(handlers.get('mcp:list')?.()).toEqual({
+  expect(handlers.get('mcp:list')?.()).toMatchObject({
     success: true,
     servers: store.listServers(),
   });
@@ -82,7 +82,7 @@ test('keeps stored MCP servers visible when external discovery fails', () => {
     throw new Error('invalid native config');
   });
 
-  expect(handlers.get('mcp:list')?.()).toEqual({
+  expect(handlers.get('mcp:list')?.()).toMatchObject({
     success: true,
     servers: store.listServers(),
   });
@@ -107,7 +107,7 @@ test('lists extension-provided MCP servers through a separate handler', async ()
   ];
   register(store, vi.fn(async () => extensionServers));
 
-  await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toEqual({
+  await expect(handlers.get('mcp:listExtensionServers')?.()).resolves.toMatchObject({
     success: true,
     extensionServers,
   });
@@ -122,7 +122,7 @@ test('keeps extension discovery failure isolated from the user-configured list',
     success: false,
     extensionServers: [],
   });
-  expect(handlers.get('mcp:list')?.()).toEqual({
+  expect(handlers.get('mcp:list')?.()).toMatchObject({
     success: true,
     servers: store.listServers(),
   });
@@ -196,4 +196,19 @@ test('custom MCP install rejects an invalid per-server request timeout', async (
     error: 'MCP request timeout must be an integer between 1 and 86400 seconds.',
   });
   expect(store.createServer).not.toHaveBeenCalled();
+});
+
+test('does not report success when an MCP mutation target is missing', async () => {
+  const store = createStore();
+  store.deleteServer.mockReturnValue(false);
+  store.setEnabled.mockReturnValue(false);
+  register(store);
+
+  await expect(handlers.get('mcp:delete')?.(undefined, 'missing')).resolves.toEqual({
+    success: false,
+    error: 'MCP server was not found',
+  });
+  await expect(
+    handlers.get('mcp:setEnabled')?.(undefined, { id: 'missing', enabled: true }),
+  ).resolves.toEqual({ success: false, error: 'MCP server was not found' });
 });

@@ -8,6 +8,7 @@ import {
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
 } from '../../../shared/openclaw/extensions';
+import { getExtensionManagement } from '../../../shared/plugins/management';
 import {
   MarketplaceInstallOperation,
   PluginKind,
@@ -21,11 +22,13 @@ import {
 type ExtensionHandlerDependencies = {
   extensionImportService: OpenClawExtensionImportService;
   installationService: PluginInstallationService;
+  onMarketplacePluginDeleted?: (kind: typeof PluginKind.EXTENSION, runtimeId: string) => void;
 };
 
 export const registerExtensionHandlers = ({
   extensionImportService,
   installationService,
+  onMarketplacePluginDeleted,
 }: ExtensionHandlerDependencies): void => {
   installationService.registerInstaller({
     kind: PluginKind.EXTENSION,
@@ -51,7 +54,17 @@ export const registerExtensionHandlers = ({
 
   ipcMain.handle(ExtensionIpc.List, async () => {
     try {
-      return { success: true, extensions: await extensionImportService.listCatalog() };
+      const extensions = await extensionImportService.listCatalog();
+      return {
+        success: true,
+        extensions: extensions.map(extension => ({
+          ...extension,
+          ...getExtensionManagement({
+            ...extension,
+            configurationFieldCount: extension.configurationFields.length,
+          }),
+        })),
+      };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to list extensions';
       console.error('[Extensions] extensions:list error:', errorMsg);
@@ -117,7 +130,10 @@ export const registerExtensionHandlers = ({
       ) {
         return { success: false, error: 'Extension id is required' };
       }
-      return await extensionImportService.delete(request.extensionId.trim());
+      const extensionId = request.extensionId.trim();
+      const result = await extensionImportService.delete(extensionId);
+      if (result.success) onMarketplacePluginDeleted?.(PluginKind.EXTENSION, extensionId);
+      return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to delete extension';
       console.error('[Extensions] extensions:delete error:', errorMsg);

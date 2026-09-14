@@ -1,3 +1,4 @@
+import type { PluginHubScope, PluginManagementCapabilities } from '@shared/plugins/management';
 import type { OpenClawSkillSource } from '@shared/plugins/skills';
 
 // Skill type definition - extended with Gateway fields
@@ -19,6 +20,9 @@ export interface Skill {
   install?: SkillInstallOption[]; // Install options for missing requirements
   emoji?: string;
   homepage?: string;
+  scope: PluginHubScope;
+  ownershipScope: PluginHubScope;
+  management: PluginManagementCapabilities;
 }
 
 export type SkillSource = OpenClawSkillSource;

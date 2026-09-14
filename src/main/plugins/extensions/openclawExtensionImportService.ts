@@ -332,6 +332,45 @@ const readJsonRecord = (filePath: string): Record<string, unknown> => {
   }
 };
 
+const normalizeMetadataText = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+const resolveExtensionDescription = (
+  manifest: Record<string, unknown>,
+  packageJson?: Record<string, unknown>,
+): string => {
+  const interfaceMetadata = isRecord(manifest.interface) ? manifest.interface : undefined;
+  return (
+    normalizeMetadataText(manifest.description) ??
+    normalizeMetadataText(manifest.shortDescription) ??
+    normalizeMetadataText(interfaceMetadata?.shortDescription) ??
+    normalizeMetadataText(packageJson?.description) ??
+    ''
+  );
+};
+
+const readExtensionDescriptionFromDirectory = (pluginDirectory: string): string => {
+  const manifestPath = findSupportedPluginManifestPath(pluginDirectory);
+  const manifest = manifestPath ? readJsonRecord(manifestPath) : {};
+  const packagePath = path.join(pluginDirectory, 'package.json');
+  const packageJson = fs.existsSync(packagePath) ? readJsonRecord(packagePath) : undefined;
+  return resolveExtensionDescription(manifest, packageJson);
+};
+
+const readBundledExtensionDescription = (
+  manager: OpenClawEngineManager,
+  extensionId: string,
+): string => {
+  const runtimeRoot = manager.getRuntimeRoot?.();
+  if (!runtimeRoot) return '';
+  const extensionsRoot = path.resolve(runtimeRoot, 'dist', 'extensions');
+  const pluginDirectory = path.resolve(extensionsRoot, extensionId);
+  if (path.dirname(pluginDirectory) !== extensionsRoot || !fs.existsSync(pluginDirectory)) {
+    return '';
+  }
+  return readExtensionDescriptionFromDirectory(pluginDirectory);
+};
+
 const findInstalledExtensionPath = (
   extensionsRoot: string,
   extensionId: string,
@@ -870,7 +909,7 @@ export class OpenClawExtensionImportService {
                   ? manifest.name.trim()
                   : id,
               description:
-                typeof manifest.description === 'string' ? manifest.description.trim() : '',
+                resolveExtensionDescription(manifest, packageJson),
               version:
                 typeof manifest.version === 'string'
                   ? manifest.version
@@ -896,6 +935,7 @@ export class OpenClawExtensionImportService {
 
   async listCatalog(): Promise<InstalledOpenClawExtension[]> {
     if (!this.deps.requestGateway) return this.listInstalled();
+    const manager = this.deps.getOpenClawEngineManager();
 
     type PluginCatalogEntry = {
       id: string;
@@ -957,10 +997,14 @@ export class OpenClawExtensionImportService {
       .map(plugin => {
         const local = localById.get(plugin.id);
         const managed = managedIds.has(plugin.id);
+        const description =
+          normalizeMetadataText(plugin.description) ??
+          normalizeMetadataText(local?.description) ??
+          (plugin.origin === 'bundled' ? readBundledExtensionDescription(manager, plugin.id) : '');
         return {
           id: plugin.id,
           name: plugin.name || plugin.id,
-          description: plugin.description ?? local?.description ?? '',
+          description,
           version: plugin.version ?? local?.version,
           installPath: local?.installPath,
           enabled: plugin.enabled,

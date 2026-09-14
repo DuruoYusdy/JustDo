@@ -156,3 +156,78 @@ test('does not delete bundled skills even when their source looks user-owned', a
   ).resolves.toEqual({ success: false, error: 'Only user-owned skills can be deleted' });
   expect(deleteDirectory).not.toHaveBeenCalled();
 });
+
+test('returns scope and action capabilities with the authoritative skill list', async () => {
+  const skill = createSkill('openclaw-custodian', { bundled: true });
+  registerSkillHandlers({
+    skillService: {
+      getStatus: vi.fn(async () => createStatus(skill)),
+    } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  const result = await handlers.get('skills:list')?.();
+
+  expect(result).toMatchObject({
+    success: true,
+    skills: [
+      {
+        id: 'example',
+        scope: 'system',
+        management: {
+          disable: { allowed: true },
+          remove: { allowed: false, reason: 'managed-by-system' },
+        },
+      },
+    ],
+  });
+});
+
+test('marks generated plugin skills as plugin managed instead of other source', async () => {
+  const skill = createSkill('openclaw-extra', {
+    filePath: 'C:/state/plugin-skills/browser-automation/SKILL.md',
+    baseDir: 'C:/state/plugin-skills/browser-automation',
+  });
+  registerSkillHandlers({
+    skillService: {
+      getStatus: vi.fn(async () => createStatus(skill)),
+    } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  const result = await handlers.get('skills:list')?.();
+
+  expect(result).toMatchObject({
+    success: true,
+    skills: [
+      {
+        scope: 'extension',
+        ownershipScope: 'personal',
+        management: {
+          disable: { allowed: false, reason: 'managed-by-extension' },
+          remove: { allowed: false, reason: 'managed-by-extension' },
+        },
+      },
+    ],
+  });
+});
+
+test('allows enabling configuration for a skill with missing runtime requirements', async () => {
+  const skill = createSkill('openclaw-managed', { eligible: false, disabled: true });
+  const updateConfig = vi.fn(async () => ({ ok: true }));
+  registerSkillHandlers({
+    skillService: {
+      getStatus: vi.fn(async () => createStatus(skill)),
+      updateConfig,
+    } as unknown as OpenClawSkillService,
+    skillFileService: { deleteDirectory: vi.fn() },
+    installationService: new PluginInstallationService(),
+  });
+
+  await expect(
+    handlers.get('skills:setEnabled')?.(undefined, { id: skill.skillKey, enabled: true }),
+  ).resolves.toMatchObject({ success: true });
+  expect(updateConfig).toHaveBeenCalledWith({ skillKey: skill.skillKey, enabled: true });
+});

@@ -11,7 +11,6 @@ export const MarketplacePluginKind = {
   EXTENSION: PluginKind.EXTENSION,
   SKILL: PluginKind.SKILL,
   MCP: PluginKind.MCP,
-  HOOK: PluginKind.HOOK,
 } as const;
 
 export type MarketplacePluginKind =
@@ -32,6 +31,15 @@ export interface MarketplaceSource {
   id: string;
   name: string;
   supportedKinds: MarketplacePluginKind[];
+  /** Whether the provider can return metadata beyond the search result. */
+  supportsDetail?: boolean;
+  /** Whether the provider exposes a stable category catalog for this plugin kind. */
+  supportsCategories?: boolean;
+}
+
+export interface MarketplaceCategory {
+  id: string;
+  name: string;
 }
 
 export interface MarketplacePlugin {
@@ -43,7 +51,11 @@ export interface MarketplacePlugin {
   description: string;
   version?: string;
   author?: string;
+  /** Optional popularity signal supplied by the catalog. It is display-only. */
+  downloadCount?: number;
   tags?: string[];
+  /** Optional catalog category. Adapters should use the id returned by listCategories. */
+  category?: MarketplaceCategory;
   homepage?: string;
   iconUrl?: string;
   sourceId: string;
@@ -80,14 +92,41 @@ export interface MarketplacePluginDetail extends MarketplacePlugin {
 export interface MarketplaceQuery {
   kind: MarketplacePluginKind;
   query?: string;
+  categoryId?: string;
   limit?: number;
   cursor?: string;
   sourceId?: string;
 }
 
+export interface MarketplaceCategoryRequest {
+  sourceId: string;
+  kind: MarketplacePluginKind;
+}
+
+export interface MarketplaceCategoriesResult {
+  categories: MarketplaceCategory[];
+}
+
 export interface MarketplaceSearchResult {
   items: MarketplacePlugin[];
   nextCursor?: string;
+}
+
+export interface MarketplaceInstalledPlugin {
+  /** Catalog id when known; otherwise the runtime id for legacy installations. */
+  id: string;
+  /** Runtime-owned id when it differs from the catalog id. */
+  runtimeId?: string;
+  version?: string;
+}
+
+export interface MarketplaceUpdateCheckRequest {
+  kind: MarketplacePluginKind;
+  installed: MarketplaceInstalledPlugin[];
+}
+
+export interface MarketplaceUpdateCheckResult {
+  updates: MarketplacePlugin[];
 }
 
 export interface MarketplaceInstallRequest {
@@ -106,14 +145,30 @@ export interface MarketplaceDetailRequest {
 
 export const MarketplaceIpc = {
   ListSources: 'plugins:marketplace:listSources',
+  ListCategories: 'plugins:marketplace:listCategories',
   Search: 'plugins:marketplace:search',
+  CheckUpdates: 'plugins:marketplace:checkUpdates',
   Detail: 'plugins:marketplace:detail',
   Install: 'plugins:marketplace:install',
 } as const;
 
+export interface MarketplaceCategoriesResponse {
+  success: boolean;
+  result?: MarketplaceCategoriesResult;
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
+}
+
 export interface MarketplaceSearchResponse {
   success: boolean;
   result?: MarketplaceSearchResult;
+  error?: string;
+  errorCode?: MarketplaceErrorCode;
+}
+
+export interface MarketplaceUpdateCheckResponse {
+  success: boolean;
+  result?: MarketplaceUpdateCheckResult;
   error?: string;
   errorCode?: MarketplaceErrorCode;
 }

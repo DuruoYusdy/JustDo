@@ -4,6 +4,10 @@ import {
   type ExtensionProvidedMcpServer,
   isValidMcpRequestTimeoutSeconds,
 } from '../../../shared/openclaw/mcp';
+import {
+  getExtensionProvidedManagement,
+  getUserMcpManagement,
+} from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
@@ -22,6 +26,7 @@ interface McpHandlerDependencies {
   installationService: PluginInstallationService;
   listExtensionServers: () => Promise<ExtensionProvidedMcpServer[]>;
   discoverExternalServers: () => void;
+  onMarketplacePluginDeleted?: (kind: typeof PluginKind.MCP, runtimeId: string) => void;
 }
 
 const syncMcpConfigInBackground = (syncConfig: McpHandlerDependencies['syncConfig']): void => {
@@ -38,7 +43,12 @@ export const registerMcpHandlers = ({
   installationService,
   listExtensionServers,
   discoverExternalServers,
+  onMarketplacePluginDeleted,
 }: McpHandlerDependencies): void => {
+  const listServers = () =>
+    getStore()
+      .listServers()
+      .map(server => ({ ...server, ...getUserMcpManagement() }));
   installationService.registerInstaller({
     kind: PluginKind.MCP,
     install: async request => {
@@ -114,7 +124,7 @@ export const registerMcpHandlers = ({
           error instanceof Error ? error.message : String(error),
         );
       }
-      return { success: true, servers: getStore().listServers() };
+      return { success: true, servers: listServers() };
     } catch (error) {
       return {
         success: false,
@@ -125,7 +135,17 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:listExtensionServers', async () => {
     try {
-      return { success: true, extensionServers: await listExtensionServers() };
+      const extensionServers = await listExtensionServers();
+      return {
+        success: true,
+        extensionServers: extensionServers.map(server => ({
+          ...server,
+          ...getExtensionProvidedManagement({
+            id: server.providerId,
+            name: server.providerName,
+          }),
+        })),
+      };
     } catch (error) {
       console.warn(
         '[OpenClawMcp] Failed to discover extension-provided MCP servers:',
@@ -143,7 +163,7 @@ export const registerMcpHandlers = ({
         payload: { kind: PluginKind.MCP, config: data },
       });
       if (!installResult.success) return installResult;
-      const servers = getStore().listServers();
+      const servers = listServers();
       return { success: true, servers };
     } catch (error) {
       return {
@@ -161,7 +181,7 @@ export const registerMcpHandlers = ({
         payload: { kind: PluginKind.MCP, config: data, targetId: id },
       });
       if (!installResult.success) return installResult;
-      const servers = getStore().listServers();
+      const servers = listServers();
       return { success: true, servers };
     } catch (error) {
       return {
@@ -173,8 +193,14 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:delete', async (_event, id: string) => {
     try {
-      getStore().deleteServer(id);
-      const servers = getStore().listServers();
+      if (typeof id !== 'string' || !id.trim()) {
+        return { success: false, error: 'MCP server id is required' };
+      }
+      if (!getStore().deleteServer(id.trim())) {
+        return { success: false, error: 'MCP server was not found' };
+      }
+      onMarketplacePluginDeleted?.(PluginKind.MCP, id.trim());
+      const servers = listServers();
       syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {
@@ -187,8 +213,17 @@ export const registerMcpHandlers = ({
 
   ipcMain.handle('mcp:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
     try {
-      getStore().setEnabled(options.id, options.enabled);
-      const servers = getStore().listServers();
+      if (
+        typeof options?.id !== 'string' ||
+        !options.id.trim() ||
+        typeof options.enabled !== 'boolean'
+      ) {
+        return { success: false, error: 'MCP server id and enabled state are required' };
+      }
+      if (!getStore().setEnabled(options.id.trim(), options.enabled)) {
+        return { success: false, error: 'MCP server was not found' };
+      }
+      const servers = listServers();
       syncMcpConfigInBackground(syncConfig);
       return { success: true, servers };
     } catch (error) {

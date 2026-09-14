@@ -18,6 +18,8 @@ export interface McpServerConfig {
   registryId?: string; // matching registry entry ID
   createdAt: number;
   updatedAt: number;
+  scope?: PluginHubScope;
+  management?: PluginManagementCapabilities;
 }
 
 export type { ExtensionProvidedMcpServer } from '@shared/openclaw/mcp';
@@ -107,3 +109,4 @@ export interface McpResourceContent {
 export interface McpReadResourceResult {
   contents: McpResourceContent[];
 }
+import type { PluginHubScope, PluginManagementCapabilities } from '@shared/plugins/management';

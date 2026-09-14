@@ -374,7 +374,12 @@ const openClawSkillService = new OpenClawSkillService(
   () => coworkEngineService?.getRuntimeAdapter() ?? null,
 );
 const pluginInstallationService = new PluginInstallationService();
-const pluginManager = new PluginManager(createPluginMarketplaceService(pluginInstallationService));
+const pluginManager = new PluginManager(
+  createPluginMarketplaceService(pluginInstallationService, () => {
+    if (!store) throw new Error('Store is not initialized');
+    return store;
+  }),
+);
 let openClawSkillFileService: OpenClawSkillFileService | null = null;
 let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
@@ -978,6 +983,9 @@ if (!gotTheLock) {
     skillService: openClawSkillService,
     skillFileService: getOpenClawSkillFiles(),
     installationService: pluginInstallationService,
+    getOpenClawEngineManager,
+    onMarketplacePluginDeleted: (kind, runtimeId, installPath) =>
+      pluginManager.forgetMarketplaceInstallation(kind, runtimeId, installPath),
   });
   registerMarketplaceHandlers(pluginManager);
   registerExtensionHandlers({
@@ -993,6 +1001,8 @@ if (!gotTheLock) {
       directoryOperations: getOpenClawDirectoryOperations(),
     }),
     installationService: pluginInstallationService,
+    onMarketplacePluginDeleted: (kind, runtimeId) =>
+      pluginManager.forgetMarketplaceInstallation(kind, runtimeId),
   });
   registerHookHandlers({
     getStore: getHookStore,
@@ -1025,6 +1035,8 @@ if (!gotTheLock) {
       }
     },
     installationService: pluginInstallationService,
+    onMarketplacePluginDeleted: (kind, runtimeId) =>
+      pluginManager.forgetMarketplaceInstallation(kind, runtimeId),
   });
 
   const sessionPermissionModeCoordinator = new SessionPermissionModeCoordinator({

@@ -12,7 +12,7 @@ export interface ExtensionGroup {
   extensions: InstalledOpenClawExtension[];
 }
 
-const groupOrder: ExtensionGroupId[] = [ExtensionGroupId.SYSTEM, ExtensionGroupId.USER];
+const groupOrder: ExtensionGroupId[] = [ExtensionGroupId.USER, ExtensionGroupId.SYSTEM];
 
 const resolveExtensionGroup = (extension: InstalledOpenClawExtension): ExtensionGroupId => {
   return extension.managed || extension.origin === 'bundled'

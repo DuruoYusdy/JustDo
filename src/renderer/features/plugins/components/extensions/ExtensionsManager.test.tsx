@@ -6,6 +6,7 @@ import type {
   InstalledOpenClawExtension,
   OpenClawPluginCapabilityReview,
 } from '@shared/openclaw/extensions';
+import { getExtensionManagement } from '@shared/plugins/management';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -18,6 +19,7 @@ vi.mock('@/features/plugins/components/marketplace/MarketplaceView', () => ({
 vi.mock('@/services/i18n', () => ({
   i18nService: {
     t: (key: string) => key,
+    getLanguage: () => 'en',
   },
 }));
 
@@ -72,7 +74,7 @@ describe('ExtensionsManager extension toggle', () => {
     cleanup();
   });
 
-  test('animates toward the requested state while the gateway restart is pending', async () => {
+  test('animates toward the requested state while the change is being applied', async () => {
     let enabled = false;
     const request = deferred<ExtensionSetEnabledResult>();
     const setEnabled = vi.fn(
@@ -115,10 +117,7 @@ describe('ExtensionsManager extension toggle', () => {
     );
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     expect(toggle.getAttribute('aria-busy')).toBe('true');
-    expect(toggle.getAttribute('aria-label')).toBe(
-      'extensionEnable · extensionImportStageRestartingGateway',
-    );
-    expect(toggle.querySelector('.animate-shimmer')).toBeTruthy();
+    expect(toggle.getAttribute('aria-label')).toBe('extensionEnable · pluginStatusApplying');
     expect(toggle.querySelector('.animate-spin')).toBeTruthy();
 
     await act(async () => {
@@ -133,7 +132,7 @@ describe('ExtensionsManager extension toggle', () => {
     expect(toggle.querySelector('.animate-spin')).toBeNull();
   });
 
-  test('keeps a stable action row while respecting OpenClaw ownership flags', async () => {
+  test('shows policy locks without fake switches or unavailable delete actions', async () => {
     const systemExtension: InstalledOpenClawExtension = {
       ...extension,
       id: 'managed-extension',
@@ -174,19 +173,94 @@ describe('ExtensionsManager extension toggle', () => {
 
     expect(await screen.findByText('extensionGroup.system.label')).toBeTruthy();
     expect(screen.getByText('extensionGroup.user.label')).toBeTruthy();
-    expect(
-      screen.getByRole<HTMLButtonElement>('switch', { name: 'extensionToggleUnavailable' })
-        .disabled,
-    ).toBe(true);
-    expect(screen.getAllByRole('button', { name: 'extensionFolderUnavailable' })).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'extensionDeleteUnavailable' })).toHaveLength(2);
+    expect(screen.queryByText('extensionInstalled')).toBeNull();
+    expect(screen.getByRole('button', { name: 'importExtension' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'pluginGroupExpand' }));
+    expect(screen.getByRole('img', { name: 'extensionToggleUnavailable' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'extensionFolderUnavailable' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'openFolder' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'extensionDeleteUnavailable' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'extensionDelete' })).toBeNull();
 
     const enabledSwitches = screen.getAllByRole('switch', { name: 'extensionEnable' });
     expect(enabledSwitches).toHaveLength(2);
     expect(enabledSwitches.every(control => !control.hasAttribute('disabled'))).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'openFolder' }));
+    fireEvent.click(screen.getByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+    expect(screen.getByRole('button', { name: 'extensionDelete' }).textContent).toBe('');
+    const openFolderButton = screen.getByRole('button', { name: 'openFolder' });
+    expect(openFolderButton.textContent).toBe('');
+    fireEvent.click(openFolderButton);
     await waitFor(() => expect(openPath).toHaveBeenCalledWith('C:\\extensions\\sample-extension'));
+  });
+
+  test('opens a requested provider extension after the inventory loads', async () => {
+    const onRequestedExtensionHandled = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [extension] })),
+          setEnabled: vi.fn(async () => ({ success: true })),
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+        shell: { openPath: vi.fn(async () => ({ success: true })) },
+      },
+    });
+
+    render(
+      <ExtensionsManager
+        requestedExtensionId="sample-extension"
+        onRequestedExtensionHandled={onRequestedExtensionHandled}
+      />,
+    );
+
+    await waitFor(() => expect(onRequestedExtensionHandled).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'openFolder' })).toBeTruthy();
+  });
+
+  test('does not offer configuration controls blocked by management policy', async () => {
+    const managedExtension: InstalledOpenClawExtension = {
+      ...extension,
+      id: 'managed-configurable',
+      name: 'Managed Configurable',
+      managed: true,
+      configurationFields: [
+        {
+          path: 'service.token',
+          label: 'Token',
+          sensitive: true,
+          configured: false,
+        },
+      ],
+      ...getExtensionManagement({
+        managed: true,
+        installPath: extension.installPath,
+        configurationFieldCount: 1,
+      }),
+    };
+    const updateConfiguration = vi.fn();
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn(async () => ({ success: true, extensions: [managedExtension] })),
+          updateConfiguration,
+          onImportProgress: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    render(<ExtensionsManager />);
+    fireEvent.click(await screen.findByRole('button', { name: 'pluginGroupExpand' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'subtaskShowInfo: Managed Configurable' }),
+    );
+
+    expect(screen.getByText('pluginManagedActionUnavailable')).toBeTruthy();
+    expect(screen.queryByLabelText('Token')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
+    expect(updateConfiguration).not.toHaveBeenCalled();
   });
 
   test('continues a batch after the reviewed extension fails to install', async () => {

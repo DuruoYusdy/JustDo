@@ -1,3 +1,4 @@
+import { getSkillManagementCapabilities, getSkillScope } from '@shared/plugins/skillManagement';
 import { expect, test } from 'vitest';
 
 import {
@@ -18,6 +19,14 @@ const createSkill = (id: string, source: Skill['source']): Skill => ({
   prompt: '',
   skillPath: '',
   source,
+  scope: getSkillScope(source),
+  ownershipScope: getSkillScope(source),
+  management: getSkillManagementCapabilities({
+    source,
+    bundled: false,
+    eligible: true,
+    hasPath: false,
+  }),
 });
 
 test('groups skills in descending OpenClaw precedence order', () => {

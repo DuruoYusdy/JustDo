@@ -27,12 +27,12 @@ test('groups managed and bundled OpenClaw plugins separately from user installs'
     createExtension('user-package', { origin: 'npm' }),
   ]);
 
-  expect(groups.map(group => group.id)).toEqual([ExtensionGroupId.SYSTEM, ExtensionGroupId.USER]);
-  expect(groups[0].extensions.map(extension => extension.id)).toEqual(['bundled', 'managed']);
-  expect(groups[1].extensions.map(extension => extension.id)).toEqual([
+  expect(groups.map(group => group.id)).toEqual([ExtensionGroupId.USER, ExtensionGroupId.SYSTEM]);
+  expect(groups[0].extensions.map(extension => extension.id)).toEqual([
     'user-local',
     'user-package',
   ]);
+  expect(groups[1].extensions.map(extension => extension.id)).toEqual(['bundled', 'managed']);
 });
 
 test('keeps unknown origins visible as user-owned extensions', () => {

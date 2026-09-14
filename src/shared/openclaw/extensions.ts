@@ -422,6 +422,8 @@ export type InstalledOpenClawExtension = {
   managed?: boolean;
   missingRequirements: string[];
   configurationFields: OpenClawExtensionConfigurationField[];
+  scope?: PluginHubScope;
+  management?: PluginManagementCapabilities;
 };
 
 export type ExtensionUpdateConfigurationRequest = {
@@ -544,3 +546,4 @@ export type ExtensionImportResult = {
   failedStage?: ExtensionImportStage;
   capabilityReview?: OpenClawPluginCapabilityReview;
 };
+import type { PluginHubScope, PluginManagementCapabilities } from '../plugins/management';

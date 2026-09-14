@@ -33,6 +33,9 @@ type ExtensionUpdateConfigurationResult =
 type InstalledOpenClawExtension =
   import('../../shared/openclaw/extensions').InstalledOpenClawExtension;
 type OpenClawSkillSource = import('../../shared/plugins/skills').OpenClawSkillSource;
+type PluginHubScope = import('../../shared/plugins/management').PluginHubScope;
+type PluginManagementCapabilities =
+  import('../../shared/plugins/management').PluginManagementCapabilities;
 type SystemPromptReplacementRule =
   import('../../shared/openclaw/systemPromptReplacements').SystemPromptReplacementRule;
 type PermissionMode = import('../../shared/openclaw/approvals').PermissionMode;
@@ -202,6 +205,9 @@ interface Skill {
   }>;
   emoji?: string;
   homepage?: string;
+  scope: PluginHubScope;
+  ownershipScope: PluginHubScope;
+  management: PluginManagementCapabilities;
 }
 
 type CoworkInteractionResult =
@@ -311,6 +317,8 @@ interface HookEntryIPC {
     os: string[];
   };
   managedByPlugin: boolean;
+  scope?: PluginHubScope;
+  management?: PluginManagementCapabilities;
 }
 
 import type { GatewayPortSetErrorCode } from '@shared/openclaw/gatewayPort';
@@ -322,14 +330,18 @@ import type {
   MemorySearchResult,
 } from '@shared/openclaw/memory';
 import type {
+  MarketplaceCategoriesResponse,
+  MarketplaceCategoryRequest,
   MarketplaceDetailRequest,
   MarketplaceDetailResponse,
   MarketplaceInstallRequest,
   MarketplaceInstallResponse,
+  MarketplacePluginKind,
   MarketplaceQuery,
   MarketplaceSearchResponse,
   MarketplaceSourcesResponse,
-  PluginKind,
+  MarketplaceUpdateCheckRequest,
+  MarketplaceUpdateCheckResponse,
 } from '@shared/plugins/marketplace';
 import type {
   ScheduledTask,
@@ -369,8 +381,14 @@ interface IElectronAPI {
     remove: (key: string) => Promise<void>;
   };
   marketplace: {
-    listSources: (kind?: PluginKind) => Promise<MarketplaceSourcesResponse>;
+    listSources: (kind?: MarketplacePluginKind) => Promise<MarketplaceSourcesResponse>;
+    listCategories: (
+      request: MarketplaceCategoryRequest,
+    ) => Promise<MarketplaceCategoriesResponse>;
     search: (query: MarketplaceQuery) => Promise<MarketplaceSearchResponse>;
+    checkUpdates: (
+      request: MarketplaceUpdateCheckRequest,
+    ) => Promise<MarketplaceUpdateCheckResponse>;
     detail: (request: MarketplaceDetailRequest) => Promise<MarketplaceDetailResponse>;
     install: (request: MarketplaceInstallRequest) => Promise<MarketplaceInstallResponse>;
   };

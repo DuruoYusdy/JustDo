@@ -21,6 +21,14 @@ import {
   groupExtensionsByOwnership,
 } from '@/features/plugins/components/extensions/extensionGroups';
 import MarketplaceView from '@/features/plugins/components/marketplace/MarketplaceView';
+import { getPluginArtworkTone } from '@/features/plugins/components/pluginArtwork';
+import PluginGroupSection from '@/features/plugins/components/PluginGroupSection';
+import type { PluginHubManagerProps } from '@/features/plugins/components/pluginHubTypes';
+import PluginMarkdownDescription from '@/features/plugins/components/PluginMarkdownDescription';
+import PluginStateButton, {
+  PluginLockedIndicator,
+} from '@/features/plugins/components/PluginStateButton';
+import PluginUpdateIndicator from '@/features/plugins/components/PluginUpdateIndicator';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 import OperationResultModal, {
@@ -30,8 +38,6 @@ import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Tooltip from '@/shared/components/ui/Tooltip';
-
-type ExtensionTab = 'installed' | 'marketplace';
 
 const getImportStageLabel = (stage: ExtensionImportStage): string => {
   switch (stage) {
@@ -75,64 +81,33 @@ const ExtensionToggle: React.FC<ExtensionToggleProps> = ({
     : pending
       ? `${i18nService.t(
           displayedEnabled ? 'extensionEnable' : 'extensionDisable',
-        )} · ${i18nService.t('extensionImportStageRestartingGateway')}`
+        )} · ${i18nService.t('pluginStatusApplying')}`
       : i18nService.t(extension.enabled ? 'extensionDisable' : 'extensionEnable');
 
   return (
-    <Tooltip content={label} position="bottom">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={displayedEnabled}
-        aria-busy={pending || undefined}
-        aria-label={label}
-        onClick={event => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        disabled={busy || !canToggle}
-        className={`relative flex h-5 w-9 items-center overflow-hidden rounded-full transition-[background-color,box-shadow,opacity] duration-300 ease-smooth ${
-          displayedEnabled ? 'bg-primary' : 'bg-border'
-        } ${
-          pending
-            ? 'cursor-wait ring-2 ring-primary/25'
-            : busy || !canToggle
-              ? 'cursor-not-allowed opacity-50'
-              : ''
-        }`}
-      >
-        {pending && (
-          <>
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 animate-pulse rounded-full bg-white/10"
-            />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/45 to-transparent"
-            />
-          </>
-        )}
-        <span
-          className={`relative z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white transition-[transform,box-shadow] duration-300 ease-smooth ${
-            displayedEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
-          } ${pending ? 'shadow-lg' : 'shadow-md'}`}
-        >
-          {pending && (
-            <span
-              aria-hidden="true"
-              className="h-2 w-2 animate-spin rounded-full border border-primary/25 border-t-primary"
-            />
-          )}
-        </span>
-      </button>
-    </Tooltip>
+    <PluginStateButton
+      checked={displayedEnabled}
+      label={label}
+      disabled={busy || !canToggle}
+      busy={pending}
+      onToggle={onToggle}
+    />
   );
 };
 
-const ExtensionsManager: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<ExtensionTab>('installed');
-  const [searchQuery, setSearchQuery] = useState('');
+interface ExtensionsManagerProps extends PluginHubManagerProps {
+  requestedExtensionId?: string;
+  onRequestedExtensionHandled?: () => void;
+}
+
+const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
+  searchQuery: sharedSearchQuery,
+  visibility = 'all',
+  requestedExtensionId,
+  onRequestedExtensionHandled,
+}) => {
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const searchQuery = sharedSearchQuery ?? localSearchQuery;
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [actionOutcome, setActionOutcome] = useState<OperationResult | null>(null);
@@ -143,6 +118,7 @@ const ExtensionsManager: React.FC = () => {
   const [pendingDelete, setPendingDelete] = useState<InstalledOpenClawExtension | null>(null);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
+  const [marketplaceUpdateIds, setMarketplaceUpdateIds] = useState<Set<string>>(() => new Set());
   const [pendingCapabilityReview, setPendingCapabilityReview] = useState<
     | {
         kind: 'toggle';
@@ -195,6 +171,14 @@ const ExtensionsManager: React.FC = () => {
     void loadExtensions();
   }, [loadExtensions]);
 
+  useEffect(() => {
+    if (!requestedExtensionId) return;
+    const requested = extensions.find(extension => extension.id === requestedExtensionId);
+    if (!requested) return;
+    setSelectedExtension(requested);
+    onRequestedExtensionHandled?.();
+  }, [extensions, onRequestedExtensionHandled, requestedExtensionId]);
+
   useEffect(
     () => window.electron.extensions.onImportProgress(progress => setImportProgress(progress)),
     [],
@@ -220,10 +204,25 @@ const ExtensionsManager: React.FC = () => {
         extension.description.toLowerCase().includes(query),
     );
   }, [extensions, searchQuery]);
+  const installedMarketplaceExtensions = useMemo(
+    () =>
+      extensions.map(extension => ({
+        id: extension.id,
+        version: extension.version,
+        updateEligible: !extension.managed && extension.origin !== 'bundled',
+      })),
+    [extensions],
+  );
   const groupedExtensions = useMemo(
     () => groupExtensionsByOwnership(filteredExtensions),
     [filteredExtensions],
   );
+  const displayExtensionGroups = useMemo(() => {
+    if (searchQuery.trim() || groupedExtensions.some(group => group.id === ExtensionGroupId.USER)) {
+      return groupedExtensions;
+    }
+    return [{ id: ExtensionGroupId.USER, extensions: [] }, ...groupedExtensions];
+  }, [groupedExtensions, searchQuery]);
 
   const handleImportExtensions = async (sourceType: 'folders' | 'archives') => {
     if (extensionActionBusy) return;
@@ -576,16 +575,23 @@ const ExtensionsManager: React.FC = () => {
 
   const getExtensionGroupLabel = (groupId: ExtensionGroupId): string =>
     i18nService.t(`extensionGroup.${groupId}.label`);
-
-  const tabClass = (tab: ExtensionTab) =>
-    `px-4 py-2 text-sm font-medium transition-colors relative ${
-      activeTab === tab ? 'text-foreground' : 'text-secondary hover:hover:text-foreground'
-    }`;
-
-  const tabIndicatorClass = (tab: ExtensionTab) =>
-    `absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-colors ${
-      activeTab === tab ? 'bg-primary' : 'bg-transparent'
-    }`;
+  const importExtensionAction = (
+    <Tooltip content={i18nService.t('importExtensionTooltip')} position="bottom">
+      <button
+        type="button"
+        onClick={() => setImportPickerOpen(true)}
+        disabled={extensionActionBusy}
+        className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground ${
+          extensionActionBusy ? 'cursor-not-allowed opacity-50' : ''
+        }`}
+      >
+        <ArrowUpTrayIcon className="h-4 w-4" />
+        <span>
+          {importing ? i18nService.t('importExtensionProgress') : i18nService.t('importExtension')}
+        </span>
+      </button>
+    </Tooltip>
+  );
 
   return (
     <div className="space-y-4">
@@ -616,242 +622,173 @@ const ExtensionsManager: React.FC = () => {
         </div>
       )}
 
-      <div className="sticky top-0 z-10 bg-background pb-4 shadow-sm">
-        <div className="flex items-center justify-between gap-4 border-b border-border">
-          <div className="flex min-w-0 items-center">
-            <button
-              type="button"
-              onClick={() => setActiveTab('installed')}
-              className={tabClass('installed')}
-            >
-              {i18nService.t('extensionInstalled')}
-              <div className={tabIndicatorClass('installed')} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('marketplace')}
-              className={tabClass('marketplace')}
-            >
-              {i18nService.t('extensionMarketplace')}
-              <div className={tabIndicatorClass('marketplace')} />
-            </button>
-          </div>
-          <p className="min-w-0 truncate pb-2 text-right text-sm text-secondary">
-            {i18nService.t('extensionsDescription')}
-          </p>
-        </div>
-      </div>
-
-      {activeTab === 'installed' && (
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-5">
-            <div className="relative min-w-0 flex-1 sm:max-w-md">
-              <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-              <input
-                type="text"
-                placeholder={i18nService.t('searchExtensions')}
-                value={searchQuery}
-                onChange={event => setSearchQuery(event.target.value)}
-                className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div className="w-full sm:ml-auto sm:w-auto">
-              <Tooltip
-                className="w-full sm:w-auto"
-                content={i18nService.t('importExtensionTooltip')}
-                position="bottom"
-              >
-                <button
-                  type="button"
-                  onClick={() => setImportPickerOpen(true)}
-                  disabled={extensionActionBusy}
-                  className={`flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-foreground sm:w-auto ${
-                    extensionActionBusy ? 'cursor-not-allowed opacity-50' : ''
-                  }`}
-                >
-                  <ArrowUpTrayIcon className="h-4 w-4" />
-                  <span>
-                    {importing
-                      ? i18nService.t('importExtensionProgress')
-                      : i18nService.t('importExtension')}
-                  </span>
-                </button>
-              </Tooltip>
-            </div>
-          </div>
-
-          {loadingExtensions ? (
-            <div className="py-10 text-center text-sm text-secondary">
-              {i18nService.t('loading')}
-            </div>
-          ) : filteredExtensions.length === 0 ? (
-            <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed border-border bg-surface/40 px-4 py-10 text-center">
-              <div className="max-w-md space-y-3">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary">
-                  <PuzzleIcon className="h-5 w-5" />
-                </div>
-                <h3 className="text-base font-semibold text-foreground">
-                  {searchQuery
-                    ? i18nService.t('noExtensionsMatched')
-                    : i18nService.t('noExtensionsInstalled')}
-                </h3>
+      {visibility !== 'available' && (
+        <section className="space-y-4">
+          <div className="space-y-4">
+            {sharedSearchQuery === undefined && (
+              <div className="relative min-w-0 sm:max-w-md">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+                <input
+                  type="text"
+                  placeholder={i18nService.t('searchExtensions')}
+                  value={searchQuery}
+                  onChange={event => setLocalSearchQuery(event.target.value)}
+                  className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
+                />
               </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {groupedExtensions.map(group => (
-                <section key={group.id}>
-                  <div className="mb-2.5 flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {getExtensionGroupLabel(group.id)}
-                    </h3>
-                    <span className="rounded-full bg-surface-raised px-1.5 py-0.5 text-[10px] text-secondary">
-                      {group.extensions.length}
-                    </span>
+            )}
+
+            {loadingExtensions ? (
+              <div className="py-10 text-center text-sm text-secondary">
+                {i18nService.t('loading')}
+              </div>
+            ) : filteredExtensions.length === 0 && searchQuery.trim() ? (
+              <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed border-border bg-surface/40 px-4 py-10 text-center">
+                <div className="max-w-md space-y-3">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary">
+                    <PuzzleIcon className="h-5 w-5" />
                   </div>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(16rem,100%),1fr))] items-stretch gap-3">
-                    {group.extensions.map(extension => {
-                      const canToggle = extension.canToggle === true;
-                      const canOpenFolder = Boolean(extension.installPath);
-                      const canDelete = extension.removable === true;
-                      return (
-                        <article
-                          key={extension.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openExtensionDetails(extension)}
-                          onKeyDown={event => {
-                            if (
-                              event.target === event.currentTarget &&
-                              (event.key === 'Enter' || event.key === ' ')
-                            ) {
-                              event.preventDefault();
-                              openExtensionDetails(extension);
-                            }
-                          }}
-                          className="relative flex min-h-28 h-full cursor-pointer flex-col rounded-xl border border-border bg-surface p-3 transition-colors hover:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
-                        >
-                          <div className="mb-2 flex items-start justify-between gap-2">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface">
-                                <PuzzleIcon className="h-4 w-4 text-secondary" />
+                  <h3 className="text-base font-semibold text-foreground">
+                    {searchQuery
+                      ? i18nService.t('noExtensionsMatched')
+                      : i18nService.t('noExtensionsInstalled')}
+                  </h3>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {displayExtensionGroups.map(group => (
+                  <PluginGroupSection
+                    key={group.id}
+                    title={getExtensionGroupLabel(group.id)}
+                    count={group.extensions.length}
+                    action={group.id === ExtensionGroupId.USER ? importExtensionAction : undefined}
+                    collapsible={group.id === ExtensionGroupId.SYSTEM}
+                    defaultExpanded={group.id !== ExtensionGroupId.SYSTEM}
+                    forceExpanded={Boolean(searchQuery.trim())}
+                  >
+                    {group.extensions.length === 0 ? (
+                      <p className="px-2 py-3 text-xs text-secondary">
+                        {i18nService.t('noExtensionsInstalled')}
+                      </p>
+                    ) : (
+                      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                        {group.extensions.map((extension, visualIndex) => {
+                          const canToggle = extension.management
+                            ? (extension.enabled
+                                ? extension.management.disable
+                                : extension.management.enable
+                              ).allowed
+                            : extension.canToggle === true;
+                          return (
+                            <article
+                              key={extension.id}
+                              onClick={() => openExtensionDetails(extension)}
+                              className="group relative flex min-h-16 min-w-0 cursor-pointer flex-col rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-border/70 hover:bg-surface-raised/70"
+                            >
+                              <button
+                                type="button"
+                                className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+                                aria-label={`${i18nService.t('subtaskShowInfo')}: ${extension.name}`}
+                                onClick={event => {
+                                  event.stopPropagation();
+                                  openExtensionDetails(extension);
+                                }}
+                              />
+                              <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div
+                                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${getPluginArtworkTone(`extensions:${group.id}`, visualIndex)}`}
+                                  >
+                                    <PuzzleIcon className="h-4 w-4" />
+                                  </div>
+                                  <h3 className="truncate text-sm font-medium text-foreground">
+                                    {extension.name}
+                                  </h3>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  {marketplaceUpdateIds.has(extension.id.toLowerCase()) && (
+                                    <PluginUpdateIndicator />
+                                  )}
+                                  {canToggle ? (
+                                    <ExtensionToggle
+                                      extension={extension}
+                                      canToggle
+                                      pending={togglingExtensionId === extension.id}
+                                      busy={extensionActionBusy}
+                                      onToggle={() => void handleToggleExtension(extension)}
+                                    />
+                                  ) : (
+                                    <PluginLockedIndicator
+                                      label={i18nService.t('extensionToggleUnavailable')}
+                                    />
+                                  )}
+                                  {extension.error ? (
+                                    <Tooltip
+                                      content={extension.error}
+                                      position="bottom"
+                                      maxWidth="360px"
+                                    >
+                                      <ExclamationTriangleIcon
+                                        className="h-4 w-4 text-red-500"
+                                        aria-label={extension.error}
+                                      />
+                                    </Tooltip>
+                                  ) : extension.missingRequirements.length > 0 ? (
+                                    <Tooltip
+                                      content={i18nService.t('extensionMissingConfiguration')}
+                                      position="top"
+                                    >
+                                      <ExclamationTriangleIcon
+                                        className="h-4 w-4 text-amber-600 dark:text-amber-400"
+                                        aria-label={i18nService.t('extensionMissingConfiguration')}
+                                      />
+                                    </Tooltip>
+                                  ) : null}
+                                </div>
                               </div>
-                              <h3 className="truncate text-sm font-medium text-foreground">
-                                {extension.name}
-                              </h3>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              <ExtensionToggle
-                                extension={extension}
-                                canToggle={canToggle}
-                                pending={togglingExtensionId === extension.id}
-                                busy={extensionActionBusy}
-                                onToggle={() => void handleToggleExtension(extension)}
-                              />
-                              <Tooltip
-                                content={i18nService.t(
-                                  canOpenFolder ? 'openFolder' : 'extensionFolderUnavailable',
-                                )}
-                                position="bottom"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={event => {
-                                    event.stopPropagation();
-                                    void handleOpenExtensionFolder(extension);
-                                  }}
-                                  disabled={extensionActionBusy || !canOpenFolder}
-                                  className="rounded-lg p-1 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                  aria-label={i18nService.t(
-                                    canOpenFolder ? 'openFolder' : 'extensionFolderUnavailable',
-                                  )}
-                                >
-                                  <FolderIcon className="h-4 w-4" />
-                                </button>
-                              </Tooltip>
-                              <Tooltip
-                                content={i18nService.t(
-                                  canDelete ? 'extensionDelete' : 'extensionDeleteUnavailable',
-                                )}
-                                position="bottom"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={event => {
-                                    event.stopPropagation();
-                                    setPendingDelete(extension);
-                                  }}
-                                  disabled={extensionActionBusy || !canDelete}
-                                  className="rounded-lg p-1 text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-                                  aria-label={i18nService.t(
-                                    canDelete ? 'extensionDelete' : 'extensionDeleteUnavailable',
-                                  )}
-                                >
-                                  <TrashIcon className="h-4 w-4" />
-                                </button>
-                              </Tooltip>
-                            </div>
-                          </div>
 
-                          <div className="min-h-10">
-                            {extension.description && (
-                              <Tooltip
-                                content={extension.description}
-                                position="bottom"
-                                maxWidth="360px"
-                                className="block w-full"
-                              >
-                                <p className="line-clamp-2 text-xs leading-5 text-secondary">
-                                  {extension.description}
-                                </p>
-                              </Tooltip>
-                            )}
-                          </div>
-
-                          {extension.missingRequirements.length > 0 && (
-                            <div className="absolute bottom-2 right-2">
-                              <Tooltip
-                                content={i18nService.t('extensionMissingConfiguration')}
-                                position="top"
-                              >
-                                <ExclamationTriangleIcon
-                                  className="h-4 w-4 text-amber-600 dark:text-amber-400"
-                                  aria-label={i18nService.t('extensionMissingConfiguration')}
-                                />
-                              </Tooltip>
-                            </div>
-                          )}
-                          {extension.error && (
-                            <Tooltip content={extension.error} position="bottom" maxWidth="360px">
-                              <ExclamationTriangleIcon
-                                className="absolute bottom-2 right-2 h-4 w-4 text-red-500"
-                                aria-label={extension.error}
-                              />
-                            </Tooltip>
-                          )}
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
-        </div>
+                              <div className="pointer-events-none relative z-10 ml-10 min-w-0 pr-2">
+                                {extension.description && (
+                                  <Tooltip
+                                    content={extension.description}
+                                    position="bottom"
+                                    maxWidth="360px"
+                                    className="block w-full"
+                                  >
+                                    <p className="truncate text-xs text-secondary">
+                                      {extension.description}
+                                    </p>
+                                  </Tooltip>
+                                )}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </PluginGroupSection>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
-      {activeTab === 'marketplace' && (
-        <MarketplaceView
-          kind={PluginKind.EXTENSION}
-          icon={<PuzzleIcon className="h-4 w-4" />}
-          installed={extensions.map(extension => ({
-            id: extension.id,
-            version: extension.version,
-          }))}
-          onInstalled={async () => {
-            await loadExtensions();
-          }}
-        />
+      {visibility !== 'installed' && (
+        <section className="border-t border-border pt-6">
+          <MarketplaceView
+            kind={PluginKind.EXTENSION}
+            icon={<PuzzleIcon className="h-4 w-4" />}
+            installed={installedMarketplaceExtensions}
+            onUpdateIdsChange={setMarketplaceUpdateIds}
+            onInstalled={async () => {
+              await loadExtensions();
+            }}
+            searchQuery={searchQuery}
+            availableOnly={visibility === 'available'}
+          />
+        </section>
       )}
 
       {importPickerOpen &&
@@ -936,62 +873,70 @@ const ExtensionsManager: React.FC = () => {
             </div>
 
             {selectedExtension.description && (
-              <p className="mt-3 text-sm leading-5 text-secondary">
-                {selectedExtension.description}
-              </p>
+              <PluginMarkdownDescription
+                className="mt-3"
+                content={selectedExtension.description}
+              />
             )}
 
             <div className="mt-5">
-              {selectedExtension.configurationFields.length > 0 && (
-                <div className="space-y-4">
-                  {selectedExtension.configurationFields.map(field => (
-                    <div
-                      key={field.path}
-                      className="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] items-center gap-3"
-                    >
-                      <div className="flex min-w-0 items-center justify-end text-right text-xs font-medium text-foreground">
-                        <label
-                          htmlFor={`extension-config-${field.path}`}
-                          className="truncate"
-                          title={field.requirement || field.label}
-                        >
-                          {field.requirement || field.label}
-                        </label>
-                        {field.requirement && (
-                          <span className="ml-0.5 text-base font-semibold leading-none text-red-500">
-                            *
-                          </span>
-                        )}
-                        {field.help && (
-                          <Tooltip
-                            content={field.help}
-                            position="bottom"
-                            maxWidth="320px"
-                            className="ml-1 shrink-0"
+              {selectedExtension.configurationFields.length > 0 &&
+                (selectedExtension.management?.configure.allowed ?? true) && (
+                  <div className="space-y-4">
+                    {selectedExtension.configurationFields.map(field => (
+                      <div
+                        key={field.path}
+                        className="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] items-center gap-3"
+                      >
+                        <div className="flex min-w-0 items-center justify-end text-right text-xs font-medium text-foreground">
+                          <label
+                            htmlFor={`extension-config-${field.path}`}
+                            className="truncate"
+                            title={field.requirement || field.label}
                           >
-                            <QuestionMarkCircleIcon className="h-3.5 w-3.5 text-secondary" />
-                          </Tooltip>
-                        )}
+                            {field.requirement || field.label}
+                          </label>
+                          {field.requirement && (
+                            <span className="ml-0.5 text-base font-semibold leading-none text-red-500">
+                              *
+                            </span>
+                          )}
+                          {field.help && (
+                            <Tooltip
+                              content={field.help}
+                              position="bottom"
+                              maxWidth="320px"
+                              className="ml-1 shrink-0"
+                            >
+                              <QuestionMarkCircleIcon className="h-3.5 w-3.5 text-secondary" />
+                            </Tooltip>
+                          )}
+                        </div>
+                        <input
+                          id={`extension-config-${field.path}`}
+                          type={field.sensitive ? 'password' : 'text'}
+                          value={configurationValues[field.path] || ''}
+                          onChange={event =>
+                            setConfigurationValues(current => ({
+                              ...current,
+                              [field.path]: event.target.value,
+                            }))
+                          }
+                          disabled={savingConfiguration}
+                          required={Boolean(field.requirement)}
+                          autoComplete="new-password"
+                          className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                        />
                       </div>
-                      <input
-                        id={`extension-config-${field.path}`}
-                        type={field.sensitive ? 'password' : 'text'}
-                        value={configurationValues[field.path] || ''}
-                        onChange={event =>
-                          setConfigurationValues(current => ({
-                            ...current,
-                            [field.path]: event.target.value,
-                          }))
-                        }
-                        disabled={savingConfiguration}
-                        required={Boolean(field.requirement)}
-                        autoComplete="new-password"
-                        className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              {selectedExtension.configurationFields.length > 0 &&
+                selectedExtension.management?.configure.allowed === false && (
+                  <div className="rounded-xl bg-surface-raised px-3 py-2 text-xs text-secondary">
+                    {i18nService.t('pluginManagedActionUnavailable')}
+                  </div>
+                )}
 
               {configurationError && (
                 <div className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-500">
@@ -1001,19 +946,40 @@ const ExtensionsManager: React.FC = () => {
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-3">
-              {selectedExtension.installPath ? (
-                <button
-                  type="button"
-                  onClick={() => void handleOpenExtensionFolder(selectedExtension)}
-                  disabled={savingConfiguration}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
-                >
-                  <FolderIcon className="h-4 w-4" />
-                  {i18nService.t('openFolder')}
-                </button>
-              ) : (
-                <span />
-              )}
+              <div className="flex items-center gap-2">
+                {selectedExtension.installPath &&
+                  (selectedExtension.management?.revealInFolder.allowed ?? true) && (
+                    <Tooltip content={i18nService.t('openFolder')} position="top">
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenExtensionFolder(selectedExtension)}
+                        disabled={savingConfiguration || extensionActionBusy}
+                        className="rounded-lg p-2 text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+                        aria-label={i18nService.t('openFolder')}
+                      >
+                        <FolderIcon className="h-4 w-4" />
+                      </button>
+                    </Tooltip>
+                  )}
+                {(selectedExtension.management?.remove.allowed ??
+                  selectedExtension.removable === true) && (
+                  <Tooltip content={i18nService.t('extensionDelete')} position="top">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const extension = selectedExtension;
+                        setSelectedExtension(null);
+                        setPendingDelete(extension);
+                      }}
+                      disabled={savingConfiguration || extensionActionBusy}
+                      className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={i18nService.t('extensionDelete')}
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -1023,16 +989,17 @@ const ExtensionsManager: React.FC = () => {
                 >
                   {i18nService.t('cancel')}
                 </button>
-                {selectedExtension.configurationFields.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveConfiguration()}
-                    disabled={savingConfiguration}
-                    className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {i18nService.t(savingConfiguration ? 'saving' : 'save')}
-                  </button>
-                )}
+                {selectedExtension.configurationFields.length > 0 &&
+                  (selectedExtension.management?.configure.allowed ?? true) && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveConfiguration()}
+                      disabled={savingConfiguration}
+                      className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {i18nService.t(savingConfiguration ? 'saving' : 'save')}
+                    </button>
+                  )}
               </div>
             </div>
           </Modal>,

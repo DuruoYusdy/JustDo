@@ -25,6 +25,8 @@ export interface HookEntry {
   handlerPath?: string;
   missing: HookMissing;
   managedByPlugin: boolean;
+  scope?: PluginHubScope;
+  management?: PluginManagementCapabilities;
 }
 
 export interface HookListResult {
@@ -37,3 +39,4 @@ export interface HookListResult {
   restartRequired?: boolean;
   hookId?: string;
 }
+import type { PluginHubScope, PluginManagementCapabilities } from '@shared/plugins/management';

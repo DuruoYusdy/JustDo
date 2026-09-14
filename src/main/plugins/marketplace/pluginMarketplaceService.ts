@@ -1,11 +1,17 @@
 import type {
+  MarketplaceCategoriesResult,
+  MarketplaceCategory,
+  MarketplaceCategoryRequest,
   MarketplaceDetailRequest,
+  MarketplaceInstalledPlugin,
   MarketplaceInstallRequest,
   MarketplacePlugin,
   MarketplacePluginDetail,
   MarketplaceQuery,
   MarketplaceSearchResult,
   MarketplaceSource,
+  MarketplaceUpdateCheckRequest,
+  MarketplaceUpdateCheckResult,
 } from '../../../shared/plugins/marketplace';
 import {
   MarketplaceErrorCode,
@@ -15,19 +21,35 @@ import {
 } from '../../../shared/plugins/marketplace';
 import type { PluginInstallResult } from '../installation';
 import { PluginInstallationService, PluginInstallOrigin } from '../installation';
+import {
+  type MarketplaceInstallRecordStore,
+  MarketplaceInstallRegistry,
+} from './marketplaceInstallRegistry';
 import { MarketplaceError, type PluginMarketplaceProvider } from './types';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const installStates = new Set<string>(Object.values(MarketplaceInstallState));
 const pluginKinds = new Set<string>(Object.values(MarketplacePluginKind));
+const MAX_CATEGORIES = 100;
 
 export class PluginMarketplaceService {
   private readonly providers: Map<string, PluginMarketplaceProvider>;
+  private readonly installTails = new Map<string, Promise<void>>();
 
   constructor(
     providers: PluginMarketplaceProvider[],
     private readonly installationService: PluginInstallationService = new PluginInstallationService(),
+    private readonly installRegistry: MarketplaceInstallRegistry = (() => {
+      let value: unknown;
+      const store: MarketplaceInstallRecordStore = {
+        get: <T>(): T | undefined => value as T | undefined,
+        set: <T>(_key: string, next: T): void => {
+          value = next;
+        },
+      };
+      return new MarketplaceInstallRegistry(() => store);
+    })(),
   ) {
     this.providers = new Map();
     for (const provider of providers) {
@@ -66,13 +88,49 @@ export class PluginMarketplaceService {
         id: provider.source.id,
         name: provider.source.name,
         supportedKinds: [...provider.source.supportedKinds],
+        supportsDetail: typeof provider.getDetail === 'function',
+        supportsCategories: typeof provider.listCategories === 'function',
       }));
   }
 
+  async listCategories(
+    request: MarketplaceCategoryRequest,
+  ): Promise<MarketplaceCategoriesResult> {
+    const provider = this.requireProviderForKind(request.sourceId, request.kind);
+    if (!provider.listCategories) return { categories: [] };
+    const categories = await this.callProvider(
+      () => provider.listCategories!(request),
+      'list categories',
+    );
+    if (!Array.isArray(categories) || categories.length > MAX_CATEGORIES) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_RESPONSE,
+        'Marketplace source returned invalid categories',
+      );
+    }
+    const seen = new Set<string>();
+    return {
+      categories: categories.map(category => {
+        const normalized = this.normalizeCategory(category);
+        const key = normalized.id.toLowerCase();
+        if (seen.has(key)) {
+          throw new MarketplaceError(
+            MarketplaceErrorCode.INVALID_RESPONSE,
+            'Marketplace source returned duplicate categories',
+          );
+        }
+        seen.add(key);
+        return normalized;
+      }),
+    };
+  }
+
   async search(query: MarketplaceQuery): Promise<MarketplaceSearchResult> {
+    const { categoryId, ...queryWithoutCategory } = query;
     const normalized = {
-      ...query,
+      ...queryWithoutCategory,
       query: query.query?.trim() || undefined,
+      ...(categoryId?.trim() ? { categoryId: categoryId.trim() } : {}),
       limit: Math.floor(Math.min(Math.max(query.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT)),
     };
     const providers = query.sourceId
@@ -126,6 +184,87 @@ export class PluginMarketplaceService {
     };
   }
 
+  async checkUpdates(request: MarketplaceUpdateCheckRequest): Promise<MarketplaceUpdateCheckResult> {
+    const runtimeInstalled = new Map(request.installed.map(item => [item.id.toLowerCase(), item]));
+    const persisted = this.installRegistry
+      .list(request.kind)
+      .filter(record => runtimeInstalled.has(record.runtimeId.toLowerCase()));
+    const providers = [...this.providers.values()].filter(
+      provider =>
+        provider.source.supportedKinds.includes(request.kind) &&
+        typeof provider.checkUpdates === 'function',
+    );
+    const results = await Promise.all(
+      providers.map(async provider => {
+        const providerRecords = persisted.filter(record => record.sourceId === provider.source.id);
+        const mappedRuntimeIds = new Set(
+          providerRecords.map(record => record.runtimeId.toLowerCase()),
+        );
+        const installed: MarketplaceInstalledPlugin[] = providerRecords.map(record => ({
+          id: record.marketplacePluginId,
+          runtimeId: record.runtimeId,
+          version:
+            record.installedVersion ||
+            runtimeInstalled.get(record.runtimeId.toLowerCase())?.version,
+        }));
+        if (providers.length === 1) {
+          installed.push(
+            ...request.installed.filter(item => !mappedRuntimeIds.has(item.id.toLowerCase())),
+          );
+        }
+        return {
+          provider,
+          installed,
+          updates:
+            installed.length === 0
+              ? []
+              : await this.callProvider(
+                  () => provider.checkUpdates!({ kind: request.kind, installed }),
+                  'check updates',
+                ),
+        };
+      }),
+    );
+    const seenInstalledIds = new Set<string>();
+    const updates = results.flatMap(({ provider, installed, updates: providerUpdates }) => {
+      if (!Array.isArray(providerUpdates) || providerUpdates.length > installed.length) {
+        throw new MarketplaceError(
+          MarketplaceErrorCode.INVALID_RESPONSE,
+          'Marketplace source returned an invalid update response',
+        );
+      }
+      return providerUpdates.map(item => {
+        let normalized = this.normalizePlugin(item, request.kind, provider.source.id);
+        const matched = installed.find(
+          entry =>
+            entry.id.toLowerCase() === normalized.id.toLowerCase() ||
+            entry.id.toLowerCase() === normalized.runtimeId?.toLowerCase() ||
+            (Boolean(entry.runtimeId) &&
+              Boolean(normalized.runtimeId) &&
+              entry.runtimeId?.toLowerCase() === normalized.runtimeId?.toLowerCase()),
+        );
+        const installedId = (normalized.runtimeId || matched?.runtimeId || normalized.id).toLowerCase();
+        if (
+          normalized.installState !== MarketplaceInstallState.UPDATE_AVAILABLE ||
+          !matched ||
+          !runtimeInstalled.has(installedId) ||
+          seenInstalledIds.has(installedId)
+        ) {
+          throw new MarketplaceError(
+            MarketplaceErrorCode.INVALID_RESPONSE,
+            'Marketplace source returned an invalid update candidate',
+          );
+        }
+        if (!normalized.runtimeId && matched.runtimeId) {
+          normalized = { ...normalized, runtimeId: matched.runtimeId };
+        }
+        seenInstalledIds.add(installedId);
+        return normalized;
+      });
+    });
+    return { updates };
+  }
+
   async install(request: MarketplaceInstallRequest): Promise<PluginInstallResult> {
     const provider = this.requireProviderForKind(request.sourceId, request.kind);
     const pluginId = this.requirePluginId(request.pluginId);
@@ -135,35 +274,84 @@ export class PluginMarketplaceService {
       version: request.version?.trim() || undefined,
       operation: request.operation ?? MarketplaceInstallOperation.INSTALL,
     };
-    const prepared = await this.callProvider(
-      () => provider.prepareInstall(normalizedRequest),
-      'prepare installation',
-    );
-    if (!prepared || prepared.payload?.kind !== request.kind) {
-      throw new MarketplaceError(
-        MarketplaceErrorCode.INVALID_RESPONSE,
-        'Marketplace source returned an invalid installation payload',
+    const installKey = `${request.sourceId}:${request.kind}:${pluginId.toLowerCase()}`;
+    return this.runInstallExclusive(installKey, async () => {
+      const prepared = await this.callProvider(
+        () => provider.prepareInstall(normalizedRequest),
+        'prepare installation',
       );
-    }
-    try {
-      return await this.installationService.install({
-        operation: normalizedRequest.operation,
-        origin: PluginInstallOrigin.MARKETPLACE,
-        marketplacePluginId: pluginId,
-        payload: prepared.payload,
-      });
-    } finally {
       try {
-        await prepared.cleanup?.();
-      } catch {
-        console.warn('[PluginMarketplace] Failed to clean prepared installation payload');
+        if (!prepared || prepared.payload?.kind !== request.kind) {
+          throw new MarketplaceError(
+            MarketplaceErrorCode.INVALID_RESPONSE,
+            'Marketplace source returned an invalid installation payload',
+          );
+        }
+        const result = await this.installationService.install({
+          operation: normalizedRequest.operation,
+          origin: PluginInstallOrigin.MARKETPLACE,
+          marketplacePluginId: pluginId,
+          payload: prepared.payload,
+        });
+        if (result.success && result.pluginId) {
+          try {
+            const previous = this.installRegistry
+              .list(request.kind)
+              .find(
+                record =>
+                  record.sourceId === request.sourceId &&
+                  record.marketplacePluginId.toLowerCase() === pluginId.toLowerCase(),
+              );
+            this.installRegistry.upsert({
+              sourceId: request.sourceId,
+              kind: request.kind,
+              marketplacePluginId: pluginId,
+              runtimeId: result.pluginId,
+              installedVersion: normalizedRequest.version || previous?.installedVersion,
+              installPath: result.installPath || previous?.installPath,
+            });
+          } catch {
+            console.warn('[PluginMarketplace] Failed to persist marketplace installation identity');
+          }
+        }
+        return result;
+      } finally {
+        try {
+          await prepared?.cleanup?.();
+        } catch {
+          console.warn('[PluginMarketplace] Failed to clean prepared installation payload');
+        }
       }
+    });
+  }
+
+  forgetInstallation(kind: MarketplacePluginKind, runtimeId: string, installPath?: string): void {
+    try {
+      this.installRegistry.removeRuntime(kind, runtimeId, installPath);
+    } catch {
+      console.warn('[PluginMarketplace] Failed to remove marketplace installation identity');
+    }
+  }
+
+  private async runInstallExclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.installTails.get(key) ?? Promise.resolve();
+    const result = previous.catch((): void => {}).then(operation);
+    const tail = result.then(
+      (): void => {},
+      (): void => {},
+    );
+    this.installTails.set(key, tail);
+    try {
+      return await result;
+    } finally {
+      if (this.installTails.get(key) === tail) this.installTails.delete(key);
     }
   }
 
   async getDetail(request: MarketplaceDetailRequest): Promise<MarketplacePluginDetail | null> {
     const provider = this.requireProviderForKind(request.sourceId, request.kind);
     const pluginId = this.requirePluginId(request.pluginId);
+    if (!provider.getDetail) return null;
     const detail = await this.callProvider(
       () => provider.getDetail({ ...request, pluginId }),
       'load details',
@@ -283,8 +471,12 @@ export class PluginMarketplaceService {
         (Array.isArray(item.tags) &&
           item.tags.length <= 50 &&
           item.tags.every(tag => typeof tag === 'string' && tag.length <= 100))) &&
+      (item.category === undefined || this.isCategory(item.category)) &&
       (item.installState === undefined || installStates.has(item.installState));
-    if (!valid) {
+    const downloadCountValid =
+      item.downloadCount === undefined ||
+      (Number.isSafeInteger(item.downloadCount) && item.downloadCount >= 0);
+    if (!valid || !downloadCountValid) {
       throw new MarketplaceError(
         MarketplaceErrorCode.INVALID_RESPONSE,
         'Marketplace source returned an invalid response',
@@ -298,12 +490,37 @@ export class PluginMarketplaceService {
       description: item.description.trim(),
       version: item.version,
       author: item.author,
+      downloadCount: item.downloadCount,
       tags: item.tags ? [...item.tags] : undefined,
+      category: item.category ? this.normalizeCategory(item.category) : undefined,
       homepage: item.homepage,
       iconUrl: item.iconUrl,
       sourceId,
       installState: item.installState,
       installedVersion: item.installedVersion,
     };
+  }
+
+  private isCategory(value: unknown): value is MarketplaceCategory {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const category = value as Partial<MarketplaceCategory>;
+    return (
+      typeof category.id === 'string' &&
+      Boolean(category.id.trim()) &&
+      category.id.length <= 128 &&
+      typeof category.name === 'string' &&
+      Boolean(category.name.trim()) &&
+      category.name.length <= 128
+    );
+  }
+
+  private normalizeCategory(category: MarketplaceCategory): MarketplaceCategory {
+    if (!this.isCategory(category)) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_RESPONSE,
+        'Marketplace source returned an invalid category',
+      );
+    }
+    return { id: category.id.trim(), name: category.name.trim() };
   }
 }

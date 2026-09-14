@@ -10,6 +10,10 @@ interface SkillMarketplaceProps {
   installed: InstalledMarketplacePlugin[];
   readOnly?: boolean;
   onInstalled?: () => void | Promise<void>;
+  searchQuery?: string;
+  availableOnly?: boolean;
+  runtimeUnavailable?: boolean;
+  onUpdateIdsChange?: (installedIds: Set<string>) => void;
 }
 
 const SkillMarketplace: React.FC<SkillMarketplaceProps> = props => (

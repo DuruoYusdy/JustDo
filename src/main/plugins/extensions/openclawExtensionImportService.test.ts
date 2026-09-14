@@ -124,6 +124,81 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenCalledWith('plugins.list', {});
   });
 
+  it('fills a blank Gateway description from bundled extension package metadata', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const runtimeRoot = path.join(fixtureRoot, 'runtime');
+    const bundledDir = path.join(runtimeRoot, 'dist', 'extensions', 'memory-core');
+    fs.mkdirSync(bundledDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(bundledDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'memory-core', name: 'OpenClaw Memory' }),
+    );
+    fs.writeFileSync(
+      path.join(bundledDir, 'package.json'),
+      JSON.stringify({ description: 'Search and retrieve persistent memory.' }),
+    );
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStateDir: () => stateDir,
+          getRuntimeRoot: () => runtimeRoot,
+          getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+        }) as unknown as OpenClawEngineManager,
+      requestGateway: vi.fn().mockResolvedValue({
+        plugins: [
+          {
+            id: 'memory-core',
+            name: 'OpenClaw Memory',
+            description: '   ',
+            installed: true,
+            enabled: true,
+            state: 'enabled',
+            origin: 'bundled',
+            kind: ['memory'],
+            removable: false,
+          },
+        ],
+        diagnostics: [],
+        mutationAllowed: true,
+      }),
+    });
+
+    await expect(service.listCatalog()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'memory-core',
+        description: 'Search and retrieve persistent memory.',
+      }),
+    ]);
+
+    const externalService = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStateDir: () => stateDir,
+          getRuntimeRoot: () => runtimeRoot,
+          getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+        }) as unknown as OpenClawEngineManager,
+      requestGateway: vi.fn().mockResolvedValue({
+        plugins: [
+          {
+            id: 'memory-core',
+            name: 'External Memory',
+            installed: true,
+            enabled: true,
+            state: 'enabled',
+            origin: 'path',
+            removable: true,
+          },
+        ],
+        diagnostics: [],
+        mutationAllowed: true,
+      }),
+    });
+
+    await expect(externalService.listCatalog()).resolves.toEqual([
+      expect.objectContaining({ id: 'memory-core', description: '' }),
+    ]);
+  });
+
   it('refreshes stale Gateway metadata after an external CLI installs an extension', async () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const installedDir = path.join(stateDir, 'extensions', 'external-extension');
@@ -988,6 +1063,43 @@ describe('OpenClawExtensionImportService', () => {
       JSON.stringify({ plugins: { entries: { 'sample-extension': { enabled: false } } } }),
     );
     expect(service.listInstalled()[0].enabled).toBe(false);
+  });
+
+  it('fills local descriptions from compatible manifest and package metadata', () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const extensionsDir = path.join(stateDir, 'extensions');
+    const shortDescriptionDir = path.join(extensionsDir, 'short-description');
+    const packageDescriptionDir = path.join(extensionsDir, 'package-description');
+    fs.mkdirSync(shortDescriptionDir, { recursive: true });
+    fs.mkdirSync(packageDescriptionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(shortDescriptionDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'short-description', shortDescription: 'Short manifest summary.' }),
+    );
+    fs.writeFileSync(
+      path.join(packageDescriptionDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'package-description' }),
+    );
+    fs.writeFileSync(
+      path.join(packageDescriptionDir, 'package.json'),
+      JSON.stringify({ description: 'Package summary.' }),
+    );
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStateDir: () => stateDir,
+          getBaseDir: () => path.join(fixtureRoot, 'openclaw-home'),
+          getConfigPath: () => path.join(stateDir, 'openclaw.json'),
+        }) as unknown as OpenClawEngineManager,
+    });
+
+    expect(service.listInstalled()).toEqual([
+      expect.objectContaining({ id: 'package-description', description: 'Package summary.' }),
+      expect.objectContaining({
+        id: 'short-description',
+        description: 'Short manifest summary.',
+      }),
+    ]);
   });
 
   it('lists installed bundle plugins with their OpenClaw-normalized id', () => {

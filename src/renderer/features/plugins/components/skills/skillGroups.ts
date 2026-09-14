@@ -8,6 +8,7 @@ export const SkillGroupId = {
   AGENTS_PERSONAL: 'agents-personal',
   MANAGED: 'managed',
   BUNDLED: 'openclaw-bundled',
+  CUSTODIAN: 'openclaw-custodian',
   EXTRA: 'extra-dir',
   UNKNOWN: 'unknown',
 } as const;
@@ -26,6 +27,7 @@ const sourceToGroup: Record<SkillSource, SkillGroupId> = {
   'agents-skills-personal': SkillGroupId.AGENTS_PERSONAL,
   'openclaw-managed': SkillGroupId.MANAGED,
   'openclaw-bundled': SkillGroupId.BUNDLED,
+  'openclaw-custodian': SkillGroupId.CUSTODIAN,
   'openclaw-extra': SkillGroupId.EXTRA,
   unknown: SkillGroupId.UNKNOWN,
 };
@@ -38,6 +40,7 @@ const groupOrder: SkillGroupId[] = [
   SkillGroupId.AGENTS_PERSONAL,
   SkillGroupId.MANAGED,
   SkillGroupId.BUNDLED,
+  SkillGroupId.CUSTODIAN,
   SkillGroupId.EXTRA,
   SkillGroupId.UNKNOWN,
 ];
@@ -48,6 +51,7 @@ const groupPriority: Partial<Record<SkillGroupId, number>> = {
   [SkillGroupId.AGENTS_PERSONAL]: 4,
   [SkillGroupId.MANAGED]: 3,
   [SkillGroupId.BUNDLED]: 2,
+  [SkillGroupId.CUSTODIAN]: 2,
   [SkillGroupId.EXTRA]: 1,
 };
 

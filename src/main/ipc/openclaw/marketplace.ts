@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
 import {
+  type MarketplaceCategoriesResponse,
   type MarketplaceDetailResponse,
   MarketplaceErrorCode,
   MarketplaceInstallOperation,
@@ -11,6 +12,7 @@ import {
   type MarketplaceQuery,
   type MarketplaceSearchResponse,
   type MarketplaceSourcesResponse,
+  type MarketplaceUpdateCheckResponse,
 } from '../../../shared/plugins/marketplace';
 import type { PluginManager } from '../../plugins';
 import { MarketplaceError } from '../../plugins/marketplace/types';
@@ -99,6 +101,24 @@ const optionalOperation = (operation: unknown): MarketplaceInstallRequest['opera
   return operation as MarketplaceInstallRequest['operation'];
 };
 
+const requireInstalledPlugins = (
+  value: unknown,
+): Array<{ id: string; version?: string }> => {
+  if (!Array.isArray(value) || value.length > 200) {
+    throw new MarketplaceError(
+      MarketplaceErrorCode.INVALID_REQUEST,
+      'Marketplace installed plugins must be an array',
+    );
+  }
+  return value.map(item => {
+    const input = requireRecord(item);
+    return {
+      id: requireString(input.id, 'installed plugin id'),
+      version: optionalString(input.version, 'installed plugin version', 128),
+    };
+  });
+};
+
 const publicError = (
   error: unknown,
 ): { error: string; errorCode: (typeof MarketplaceErrorCode)[keyof typeof MarketplaceErrorCode] } => {
@@ -114,6 +134,31 @@ const publicError = (
 const logError = (operation: string, error: unknown): void => {
   const safe = publicError(error);
   console.error(`[PluginMarketplace] ${operation} failed:`, safe.errorCode, safe.error);
+};
+
+const publicInstallResult = (result: {
+  success: boolean;
+  pluginId?: string;
+  restartRequired?: boolean;
+}): MarketplaceInstallResponse => {
+  if (!result.success) {
+    return {
+      success: false,
+      error: 'Marketplace installation failed',
+      errorCode: MarketplaceErrorCode.INTERNAL,
+    };
+  }
+  const pluginId =
+    typeof result.pluginId === 'string' && result.pluginId.trim().length <= 256
+      ? result.pluginId.trim()
+      : undefined;
+  return {
+    success: true,
+    ...(pluginId ? { pluginId } : {}),
+    ...(typeof result.restartRequired === 'boolean'
+      ? { restartRequired: result.restartRequired }
+      : {}),
+  };
 };
 
 export const registerMarketplaceHandlers = (pluginManager: PluginManager): void => {
@@ -135,13 +180,32 @@ export const registerMarketplaceHandlers = (pluginManager: PluginManager): void 
   );
 
   ipcMain.handle(
+    MarketplaceIpc.ListCategories,
+    async (_event, request: unknown): Promise<MarketplaceCategoriesResponse> => {
+      try {
+        const input = requireRecord(request);
+        const result = await pluginManager.listMarketplaceCategories({
+          sourceId: requireString(input.sourceId, 'source id'),
+          kind: requireKind(input.kind),
+        });
+        return { success: true, result };
+      } catch (error) {
+        logError('list categories', error);
+        return { success: false, ...publicError(error) };
+      }
+    },
+  );
+
+  ipcMain.handle(
     MarketplaceIpc.Search,
     async (_event, query: unknown): Promise<MarketplaceSearchResponse> => {
       try {
         const input = requireRecord(query);
+        const categoryId = optionalString(input.categoryId, 'category id', 128);
         const result = await pluginManager.searchMarketplace({
           kind: requireKind(input.kind),
           query: optionalString(input.query, 'query', 500),
+          ...(categoryId ? { categoryId } : {}),
           limit: optionalLimit(input.limit),
           cursor: optionalString(input.cursor, 'cursor', 4096),
           sourceId: optionalString(input.sourceId, 'source id'),
@@ -149,6 +213,23 @@ export const registerMarketplaceHandlers = (pluginManager: PluginManager): void 
         return { success: true, result };
       } catch (error) {
         logError('search', error);
+        return { success: false, ...publicError(error) };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    MarketplaceIpc.CheckUpdates,
+    async (_event, request: unknown): Promise<MarketplaceUpdateCheckResponse> => {
+      try {
+        const input = requireRecord(request);
+        const result = await pluginManager.checkMarketplaceUpdates({
+          kind: requireKind(input.kind),
+          installed: requireInstalledPlugins(input.installed),
+        });
+        return { success: true, result };
+      } catch (error) {
+        logError('check updates', error);
         return { success: false, ...publicError(error) };
       }
     },
@@ -184,7 +265,7 @@ export const registerMarketplaceHandlers = (pluginManager: PluginManager): void 
           version: optionalString(input.version, 'version', 128),
           operation: optionalOperation(input.operation),
         });
-        return result;
+        return publicInstallResult(result);
       } catch (error) {
         logError('install', error);
         return { success: false, ...publicError(error) };

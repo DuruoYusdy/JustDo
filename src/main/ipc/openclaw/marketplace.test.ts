@@ -23,9 +23,11 @@ import { registerMarketplaceHandlers } from './marketplace';
 const createPluginManager = () =>
   ({
     listMarketplaceSources: vi.fn(() => []),
+    listMarketplaceCategories: vi.fn(async () => ({ categories: [] })),
     searchMarketplace: vi.fn(async () => ({ items: [] })),
+    checkMarketplaceUpdates: vi.fn(async () => ({ updates: [] })),
     getMarketplaceDetail: vi.fn(async () => null),
-    installFromMarketplace: vi.fn(async () => undefined),
+    installFromMarketplace: vi.fn(async () => ({ success: true })),
   }) as unknown as PluginManager;
 
 beforeEach(() => {
@@ -89,12 +91,107 @@ test('constructs a narrow validated install request', async () => {
   });
 });
 
-test('accepts Hook marketplace requests for providers that opt into them', async () => {
+test('rejects Hook marketplace requests', async () => {
   const manager = createPluginManager();
   registerMarketplaceHandlers(manager);
 
   const response = await handlers.get(MarketplaceIpc.Search)?.({}, { kind: PluginKind.HOOK });
 
-  expect(response).toEqual({ success: true, result: { items: [] } });
-  expect(manager.searchMarketplace).toHaveBeenCalledWith({ kind: PluginKind.HOOK });
+  expect(response).toEqual({
+    success: false,
+    error: 'Unsupported marketplace plugin kind',
+    errorCode: MarketplaceErrorCode.UNSUPPORTED_KIND,
+  });
+  expect(manager.searchMarketplace).not.toHaveBeenCalled();
+});
+
+test('projects successful install results onto the public response contract', async () => {
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success: true,
+    pluginId: ' writer-runtime ',
+    restartRequired: false,
+    installPath: 'C:\\private-download',
+    failedStage: 'extracting',
+  });
+  registerMarketplaceHandlers(manager);
+
+  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
+    sourceId: 'enterprise',
+    pluginId: 'writer',
+    kind: PluginKind.SKILL,
+  });
+
+  expect(response).toEqual({
+    success: true,
+    pluginId: 'writer-runtime',
+    restartRequired: false,
+  });
+});
+
+test('does not expose internal installation failure details', async () => {
+  const manager = createPluginManager();
+  vi.mocked(manager.installFromMarketplace).mockResolvedValue({
+    success: false,
+    error: 'Cannot rename C:\\private-download\\secret',
+    failedStage: 'installing',
+  });
+  registerMarketplaceHandlers(manager);
+
+  const response = await handlers.get(MarketplaceIpc.Install)?.({}, {
+    sourceId: 'enterprise',
+    pluginId: 'writer',
+    kind: PluginKind.SKILL,
+  });
+
+  expect(response).toEqual({
+    success: false,
+    error: 'Marketplace installation failed',
+    errorCode: MarketplaceErrorCode.INTERNAL,
+  });
+  expect(JSON.stringify(response)).not.toContain('private-download');
+});
+
+test('constructs narrow category list and filtered search requests', async () => {
+  const manager = createPluginManager();
+  registerMarketplaceHandlers(manager);
+
+  await handlers.get(MarketplaceIpc.ListCategories)?.({}, {
+    sourceId: ' enterprise ',
+    kind: PluginKind.SKILL,
+    ignored: true,
+  });
+  await handlers.get(MarketplaceIpc.Search)?.({}, {
+    kind: PluginKind.SKILL,
+    categoryId: ' development ',
+  });
+
+  expect(manager.listMarketplaceCategories).toHaveBeenCalledWith({
+    sourceId: 'enterprise',
+    kind: PluginKind.SKILL,
+  });
+  expect(manager.searchMarketplace).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    categoryId: 'development',
+    query: undefined,
+    limit: undefined,
+    cursor: undefined,
+    sourceId: undefined,
+  });
+});
+
+test('constructs a narrow validated update-check request', async () => {
+  const manager = createPluginManager();
+  registerMarketplaceHandlers(manager);
+
+  await handlers.get(MarketplaceIpc.CheckUpdates)?.({}, {
+    kind: PluginKind.SKILL,
+    installed: [{ id: ' writer ', version: ' 1.2.3 ', ignored: true }],
+    ignored: true,
+  });
+
+  expect(manager.checkMarketplaceUpdates).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    installed: [{ id: 'writer', version: '1.2.3' }],
+  });
 });

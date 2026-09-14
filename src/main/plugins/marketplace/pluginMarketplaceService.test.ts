@@ -3,10 +3,15 @@ import { expect, test, vi } from 'vitest';
 import {
   MarketplaceErrorCode,
   MarketplaceInstallOperation,
+  MarketplaceInstallState,
   type MarketplacePlugin,
   PluginKind,
 } from '../../../shared/plugins/marketplace';
 import { PluginInstallationService } from '../installation';
+import {
+  type MarketplaceInstallRecordStore,
+  MarketplaceInstallRegistry,
+} from './marketplaceInstallRegistry';
 import { PluginMarketplaceService } from './pluginMarketplaceService';
 import { MarketplaceError, type PluginMarketplaceProvider } from './types';
 
@@ -23,6 +28,15 @@ const createProvider = (): PluginMarketplaceProvider => ({
   })),
 });
 
+const createInstallRegistry = () => {
+  const values = new Map<string, unknown>();
+  const store: MarketplaceInstallRecordStore = {
+    get: <T>(key: string) => values.get(key) as T | undefined,
+    set: <T>(key: string, value: T) => values.set(key, value),
+  };
+  return new MarketplaceInstallRegistry(() => store);
+};
+
 test('searches only providers that support the requested plugin kind', async () => {
   const provider = createProvider();
   const service = new PluginMarketplaceService([provider]);
@@ -33,13 +47,13 @@ test('searches only providers that support the requested plugin kind', async () 
   expect(provider.search).not.toHaveBeenCalled();
 });
 
-test('allows providers to opt into Hook marketplace content', () => {
+test('rejects Hook as an unsupported marketplace kind', () => {
   const provider = createProvider();
-  provider.source.supportedKinds = [PluginKind.HOOK];
+  provider.source.supportedKinds = [PluginKind.HOOK as never];
 
-  expect(new PluginMarketplaceService([provider]).listSources(PluginKind.HOOK)).toEqual([
-    provider.source,
-  ]);
+  expect(() => new PluginMarketplaceService([provider])).toThrow(
+    'Marketplace source id is invalid',
+  );
 });
 
 test('normalizes marketplace search options', async () => {
@@ -63,6 +77,95 @@ test('normalizes marketplace search options', async () => {
     query: 'writer',
     limit: 100,
   });
+});
+
+test('returns normalized categories from an optional provider catalog', async () => {
+  const provider = createProvider();
+  provider.listCategories = vi.fn(async () => [
+    { id: ' development ', name: ' 代码开发 ' },
+    { id: 'testing', name: '测试' },
+  ]);
+  const service = new PluginMarketplaceService([provider]);
+
+  expect(service.listSources()[0]).toMatchObject({ supportsCategories: true });
+  await expect(
+    service.listCategories({ sourceId: provider.source.id, kind: PluginKind.SKILL }),
+  ).resolves.toEqual({
+    categories: [
+      { id: 'development', name: '代码开发' },
+      { id: 'testing', name: '测试' },
+    ],
+  });
+});
+
+test('passes a normalized category id to marketplace search', async () => {
+  const provider = createProvider();
+  const service = new PluginMarketplaceService([provider]);
+
+  await service.search({ kind: PluginKind.SKILL, categoryId: ' development ' });
+
+  expect(provider.search).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    categoryId: 'development',
+    query: undefined,
+    limit: 20,
+  });
+});
+
+test('rejects duplicate provider category ids case-insensitively', async () => {
+  const provider = createProvider();
+  provider.listCategories = vi.fn(async () => [
+    { id: 'docs', name: '文档撰写' },
+    { id: 'DOCS', name: 'Documentation' },
+  ]);
+  const service = new PluginMarketplaceService([provider]);
+
+  await expect(
+    service.listCategories({ sourceId: provider.source.id, kind: PluginKind.SKILL }),
+  ).rejects.toMatchObject({ code: MarketplaceErrorCode.INVALID_RESPONSE });
+});
+
+test('returns validated update candidates from optional provider checks', async () => {
+  const provider = createProvider();
+  provider.checkUpdates = vi.fn(async () => [
+    {
+      id: 'catalog-writer',
+      runtimeId: 'writer',
+      kind: PluginKind.SKILL,
+      name: 'Writer',
+      description: 'Writes text',
+      sourceId: provider.source.id,
+      installState: MarketplaceInstallState.UPDATE_AVAILABLE,
+      version: '2.0.0',
+      installedVersion: '1.0.0',
+    },
+  ]);
+  const service = new PluginMarketplaceService([provider]);
+
+  const result = await service.checkUpdates({
+    kind: PluginKind.SKILL,
+    installed: [{ id: 'writer', version: '1.0.0' }],
+  });
+
+  expect(provider.checkUpdates).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    installed: [{ id: 'writer', version: '1.0.0' }],
+  });
+  expect(result.updates).toEqual([
+    expect.objectContaining({
+      id: 'catalog-writer',
+      runtimeId: 'writer',
+      installState: MarketplaceInstallState.UPDATE_AVAILABLE,
+    }),
+  ]);
+});
+
+test('ignores providers that do not implement update checks', async () => {
+  const service = new PluginMarketplaceService([createProvider()]);
+
+  await expect(
+    service.checkUpdates({ kind: PluginKind.SKILL, installed: [{ id: 'writer' }] }),
+  ).resolves.toEqual({ updates: [] });
 });
 
 test('routes installation to its marketplace provider', async () => {
@@ -94,6 +197,87 @@ test('routes installation to its marketplace provider', async () => {
   });
 });
 
+test('persists marketplace identity and maps update checks back to the runtime id', async () => {
+  const provider = createProvider();
+  const registry = createInstallRegistry();
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async () => ({
+      success: true,
+      pluginId: 'writer-runtime',
+      installPath: 'C:\\skills\\writer-runtime',
+    })),
+  });
+  const service = new PluginMarketplaceService([provider], installationService, registry);
+  await service.install({
+    sourceId: provider.source.id,
+    pluginId: 'catalog-writer',
+    kind: PluginKind.SKILL,
+    version: '1.0.0',
+  });
+  provider.checkUpdates = vi.fn(async request => [
+    {
+      id: request.installed[0].id,
+      kind: PluginKind.SKILL,
+      name: 'Writer',
+      description: 'Writes text',
+      sourceId: provider.source.id,
+      version: '2.0.0',
+      installState: MarketplaceInstallState.UPDATE_AVAILABLE,
+    },
+  ]);
+
+  const result = await service.checkUpdates({
+    kind: PluginKind.SKILL,
+    installed: [{ id: 'writer-runtime' }],
+  });
+
+  expect(provider.checkUpdates).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    installed: [
+      { id: 'catalog-writer', runtimeId: 'writer-runtime', version: '1.0.0' },
+    ],
+  });
+  expect(result.updates[0]).toMatchObject({
+    id: 'catalog-writer',
+    runtimeId: 'writer-runtime',
+  });
+});
+
+test('does not disclose a persisted installation to another marketplace source', async () => {
+  const first = createProvider();
+  const second = createProvider();
+  second.source.id = 'second-marketplace';
+  first.checkUpdates = vi.fn(async () => []);
+  second.checkUpdates = vi.fn(async () => []);
+  const registry = createInstallRegistry();
+  registry.upsert({
+    sourceId: first.source.id,
+    kind: PluginKind.SKILL,
+    marketplacePluginId: 'catalog-writer',
+    runtimeId: 'writer-runtime',
+  });
+  const service = new PluginMarketplaceService(
+    [first, second],
+    new PluginInstallationService(),
+    registry,
+  );
+
+  await service.checkUpdates({
+    kind: PluginKind.SKILL,
+    installed: [{ id: 'writer-runtime' }],
+  });
+
+  expect(first.checkUpdates).toHaveBeenCalledWith({
+    kind: PluginKind.SKILL,
+    installed: [
+      { id: 'catalog-writer', runtimeId: 'writer-runtime', version: undefined },
+    ],
+  });
+  expect(second.checkUpdates).not.toHaveBeenCalled();
+});
+
 test('cleans up a prepared marketplace payload after installation', async () => {
   const provider = createProvider();
   const cleanup = vi.fn();
@@ -114,6 +298,25 @@ test('cleans up a prepared marketplace payload after installation', async () => 
     kind: PluginKind.SKILL,
   });
 
+  expect(cleanup).toHaveBeenCalledOnce();
+});
+
+test('cleans up a prepared payload when its kind is invalid', async () => {
+  const provider = createProvider();
+  const cleanup = vi.fn();
+  vi.mocked(provider.prepareInstall).mockResolvedValue({
+    payload: { kind: PluginKind.EXTENSION, sourcePath: 'C:\\downloads\\wrong' },
+    cleanup,
+  });
+  const service = new PluginMarketplaceService([provider]);
+
+  await expect(
+    service.install({
+      sourceId: provider.source.id,
+      pluginId: 'writer',
+      kind: PluginKind.SKILL,
+    }),
+  ).rejects.toMatchObject({ code: MarketplaceErrorCode.INVALID_RESPONSE });
   expect(cleanup).toHaveBeenCalledOnce();
 });
 
@@ -155,6 +358,61 @@ test('rejects details for a plugin kind the provider does not support', async ()
     }),
   ).rejects.toThrow('Marketplace source does not support extension');
   expect(provider.getDetail).not.toHaveBeenCalled();
+});
+
+test('supports a minimal provider without a detail endpoint', async () => {
+  const provider = createProvider();
+  delete provider.getDetail;
+  const service = new PluginMarketplaceService([provider]);
+
+  expect(service.listSources()).toEqual([
+    expect.objectContaining({ id: provider.source.id, supportsDetail: false }),
+  ]);
+
+  await expect(
+    service.getDetail({
+      sourceId: provider.source.id,
+      pluginId: 'writer',
+      kind: PluginKind.SKILL,
+    }),
+  ).resolves.toBeNull();
+});
+
+test('serializes concurrent installs of the same marketplace identity', async () => {
+  const provider = createProvider();
+  let releaseFirst!: () => void;
+  const firstPrepared = new Promise<void>(resolve => {
+    releaseFirst = resolve;
+  });
+  vi.mocked(provider.prepareInstall)
+    .mockImplementationOnce(async () => {
+      await firstPrepared;
+      return { payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' } };
+    })
+    .mockResolvedValue({
+      payload: { kind: PluginKind.SKILL, sourcePath: 'C:\\downloads\\writer.zip' },
+    });
+  const installationService = new PluginInstallationService();
+  installationService.registerInstaller({
+    kind: PluginKind.SKILL,
+    install: vi.fn(async () => ({ success: true, pluginId: 'writer' })),
+  });
+  const service = new PluginMarketplaceService([provider], installationService);
+  const request = {
+    sourceId: provider.source.id,
+    pluginId: 'writer',
+    kind: PluginKind.SKILL,
+  } as const;
+
+  const first = service.install(request);
+  await vi.waitFor(() => expect(provider.prepareInstall).toHaveBeenCalledTimes(1));
+  const second = service.install(request);
+  await Promise.resolve();
+  expect(provider.prepareInstall).toHaveBeenCalledTimes(1);
+
+  releaseFirst();
+  await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  expect(provider.prepareInstall).toHaveBeenCalledTimes(2);
 });
 
 test('rejects duplicate marketplace source ids', () => {
@@ -221,6 +479,8 @@ test('returns only allowlisted source and plugin fields', async () => {
     description: 'Writes text',
     runtimeId: 'writer-runtime',
     sourceId: 'spoofed-source',
+    downloadCount: 12_345,
+    category: { id: 'docs', name: '文档撰写' },
     token: 'private-plugin-token',
   } as MarketplacePlugin & { token: string };
   vi.mocked(provider.search).mockResolvedValue({ items: [plugin] });
@@ -233,6 +493,28 @@ test('returns only allowlisted source and plugin fields', async () => {
   expect(result.items[0]).not.toHaveProperty('token');
   expect(result.items[0].sourceId).toBe(provider.source.id);
   expect(result.items[0].runtimeId).toBe('writer-runtime');
+  expect(result.items[0].downloadCount).toBe(12_345);
+  expect(result.items[0].category).toEqual({ id: 'docs', name: '文档撰写' });
+});
+
+test('rejects an invalid marketplace download count', async () => {
+  const provider = createProvider();
+  vi.mocked(provider.search).mockResolvedValue({
+    items: [
+      {
+        id: 'writer',
+        kind: PluginKind.SKILL,
+        name: 'Writer',
+        description: 'Writes text',
+        sourceId: provider.source.id,
+        downloadCount: -1,
+      },
+    ],
+  });
+
+  await expect(
+    new PluginMarketplaceService([provider]).search({ kind: PluginKind.SKILL }),
+  ).rejects.toMatchObject({ code: MarketplaceErrorCode.INVALID_RESPONSE });
 });
 
 test('returns only allowlisted detail fields', async () => {

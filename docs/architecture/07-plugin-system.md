@@ -2,6 +2,10 @@
 
 本文按 OpenClaw `v2026.9.2` 的 Gateway plugin control plane、plugin installed index、plugin bundle contract、plugin IPC/UI、shared contracts、OpenClaw config sync 和内置 manifest 重写。JustDo 中“Plugin”是产品聚合概念，包含 Skill、MCP、Hook、Extension 与 Marketplace；它们没有统一的数据权威或安装方式。
 
+Plugin Hub 的统一信息架构、权限模型、推荐策略和同名 Skill 交互依据见
+[`plugin-hub-experience-plan`](../features/plugin-hub-experience-plan.md)。基础页面与 action
+capability contract 已落地；shadowed Skill 高级视图仍取决于未来 Gateway contract。
+
 ## 1. 能力与所有权
 
 | 类型        | 运行时权威                            | JustDo 持久化/文件职责                            | 用户操作                            |
@@ -56,9 +60,13 @@ flowchart LR
 - `PluginKind`: `extension`、`skill`、`mcp`、`hook`；
 - 稳定 error code：invalid request/response、source not found、unsupported kind、provider/install failure 等；
 - source、summary、detail、query/cursor、install request/response；
-- install state `available`、`installed`、`unavailable` 和 operation `install`、`update`。
+- install state `available`、`installed`、`update-available`、`unavailable` 和 operation
+  `install`、`update`。
 
-`src/shared/plugins/skills.ts` 定义 Gateway skill source 及哪些 source 是用户拥有。删除权限必须以 `isUserOwnedSkillSource` 判断，不能凭 UI 分组或路径字符串猜测。
+`src/shared/plugins/skills.ts` 定义 Gateway skill source 及哪些 source 是用户拥有，其中包含
+`openclaw-custodian` 并允许未知来源降级显示。`src/shared/plugins/management.ts` 定义统一的
+scope、action capability 和稳定 reason code。Main 在列表响应中投影这些管理事实，并在写
+IPC 中重新校验；Renderer 不能凭 UI 分组或路径字符串猜测权限。
 
 ## 4. 内置 Skills
 
@@ -88,7 +96,20 @@ manifest 的 `disableOpenClawDefaults: true` 表示只使用 JustDo 声明的 bu
 
 `OpenClawSkillService` 通过 adapter 调用 `skills.status`，返回 workspace/managed dir 和每个 Skill 的 source、eligibility、disabled/allowlist、missing requirements、install options 与 config checks。启停用 `skills.update`，Gateway 返回值是最终成功依据。
 
-Renderer 的 `skillSlice` 只是列表/loading/error 缓存。`skillGroups` 和 `skillRequirements` 负责展示分组与缺失项，不决定运行资格。
+Renderer 的 `skillSlice` 只是列表/loading/error 缓存。主列表只展示 Gateway 返回的当前有效
+Skill，不再按 workspace/personal/managed/bundled 等底层来源分组；来源被归一为系统、我的、
+当前项目或其他徽标。`skillRequirements` 只负责展示缺失项，不决定运行资格。
+
+插件发布到 `<stateDir>/plugin-skills` 的 Skill 同时具有两个维度：`scope=extension` 表示启停、
+删除等操作由父 Extension 托管；`ownershipScope` 只负责顶层展示分组。Main 解析生成链接及
+OpenClaw runtime 的真实路径：父 Extension 位于 bundled runtime 时归入“系统与内置”，其他
+Extension 提供的 Skill 归入“用户安装”。Renderer 不得再用管理 `scope` 推断安装归属。
+
+Skill 启停或删除完成后，Renderer 会比较操作前后的 name、source 与路径。若 Gateway 仍返回
+同名 Skill 但有效来源变化，提示“当前来源从 A 切换为 B”；若同名项消失则提示当前不可用。
+没有 authoritative variants contract 时，不显示 shadowed 数量，也不提供逐来源 toggle。
+`tests/openclaw/runtime/skill-resolution-contract.test.ts` 直接调用锁定的打包 Runtime，验证
+禁用不切换当前赢家、赢家目录消失后才回退，以及不同 workspace 独立解析同名 Skill。
 
 ### 5.2 文件导入与删除
 
@@ -191,11 +212,11 @@ pending promise、同一 session 只允许一个待答请求、timeout/default�
 
 ## 10. Marketplace Adapter
 
-当前 `createPluginMarketplaceService` 传入空 provider 数组，因此开源构建默认没有 marketplace source。企业构建通过公司 SDK Provider 接入，目前只声明 Extension、Skill、MCP；Hook 保留通用市场入口和 Provider 扩展点，但没有历史市场数据兼容。Gateway `plugins.list` 只以离线模式读取随 OpenClaw 打包的官方目录元数据，不刷新其默认 ClawHub feed；生成的 OpenClaw 配置也关闭默认远程模型目录刷新。外部目录网络访问只能由显式注册或配置的 product provider 发起。
+当前 `createPluginMarketplaceService` 传入空 provider 数组，因此开源构建默认没有 marketplace source。企业构建通过公司 SDK Provider 接入，目前只声明 Extension、Skill、MCP；Hook 不属于 Marketplace contract。Gateway `plugins.list` 只以离线模式读取随 OpenClaw 打包的官方目录元数据，不刷新其默认 ClawHub feed；生成的 OpenClaw 配置也关闭默认远程模型目录刷新。外部目录网络访问只能由显式注册或配置的 product provider 发起。
 
 Provider contract：source metadata、search、detail、prepareInstall。Service 的防御性规则包括：
 
-- source id/name 非空且不超过 256，supportedKinds 只能是 Extension、Skill、MCP、Hook，id 不可重复；企业 Provider 只声明实际支持的 kind；
+- source id/name 非空且不超过 256，supportedKinds 只能是 Extension、Skill、MCP，id 不可重复；企业 Provider 只声明实际支持的 kind；
 - query limit 默认 20、范围 1..100；cursor 仅允许恰好一个 source；
 - item 的 kind、必填/可选字符串、tags、install state、readme（最大 1,000,000）和 requirements 均验证；
 - provider 可返回与市场目录 id 不同的 `runtimeId`，Renderer 用它与实际安装列表对账，安装请求仍使用 provider 的目录 id；
@@ -243,7 +264,20 @@ flowchart LR
 
 ## 12. Renderer
 
-`PluginsView` 切换 Skill/MCP/Hook/Extension。Marketplace 分别嵌入各管理页面；未声明对应 kind 的 Provider 时显示未配置状态。Skill 与 MCP 有已挂载 Redux slice；Hook/Extension/Marketplace 主要由组件/service 局部状态管理。文档不能把未 mount 的状态描述为全局 store。
+`PluginsView` 是单页入口，顶部提供 sticky 的统一搜索以及
+Extension/Skill/MCP/Hook 紧凑类型选择。按最终产品决策不显示“全部类型”，也不显示
+“全部/已安装/可安装”状态筛选。统一搜索值同时传给当前本地 inventory 和 Marketplace；
+子页面不再重复渲染搜索框。Marketplace 分别复用同一 Provider-neutral 组件；Hook 只提供
+本地导入。“热门推荐”区始终保留；没有对应 Provider 时显示市场未配置状态，Provider 的空关键词
+结果为空时显示空状态。
+Skill 与 MCP 有已挂载 Redux slice；Hook/Extension/Marketplace 主要由组件/service 局部状态
+管理。文档不能把未 mount 的状态描述为全局 store。
+
+永久受管项显示锁与原因，不显示假的 disabled switch；Gateway 离线、安装中等暂时状态才
+保留 disabled control。下载量按应用语言格式化，Marketplace skeleton 使用 `aria-busy` 和
+live status。空搜索标题为“热门推荐”，仅保留 Provider 顺序，不宣称个性化。
+Gateway 离线时 Skill 目录搜索仍可见，只把安装动作标记为运行时离线；本地 inventory 与市场
+错误彼此隔离。
 
 UI 应显示 source、eligible/missing、install state 和操作结果；破坏性删除需要明确目标。安装进行中禁用重复提交，extension progress 允许刷新后重新列举实际状态。
 

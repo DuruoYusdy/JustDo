@@ -4,6 +4,7 @@ export type OpenClawSkillSource =
   | 'agents-skills-personal'
   | 'openclaw-managed'
   | 'openclaw-bundled'
+  | 'openclaw-custodian'
   | 'openclaw-extra'
   | 'unknown';
 

@@ -71,6 +71,10 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 主要内容包括 `app_config`、自动启动/防休眠标记、自动更新检查频率与上次自动检查时间，以及 scheduled result baseline/task watermark/catch-up。自动更新使用 `app_update_check_frequency` 和 `app_update_last_automatic_check_at`；领域 prefix 是兼容接口，改名需迁移。
 
+`plugin_marketplace_installations_v1` 保存市场身份投影：source、kind、catalog id、runtime id、
+安装版本及可选安装路径。它不表示插件一定存在；Skill、MCP 和 Extension 的运行时清单仍是
+安装状态权威。该投影只用于跨重启更新检查、多市场路由，以及同名分层 Skill 的精确删除。
+
 ## 5. `cowork_sessions`
 
 | 列                        | 说明                                                |

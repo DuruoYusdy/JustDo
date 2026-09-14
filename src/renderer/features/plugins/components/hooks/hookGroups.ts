@@ -16,9 +16,9 @@ export interface HookGroup {
 
 const groupOrder: HookGroupId[] = [
   HookGroupId.CUSTOM,
+  HookGroupId.OTHER,
   HookGroupId.BUNDLED,
   HookGroupId.PLUGIN,
-  HookGroupId.OTHER,
 ];
 
 const getGroupId = (hook: HookEntry): HookGroupId => {

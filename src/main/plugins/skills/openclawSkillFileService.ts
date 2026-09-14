@@ -51,6 +51,13 @@ export class OpenClawSkillFileService {
     return this.runMutationExclusive(() => this.deleteDirectoryExclusive(skillDirectory));
   }
 
+  getManagedSkillPath(skillId: string): string {
+    if (!skillId || skillId !== path.basename(skillId)) {
+      throw new Error('Invalid skill id');
+    }
+    return path.join(this.getManagedSkillsDir(), skillId);
+  }
+
   private runMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
     return this.deps.runConfigMutationExclusive
       ? this.deps.runConfigMutationExclusive(operation)

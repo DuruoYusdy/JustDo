@@ -1,22 +1,32 @@
 import { ipcMain } from 'electron';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { getSkillManagementCapabilities, getSkillScope } from '../../../shared/plugins/skillManagement';
 import { isUserOwnedSkillSource } from '../../../shared/plugins/skills';
 import type { GatewaySkillEntry } from '../../engine/types';
+import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
 import type {
   OpenClawSkillFileService,
   OpenClawSkillService,
 } from '../../plugins/skills';
+import { resolveSkillOwnershipScope } from '../../plugins/skills/openclawSkillOwnership';
 
 interface SkillHandlerDependencies {
   skillService: OpenClawSkillService;
-  skillFileService: Pick<OpenClawSkillFileService, 'importPath' | 'deleteDirectory'>;
+  skillFileService: Pick<OpenClawSkillFileService, 'importPath' | 'deleteDirectory'> &
+    Partial<Pick<OpenClawSkillFileService, 'getManagedSkillPath'>>;
   installationService: PluginInstallationService;
+  getOpenClawEngineManager?: () => OpenClawEngineManager;
+  onMarketplacePluginDeleted?: (
+    kind: typeof PluginKind.SKILL,
+    runtimeId: string,
+    installPath: string,
+  ) => void;
 }
 
-const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
+const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManager) => ({
   id: entry.skillKey,
   name: entry.name,
   description: entry.description,
@@ -33,13 +43,26 @@ const mapGatewaySkill = (entry: GatewaySkillEntry) => ({
   install: entry.install,
   emoji: entry.emoji,
   homepage: entry.homepage,
+  scope: getSkillScope(entry.source, entry.filePath),
+  ownershipScope: resolveSkillOwnershipScope(entry, manager),
+  management: getSkillManagementCapabilities({
+    source: entry.source,
+    bundled: entry.bundled,
+    eligible: entry.eligible,
+    hasPath: Boolean(entry.filePath),
+    filePath: entry.filePath,
+  }),
 });
 
 export const registerSkillHandlers = ({
   skillService,
   skillFileService,
   installationService,
+  getOpenClawEngineManager,
+  onMarketplacePluginDeleted,
 }: SkillHandlerDependencies): void => {
+  const mapSkill = (entry: GatewaySkillEntry) =>
+    mapGatewaySkill(entry, getOpenClawEngineManager?.());
   installationService.registerInstaller({
     kind: PluginKind.SKILL,
     install: async request => {
@@ -47,7 +70,14 @@ export const registerSkillHandlers = ({
         return { success: false, error: 'Invalid skill installation payload' };
       }
       const result = await skillFileService.importPath(request.payload.sourcePath);
-      return { success: result.success, pluginId: result.skillId, error: result.error };
+      return {
+        success: result.success,
+        pluginId: result.skillId,
+        installPath: result.skillId
+          ? skillFileService.getManagedSkillPath?.(result.skillId)
+          : undefined,
+        error: result.error,
+      };
     },
   });
 
@@ -56,7 +86,7 @@ export const registerSkillHandlers = ({
       const status = await skillService.getStatus();
       return {
         success: true,
-        skills: status.skills.map(mapGatewaySkill),
+        skills: status.skills.map(mapSkill),
         workspaceDir: status.workspaceDir,
       };
     } catch (error) {
@@ -72,15 +102,32 @@ export const registerSkillHandlers = ({
 
   ipcMain.handle('skills:setEnabled', async (_event, options: { id: string; enabled: boolean }) => {
     try {
+      if (typeof options?.id !== 'string' || !options.id.trim() || typeof options.enabled !== 'boolean') {
+        return { success: false, error: 'Skill id and enabled state are required' };
+      }
+      const currentStatus = await skillService.getStatus();
+      const currentSkill = currentStatus.skills.find(entry => entry.skillKey === options.id.trim());
+      if (!currentSkill) return { success: false, error: 'Skill not found' };
+      const capabilities = getSkillManagementCapabilities({
+        source: currentSkill.source,
+        bundled: currentSkill.bundled,
+        eligible: currentSkill.eligible,
+        hasPath: Boolean(currentSkill.filePath),
+        filePath: currentSkill.filePath,
+      });
+      const requestedAction = options.enabled ? capabilities.enable : capabilities.disable;
+      if (!requestedAction.allowed) {
+        return { success: false, error: requestedAction.reason || 'Skill status cannot be changed' };
+      }
       const result = await skillService.updateConfig({
-        skillKey: options.id,
+        skillKey: options.id.trim(),
         enabled: options.enabled,
       });
       if (!result.ok) {
         return { success: false, error: result.error || 'Failed to update skill' };
       }
       const status = await skillService.getStatus();
-      return { success: true, skills: status.skills.map(mapGatewaySkill) };
+      return { success: true, skills: status.skills.map(mapSkill) };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to update skill';
       return {
@@ -123,8 +170,9 @@ export const registerSkillHandlers = ({
       }
 
       await skillFileService.deleteDirectory(skill.baseDir);
+      onMarketplacePluginDeleted?.(PluginKind.SKILL, skillId, skill.baseDir);
       const updatedStatus = await skillService.getStatus();
-      return { success: true, skills: updatedStatus.skills.map(mapGatewaySkill) };
+      return { success: true, skills: updatedStatus.skills.map(mapSkill) };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Failed to delete skill';
       return { success: false, error: errorMsg };
