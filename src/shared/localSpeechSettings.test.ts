@@ -19,6 +19,10 @@ describe('local speech settings', () => {
     expect(normalizeLocalSpeechSettings({ synthesisMode: 'cloud' }).synthesisMode).toBe('local');
   });
 
+  it('preserves the selected online synthesis voice', () => {
+    expect(normalizeLocalSpeechSettings({ onlineTtsVoice: 'nova' }).onlineTtsVoice).toBe('nova');
+  });
+
   it('clamps persisted and untrusted numeric values', () => {
     expect(
       normalizeLocalSpeechSettings({

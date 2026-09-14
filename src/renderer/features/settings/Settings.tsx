@@ -79,14 +79,20 @@ import AppearanceSettingsTab from '@/features/settings/components/AppearanceSett
 import AppUpdateFrequencySetting from '@/features/settings/components/AppUpdateFrequencySetting';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
-import ModelSettingsTab from '@/features/settings/components/ModelSettingsTab';
+import ModelSettingsTab, { type ModelKind } from '@/features/settings/components/ModelSettingsTab';
+import {
+  commitNonLanguageModelConfigurations,
+  createEmptyNonLanguageModelCategory,
+  getNonLanguageModelCategoryValidationError,
+  NON_LANGUAGE_MODEL_KINDS,
+  type NonLanguageModelCategory,
+  type NonLanguageModelProviders,
+} from '@/features/settings/components/nonLanguageModelConfig';
+import type { NonLanguageModelKind } from '@/features/settings/components/NonLanguageModelSettings';
 import ShortcutsSettings, {
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
-import UnifiedModelSettingsTab, {
-  type ModelKind,
-} from '@/features/settings/components/UnifiedModelSettingsTab';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
 import VoiceSettingsTab from '@/features/settings/components/VoiceSettingsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
@@ -380,6 +386,10 @@ const Settings: React.FC<SettingsProps> = ({
   // 状态
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
   const [activeModelKind, setActiveModelKind] = useState<ModelKind>('language');
+  const [nonLanguageModelProviders, setNonLanguageModelProviders] =
+    useState<NonLanguageModelProviders>(() =>
+      structuredClone(configService.getConfig().onlineModelProviders ?? {}),
+    );
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
   const [themeId, setThemeId] = useState<string>(themeService.getThemeId());
   const [appearance, setAppearance] = useState<AppearanceConfig>(() =>
@@ -427,6 +437,17 @@ const Settings: React.FC<SettingsProps> = ({
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const initialMaxGoalContinuationTurnsRef = useRef(DEFAULT_MAX_GOAL_CONTINUATION_TURNS);
   const connectionTestRef = useRef({ generation: 0, requestId: null as string | null });
+
+  const setNonLanguageModelCategory = useCallback(
+    (kind: NonLanguageModelKind, update: React.SetStateAction<NonLanguageModelCategory>): void => {
+      setNonLanguageModelProviders(current => {
+        const previous = current[kind] ?? createEmptyNonLanguageModelCategory();
+        const next = typeof update === 'function' ? update(previous) : update;
+        return { ...current, [kind]: next };
+      });
+    },
+    [],
+  );
 
   const cancelConnectionTest = useCallback((updateState = true) => {
     connectionTestRef.current.generation += 1;
@@ -730,6 +751,7 @@ const Settings: React.FC<SettingsProps> = ({
       });
       setDeveloperMode(config.developerMode ?? false);
       setVoice(normalizeLocalSpeechSettings(config.voice));
+      setNonLanguageModelProviders(structuredClone(config.onlineModelProviders ?? {}));
 
       void window.electron.cowork.getConfig().then(result => {
         if (result.success && result.config) {
@@ -1153,6 +1175,22 @@ const Settings: React.FC<SettingsProps> = ({
     e.preventDefault();
     setSaveSucceeded(false);
 
+    const invalidNonLanguageModelKind = NON_LANGUAGE_MODEL_KINDS.find(kind => {
+      const category = nonLanguageModelProviders[kind];
+      return category && getNonLanguageModelCategoryValidationError(kind, category);
+    });
+    if (invalidNonLanguageModelKind) {
+      const category = nonLanguageModelProviders[invalidNonLanguageModelKind];
+      setActiveTab('model');
+      setActiveModelKind(invalidNonLanguageModelKind);
+      setError(
+        category
+          ? getNonLanguageModelCategoryValidationError(invalidNonLanguageModelKind, category)
+          : i18nService.t('settingsSaveFailed'),
+      );
+      return;
+    }
+
     const incompleteCustomProvider = Object.entries(providers).find(
       ([providerKey, providerConfig]) =>
         isCustomProvider(providerKey) &&
@@ -1238,6 +1276,8 @@ const Settings: React.FC<SettingsProps> = ({
           password: customProxy.password ?? '',
         },
       };
+      let normalizedNonLanguageModelProviders = nonLanguageModelProviders;
+      let normalizedVoice = voice;
 
       await persistSettingsInOrder({
         saveCoworkConfig: async () => {
@@ -1293,42 +1333,81 @@ const Settings: React.FC<SettingsProps> = ({
         },
         saveAppConfig: async () => {
           const currentConfig = configService.getConfig();
-          const currentProviders = normalizeProvidersForSave(
-            normalizeProvidersForSettings({
-              ...getDefaultProviders(),
-              ...(currentConfig.providers ?? {}),
-            }),
-          );
-          const update = buildSettingsAppConfigUpdate(currentConfig, {
-            api: {
-              key: primaryProvider.apiKey,
-              baseUrl: primaryProvider.baseUrl,
+          normalizedNonLanguageModelProviders = await commitNonLanguageModelConfigurations(
+            currentConfig.onlineModelProviders ?? {},
+            nonLanguageModelProviders,
+            async normalizedConfigurations => {
+              const resolveCatalogModel = (
+                kind: 'speech-recognition' | 'speech-synthesis',
+                reference: string,
+              ) => {
+                const separator = reference.indexOf('/');
+                if (separator <= 0) return undefined;
+                const provider =
+                  normalizedConfigurations[kind]?.providers[reference.slice(0, separator)];
+                return provider?.models.find(model => model.id === reference.slice(separator + 1));
+              };
+              const selectedAsrModel = resolveCatalogModel(
+                'speech-recognition',
+                voice.onlineAsrModelRef,
+              );
+              const selectedTtsModel = resolveCatalogModel(
+                'speech-synthesis',
+                voice.onlineTtsModelRef,
+              );
+              const selectedTtsVoiceExists = selectedTtsModel?.voices?.some(
+                candidate => candidate.id === voice.onlineTtsVoice,
+              );
+              normalizedVoice = {
+                ...voice,
+                ...(normalizedConfigurations['speech-recognition'] && !selectedAsrModel
+                  ? { onlineAsrModelRef: '' }
+                  : {}),
+                ...(normalizedConfigurations['speech-synthesis'] && !selectedTtsModel
+                  ? { onlineTtsModelRef: '', onlineTtsVoice: '' }
+                  : selectedTtsModel && !selectedTtsVoiceExists
+                    ? { onlineTtsVoice: '' }
+                    : {}),
+              };
+              const currentProviders = normalizeProvidersForSave(
+                normalizeProvidersForSettings({
+                  ...getDefaultProviders(),
+                  ...(currentConfig.providers ?? {}),
+                }),
+              );
+              const update = buildSettingsAppConfigUpdate(currentConfig, {
+                api: {
+                  key: primaryProvider.apiKey,
+                  baseUrl: primaryProvider.baseUrl,
+                },
+                providers: normalizedProviders,
+                currentProviders,
+                theme,
+                appearance,
+                language,
+                useSystemProxy: proxyMode === ProxyMode.SYSTEM,
+                proxy: normalizedProxy,
+                developerMode,
+                voice: normalizedVoice,
+                shortcuts,
+                onlineModelProviders: normalizedConfigurations,
+              });
+              const renamedDefaultProvider = resolveProviderKeyAfterRename(
+                currentConfig.model.defaultModelProvider,
+                currentConfig.providers,
+                normalizedProviders,
+              );
+              if (renamedDefaultProvider !== currentConfig.model.defaultModelProvider) {
+                update.model = {
+                  ...currentConfig.model,
+                  defaultModelProvider: renamedDefaultProvider,
+                };
+              }
+              if (Object.keys(update).length > 0) {
+                await configService.updateConfig(update);
+              }
             },
-            providers: normalizedProviders,
-            currentProviders,
-            theme,
-            appearance,
-            language,
-            useSystemProxy: proxyMode === ProxyMode.SYSTEM,
-            proxy: normalizedProxy,
-            developerMode,
-            voice,
-            shortcuts,
-          });
-          const renamedDefaultProvider = resolveProviderKeyAfterRename(
-            currentConfig.model.defaultModelProvider,
-            currentConfig.providers,
-            normalizedProviders,
           );
-          if (renamedDefaultProvider !== currentConfig.model.defaultModelProvider) {
-            update.model = {
-              ...currentConfig.model,
-              defaultModelProvider: renamedDefaultProvider,
-            };
-          }
-          if (Object.keys(update).length > 0) {
-            await configService.updateConfig(update);
-          }
         },
         onAppConfigCommitted: () => {
           initialThemeRef.current = theme;
@@ -1346,6 +1425,8 @@ const Settings: React.FC<SettingsProps> = ({
 
       setProviders(normalizedProviders);
       setActiveProvider(normalizedActiveProvider);
+      setNonLanguageModelProviders(normalizedNonLanguageModelProviders);
+      setVoice(normalizedVoice);
 
       // 更新 Redux store 中的可用模型列表
       const allModels: {
@@ -2687,41 +2768,43 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'model':
         return (
-          <UnifiedModelSettingsTab
+          <ModelSettingsTab
             activeKind={activeModelKind}
             onKindChange={setActiveModelKind}
-            languageModels={
-              <ModelSettingsTab
-                activeProvider={activeProvider}
-                providers={providers}
-                isTesting={isTesting}
-                displayNameError={displayNameError}
-                providerRequiresApiKey={providerRequiresApiKey}
-                isProviderReadOnly={isProviderReadOnly}
-                getProviderDefaultBaseUrl={getProviderDefaultBaseUrl}
-                handleProviderChange={handleProviderChange}
-                handleProviderConfigChange={handleProviderConfigChange}
-                toggleProviderEnabled={toggleProviderEnabled}
-                handleAddCustomProvider={handleAddCustomProvider}
-                handleAddModel={handleAddModel}
-                handleDetectModels={handleDetectModels}
-                handleEditModel={handleEditModel}
-                handleDeleteModel={handleDeleteModel}
-                handleModelEnabledChange={handleModelEnabledChange}
-                handleSetAllModelsEnabled={handleSetAllModelsEnabled}
-                handleTestConnection={() => handleTestConnection()}
-                handleTestModelConnection={modelId => handleTestConnection(modelId)}
-                handleRefreshBuiltinModels={handleRefreshBuiltinModels}
-                isRefreshingBuiltinModels={isRefreshingBuiltinModels}
-                isDetectingModels={isDetectingModels}
-                modelDiscoveryMessage={modelDiscoveryMessage}
-                modelConnectionTestStatuses={modelConnectionTestStatuses[activeProvider] ?? {}}
-                setDisplayNameError={setDisplayNameError}
-                setProviders={setProviders}
-                setError={setError}
-                onRequestDeleteProvider={setPendingDeleteProvider}
-              />
-            }
+            languageSettings={{
+              activeProvider,
+              providers,
+              isTesting,
+              displayNameError,
+              providerRequiresApiKey,
+              isProviderReadOnly,
+              getProviderDefaultBaseUrl,
+              handleProviderChange,
+              handleProviderConfigChange,
+              toggleProviderEnabled,
+              handleAddCustomProvider,
+              handleAddModel,
+              handleDetectModels,
+              handleEditModel,
+              handleDeleteModel,
+              handleModelEnabledChange,
+              handleSetAllModelsEnabled,
+              handleTestConnection: () => handleTestConnection(),
+              handleTestModelConnection: modelId => handleTestConnection(modelId),
+              handleRefreshBuiltinModels,
+              isRefreshingBuiltinModels,
+              isDetectingModels,
+              modelDiscoveryMessage,
+              modelConnectionTestStatuses: modelConnectionTestStatuses[activeProvider] ?? {},
+              setDisplayNameError,
+              setProviders,
+              setError,
+              onRequestDeleteProvider: setPendingDeleteProvider,
+            }}
+            nonLanguageSettings={{
+              categories: nonLanguageModelProviders,
+              setCategory: setNonLanguageModelCategory,
+            }}
           />
         );
 

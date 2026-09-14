@@ -1,41 +1,54 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { type FormEvent, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { currentConfig, updateConfig } = vi.hoisted(() => ({
+const { currentConfig } = vi.hoisted(() => ({
   currentConfig: { onlineModelProviders: {}, voice: {} } as Record<string, unknown>,
-  updateConfig: vi.fn(),
-}));
-
-vi.mock('@/services/config', () => ({
-  configService: {
-    getConfig: () => currentConfig,
-    updateConfig,
-  },
 }));
 
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key },
 }));
 
-import CustomOnlineModelSettings, {
-  buildCustomOnlineEndpointPreview,
-  buildCustomOnlineModelsUrl,
-  normalizeCustomOnlineBaseUrl,
+import {
+  createEmptyNonLanguageModelCategory,
+  type NonLanguageModelCategory,
+  type NonLanguageModelProviders,
+} from './nonLanguageModelConfig';
+import NonLanguageModelSettings, {
+  buildNonLanguageModelEndpointPreview,
+  buildNonLanguageModelModelsUrl,
+  type NonLanguageModelKind,
+  normalizeNonLanguageModelBaseUrl,
   parseDiscoveredVoices,
   parseOpenApiDefaultModels,
-} from './CustomOnlineModelSettings';
-import { buildVoiceDiscoveryUrls } from './customOnlineModelUrls';
+} from './NonLanguageModelSettings';
+import { buildVoiceDiscoveryUrls } from './nonLanguageModelUrls';
 
 afterEach(cleanup);
 
-describe('CustomOnlineModelSettings', () => {
+describe('NonLanguageModelSettings', () => {
   const saveConfiguration = vi.fn();
   const fetch = vi.fn();
 
+  const renderSettings = (kind: NonLanguageModelKind) => {
+    const categories = currentConfig.onlineModelProviders as NonLanguageModelProviders;
+    const initial = structuredClone(categories[kind] ?? createEmptyNonLanguageModelCategory());
+    const onSubmit = vi.fn((event: FormEvent) => event.preventDefault());
+    const Host = () => {
+      const [category, setCategory] = useState<NonLanguageModelCategory>(initial);
+      return (
+        <form onSubmit={onSubmit}>
+          <NonLanguageModelSettings kind={kind} category={category} setCategory={setCategory} />
+        </form>
+      );
+    };
+    return { ...render(<Host />), onSubmit };
+  };
+
   beforeEach(() => {
-    updateConfig.mockReset().mockResolvedValue(undefined);
     currentConfig.onlineModelProviders = {};
     currentConfig.voice = {};
     saveConfiguration.mockReset().mockResolvedValue(undefined);
@@ -55,38 +68,38 @@ describe('CustomOnlineModelSettings', () => {
   });
 
   it('builds capability-specific endpoint previews', () => {
-    expect(buildCustomOnlineEndpointPreview('speech-synthesis', 'http://speech.lan/v1/')).toBe(
+    expect(buildNonLanguageModelEndpointPreview('speech-synthesis', 'http://speech.lan/v1/')).toBe(
       'http://speech.lan/v1/audio/speech',
     );
-    expect(buildCustomOnlineEndpointPreview('image', 'https://media.test/v1')).toBe(
+    expect(buildNonLanguageModelEndpointPreview('image', 'https://media.test/v1')).toBe(
       'https://media.test/v1/images/generations',
     );
-    expect(buildCustomOnlineEndpointPreview('video', 'https://media.test/v1')).toBe(
+    expect(buildNonLanguageModelEndpointPreview('video', 'https://media.test/v1')).toBe(
       'https://media.test/v1/videos',
     );
-    expect(buildCustomOnlineEndpointPreview('speech-recognition', 'http://speech.lan/v1')).toBe(
+    expect(buildNonLanguageModelEndpointPreview('speech-recognition', 'http://speech.lan/v1')).toBe(
       'ws://speech.lan/v1/realtime?intent=transcription',
     );
     expect(
-      buildCustomOnlineEndpointPreview(
+      buildNonLanguageModelEndpointPreview(
         'speech-synthesis',
         'http://speech.lan/v1/audio/speech?token=value#section',
       ),
     ).toBe('http://speech.lan/v1/audio/speech?token=value');
     expect(
-      normalizeCustomOnlineBaseUrl(
+      normalizeNonLanguageModelBaseUrl(
         'speech-synthesis',
         'http://speech.lan/v1/audio/speech?token=value',
       ),
     ).toBe('http://speech.lan/v1?token=value');
     expect(
-      buildCustomOnlineModelsUrl(
+      buildNonLanguageModelModelsUrl(
         'speech-synthesis',
         'http://speech.lan/v1/audio/speech?token=value',
       ),
     ).toBe('http://speech.lan/v1/models?token=value');
     expect(
-      normalizeCustomOnlineBaseUrl(
+      normalizeNonLanguageModelBaseUrl(
         'speech-synthesis',
         'http://speech.lan/v1/audio/speech?token=/',
       ),
@@ -192,12 +205,16 @@ describe('CustomOnlineModelSettings', () => {
         'http://127.0.0.1:18084/v1/audio/speech',
       ),
     ).toEqual([
-      { id: 'moss-tts-nano-onnx', name: 'moss-tts-nano-onnx', voice: 'Junhao' },
+      {
+        id: 'moss-tts-nano-onnx',
+        name: 'moss-tts-nano-onnx',
+        voices: [{ id: 'Junhao', name: 'Junhao' }],
+      },
     ]);
   });
 
-  it('starts empty and lets the user create a provider and its models', async () => {
-    render(<CustomOnlineModelSettings kind="speech-recognition" />);
+  it('starts empty and keeps provider and model edits in the shared draft', () => {
+    renderSettings('speech-recognition');
 
     expect(screen.getByText('customModelNoProviders')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /addCustomProvider/ }));
@@ -219,48 +236,49 @@ describe('CustomOnlineModelSettings', () => {
     });
     const confirmButtons = screen.getAllByRole('button', { name: 'confirm' });
     fireEvent.click(confirmButtons[confirmButtons.length - 1]);
-    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
-    fireEvent.click(screen.getByRole('button', { name: /mediaModelSave/ }));
-
-    await waitFor(() =>
-      expect(saveConfiguration).toHaveBeenCalledWith({
-        provider: 'openai',
-        baseUrl: 'http://speech.lan/v1',
-        apiKey: 'local-key',
-        model: 'whisper-local',
-      }),
-    );
-    expect(updateConfig).toHaveBeenCalled();
+    expect(screen.getByText('Whisper Local')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /mediaModelSave/ })).toBeNull();
   });
 
-  it('persists and clears Gateway state when the last provider is deleted', async () => {
+  it('confirms modal fields on Enter without submitting the outer settings form', () => {
+    const { onSubmit } = renderSettings('speech-recognition');
+    fireEvent.click(screen.getByRole('button', { name: /addCustomProvider/ }));
+    const providerNameInput = screen.getByLabelText('customDisplayName');
+    fireEvent.change(providerNameInput, { target: { value: 'Office Speech' } });
+    fireEvent.keyDown(providerNameInput, { key: 'Enter' });
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('baseUrl'), {
+      target: { value: 'http://speech.lan/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /manualAddModel/ }));
+    const modelIdInput = screen.getByLabelText('mediaModelId');
+    fireEvent.change(modelIdInput, { target: { value: 'whisper-local' } });
+    fireEvent.keyDown(modelIdInput, { key: 'Enter' });
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText('whisper-local')).toBeTruthy();
+  });
+
+  it('keeps deletion in the shared draft until the settings form is saved', () => {
     currentConfig.onlineModelProviders = {
       'speech-recognition': {
-        defaultProviderId: 'office',
         providers: {
           office: {
             displayName: 'Office Speech',
             baseUrl: 'http://speech.lan/v1',
             apiKey: 'key',
-            defaultModel: 'whisper',
             models: [{ id: 'whisper', name: 'Whisper' }],
           },
         },
       },
     };
 
-    render(<CustomOnlineModelSettings kind="speech-recognition" />);
+    renderSettings('speech-recognition');
     fireEvent.click(screen.getByRole('button', { name: 'deleteCustomProvider: Office Speech' }));
 
-    await waitFor(() => expect(window.electron.onlineAsr.clearConfiguration).toHaveBeenCalled());
-    expect(updateConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        onlineModelProviders: expect.objectContaining({
-          'speech-recognition': { providers: {} },
-        }),
-      }),
-    );
     expect(screen.getByText('customModelNoProviders')).toBeTruthy();
+    expect(window.electron.onlineAsr.clearConfiguration).not.toHaveBeenCalled();
   });
 
   it('validates provider names and rejects duplicates', () => {
@@ -276,7 +294,7 @@ describe('CustomOnlineModelSettings', () => {
         },
       },
     };
-    render(<CustomOnlineModelSettings kind="image" />);
+    renderSettings('image');
 
     fireEvent.click(screen.getByRole('button', { name: /addCustomProvider/ }));
     const dialog = screen.getByRole('dialog');
@@ -312,13 +330,15 @@ describe('CustomOnlineModelSettings', () => {
       statusText: 'OK',
       data: { data: [{ id: 'image-pro', name: 'Image Pro' }] },
     });
-    render(<CustomOnlineModelSettings kind="image" />);
+    renderSettings('image');
 
     expect(screen.getByTitle('https://media.lan/v1/images/generations')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
 
     await waitFor(() => expect(screen.getByText('Image Pro')).toBeTruthy());
     expect(screen.getByText('Manual model')).toBeTruthy();
+    expect(screen.queryByText('image-pro')).toBeNull();
+    expect(screen.queryByText('manual-model')).toBeNull();
     expect(fetch).toHaveBeenCalledWith(
       expect.objectContaining({
         url: 'https://media.lan/v1/models',
@@ -374,41 +394,47 @@ describe('CustomOnlineModelSettings', () => {
           },
         },
       });
-    render(<CustomOnlineModelSettings kind="speech-synthesis" />);
+    renderSettings('speech-synthesis');
 
     fireEvent.click(screen.getByRole('button', { name: 'detectModels' }));
 
-    await waitFor(() => expect(screen.getAllByText('moss-tts-nano-onnx')).toHaveLength(2));
-    expect(screen.getByText('voiceSpeaker: Junhao')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('moss-tts-nano-onnx')).toBeTruthy());
+    expect(screen.getByText('availableVoiceCount')).toBeTruthy();
     expect(fetch).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ url: 'http://127.0.0.1:18084/openapi.json' }),
     );
   });
 
-  it('stores speech synthesis voices on each model and applies the selected model voice', async () => {
+  it('stores the complete discovered voice list without selecting a default voice', async () => {
     currentConfig.onlineModelProviders = {
       'speech-synthesis': {
-        defaultProviderId: 'speech',
         providers: {
           speech: {
             displayName: 'Speech API',
             baseUrl: 'http://speech.lan/v1/audio/speech',
             apiKey: '',
-            defaultModel: 'tts-pro',
-            models: [{ id: 'tts-pro', name: 'TTS Pro', voice: 'nova' }],
+            models: [
+              {
+                id: 'tts-pro',
+                name: 'TTS Pro',
+                voices: [{ id: 'nova', name: 'Nova' }],
+              },
+            ],
           },
         },
       },
     };
-    const saveTtsConfiguration = vi.fn().mockResolvedValue(undefined);
-    window.electron.onlineTts.saveConfiguration = saveTtsConfiguration;
-    render(<CustomOnlineModelSettings kind="speech-synthesis" />);
+    renderSettings('speech-synthesis');
 
-    expect(screen.getByText('voiceSpeaker: nova')).toBeTruthy();
-    expect(screen.queryByLabelText('voiceSpeaker')).toBeNull();
+    expect(screen.getByText('availableVoiceCount')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'editModel: TTS Pro' }));
-    expect((screen.getByLabelText('voiceSpeaker') as HTMLInputElement).value).toBe('nova');
+    expect(screen.getByRole('listitem', { name: /Nova/ })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('manualVoiceId'), {
+      target: { value: 'manual-voice' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'addVoice' }));
+    expect(screen.getByRole('listitem', { name: /manual-voice/ })).toBeTruthy();
     fetch
       .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' })
       .mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' })
@@ -432,33 +458,14 @@ describe('CustomOnlineModelSettings', () => {
       3,
       expect.objectContaining({ url: 'http://speech.lan/api/voices', method: 'GET' }),
     );
-    expect(document.querySelector('option[value="calm"]')?.getAttribute('label')).toBe('calm');
-    expect(document.querySelector('option[value="clone"]')?.getAttribute('label')).toBe(
-      'Cloned voice',
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: /mediaModelSave/ }));
+    expect(screen.getByRole('listitem', { name: /calm/ })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: /Cloned voice/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
 
-    await waitFor(() =>
-      expect(saveTtsConfiguration).toHaveBeenCalledWith({
-        provider: 'openai',
-        baseUrl: 'http://speech.lan/v1',
-        apiKey: 'local',
-        model: 'tts-pro',
-        voice: 'nova',
-      }),
-    );
-    expect(updateConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        onlineModelProviders: expect.objectContaining({
-          'speech-synthesis': expect.objectContaining({
-            providers: expect.objectContaining({
-              speech: expect.objectContaining({ baseUrl: 'http://speech.lan/v1' }),
-            }),
-          }),
-        }),
-      }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'editModel: TTS Pro' }));
+    expect(screen.getByRole('listitem', { name: /calm/ })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: /Cloned voice/ })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: /manual-voice/ })).toBeTruthy();
   });
 
   it('ignores stale voice discovery after the model ID changes', async () => {
@@ -469,15 +476,20 @@ describe('CustomOnlineModelSettings', () => {
             displayName: 'Speech API',
             baseUrl: 'http://speech.lan/v1',
             apiKey: '',
-            defaultModel: 'tts-old',
-            models: [{ id: 'tts-old', name: 'Old TTS', voice: 'old-voice' }],
+            models: [
+              {
+                id: 'tts-old',
+                name: 'Old TTS',
+                voices: [{ id: 'old-voice', name: 'Old voice' }],
+              },
+            ],
           },
         },
       },
     };
     let resolveFetch: ((value: unknown) => void) | undefined;
     fetch.mockReturnValueOnce(new Promise(resolve => (resolveFetch = resolve)));
-    render(<CustomOnlineModelSettings kind="speech-synthesis" />);
+    renderSettings('speech-synthesis');
     fireEvent.click(screen.getByRole('button', { name: 'editModel: Old TTS' }));
     fireEvent.click(screen.getByRole('button', { name: 'detectVoices' }));
 
@@ -493,36 +505,52 @@ describe('CustomOnlineModelSettings', () => {
     });
 
     expect(window.electron.api.cancelFetch).toHaveBeenCalled();
-    expect(document.querySelector('option[value="stale-voice"]')).toBeNull();
+    expect(screen.queryByRole('listitem', { name: 'stale-voice' })).toBeNull();
   });
 
-  it('does not submit an invalid category default while another provider is active', () => {
+  it('does not require a default provider, model, or voice', () => {
     currentConfig.onlineModelProviders = {
       'speech-synthesis': {
-        defaultProviderId: 'broken',
         providers: {
           ready: {
             displayName: 'Ready Speech',
             baseUrl: 'http://ready.lan/v1',
             apiKey: '',
-            defaultModel: 'tts-ready',
-            models: [{ id: 'tts-ready', name: 'Ready TTS', voice: 'ready-voice' }],
+            models: [{ id: 'tts-ready', name: 'Ready TTS' }],
           },
           broken: {
             displayName: 'Broken Speech',
             baseUrl: 'http://broken.lan/v1',
             apiKey: '',
-            defaultModel: 'tts-broken',
             models: [{ id: 'tts-broken', name: 'Broken TTS' }],
           },
         },
       },
     };
-    render(<CustomOnlineModelSettings kind="speech-synthesis" />);
+    renderSettings('speech-synthesis');
 
-    expect(screen.getByText('customModelProviderInvalid')).toBeTruthy();
-    expect(
-      (screen.getByRole('button', { name: /mediaModelSave/ }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect(screen.queryByText('customModelProviderInvalid')).toBeNull();
+    expect(screen.queryByRole('button', { name: /mediaModelSave/ })).toBeNull();
+  });
+
+  it('keeps default model selection for image generation', () => {
+    currentConfig.onlineModelProviders = {
+      image: {
+        providers: {
+          image: {
+            displayName: 'Image API',
+            baseUrl: 'https://image.test/v1',
+            apiKey: '',
+            models: [{ id: 'image-pro', name: 'Image Pro' }],
+          },
+        },
+      },
+    };
+    renderSettings('image');
+
+    expect(screen.getByText('customModelDefaultRequired')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'mediaModelSetDefault' }));
+    expect(screen.getByText('mediaModelDefaultBadge')).toBeTruthy();
+    expect(screen.queryByText('customModelDefaultRequired')).toBeNull();
   });
 });

@@ -12,6 +12,17 @@ import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance
 
 const BUILTIN_MODELS_PROVIDER_KEY = 'builtin_models';
 
+export interface OnlineModelVoiceConfig {
+  id: string;
+  name: string;
+}
+
+export interface OnlineModelConfig {
+  id: string;
+  name: string;
+  voices?: OnlineModelVoiceConfig[];
+}
+
 // 配置类型定义
 export interface AppConfig {
   browserMode: BrowserModeValue;
@@ -70,7 +81,7 @@ export interface AppConfig {
             baseUrl: string;
             apiKey: string;
             defaultModel?: string;
-            models: Array<{ id: string; name: string; voice?: string }>;
+            models: OnlineModelConfig[];
           }
         >;
       }

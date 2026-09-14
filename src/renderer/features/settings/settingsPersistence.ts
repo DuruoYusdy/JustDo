@@ -19,6 +19,7 @@ interface SettingsAppConfigDraft {
   developerMode: AppConfig['developerMode'];
   voice: AppConfig['voice'];
   shortcuts: NonNullable<AppConfig['shortcuts']>;
+  onlineModelProviders: NonNullable<AppConfig['onlineModelProviders']>;
 }
 
 const hasConfigValueChanged = (current: unknown, next: unknown): boolean =>
@@ -68,6 +69,9 @@ export const buildSettingsAppConfigUpdate = (
   }
   if (hasConfigValueChanged(current.shortcuts, draft.shortcuts)) {
     update.shortcuts = draft.shortcuts;
+  }
+  if (hasConfigValueChanged(current.onlineModelProviders ?? {}, draft.onlineModelProviders)) {
+    update.onlineModelProviders = draft.onlineModelProviders;
   }
   return update;
 };

@@ -186,13 +186,11 @@ describe('VoiceSettingsTab', () => {
   it('selects an online recognition model from the user provider catalog', async () => {
     mockConfig.onlineModelProviders = {
       'speech-recognition': {
-        defaultProviderId: 'office',
         providers: {
           office: {
             displayName: 'Office speech',
             baseUrl: 'http://10.0.0.8:8000/v1',
             apiKey: '',
-            defaultModel: 'whisper-large',
             models: [
               { id: 'whisper-large', name: 'Whisper Large' },
               { id: 'sense-voice', name: 'SenseVoice' },
@@ -229,11 +227,11 @@ describe('VoiceSettingsTab', () => {
       />,
     );
 
-    expect(await screen.findByText(i18nService.t('voiceOnlineReady'))).toBeTruthy();
+    expect(await screen.findByText(i18nService.t('voiceOnlineUnavailable'))).toBeTruthy();
     const selector = screen.getByRole('combobox', {
       name: i18nService.t('voiceRecognitionModel'),
     });
-    expect(selector.textContent).toContain('Office speech / Whisper Large');
+    expect(selector.textContent).toContain(i18nService.t('voiceSelectModel'));
     fireEvent.click(selector);
     fireEvent.click(screen.getByRole('option', { name: 'Office speech / SenseVoice' }));
 
@@ -257,16 +255,28 @@ describe('VoiceSettingsTab', () => {
   it('selects an online synthesis model from the user provider catalog', async () => {
     mockConfig.onlineModelProviders = {
       'speech-synthesis': {
-        defaultProviderId: 'lan-tts',
         providers: {
           'lan-tts': {
             displayName: 'LAN voice',
             baseUrl: 'http://speech.local/v1/audio/speech',
             apiKey: 'secret',
-            defaultModel: 'voice-small',
             models: [
-              { id: 'voice-small', name: 'Voice Small', voice: 'alloy' },
-              { id: 'voice-hq', name: 'Voice HQ', voice: 'nova' },
+              {
+                id: 'voice-small',
+                name: 'Voice Small',
+                voices: [
+                  { id: 'alloy', name: 'Alloy' },
+                  { id: 'echo', name: 'Echo' },
+                ],
+              },
+              {
+                id: 'voice-hq',
+                name: 'Voice HQ',
+                voices: [
+                  { id: 'nova', name: 'Nova' },
+                  { id: 'shimmer', name: 'Shimmer' },
+                ],
+              },
               { id: 'voice-unconfigured', name: 'Voice Missing' },
             ],
           },
@@ -290,7 +300,7 @@ describe('VoiceSettingsTab', () => {
       },
     });
 
-    render(
+    const { rerender } = render(
       <VoiceSettingsTab
         value={{
           ...defaultLocalSpeechSettings,
@@ -305,24 +315,53 @@ describe('VoiceSettingsTab', () => {
     const selector = screen.getByRole('combobox', {
       name: i18nService.t('voiceSynthesisModel'),
     });
-    expect(selector.textContent).toContain('LAN voice / Voice Small');
+    expect(selector.textContent).toContain(i18nService.t('voiceSelectModel'));
     expect(selector.textContent).not.toContain('Voice Missing');
     fireEvent.click(selector);
-    fireEvent.click(screen.getByRole('option', { name: 'LAN voice / Voice HQ' }));
+    fireEvent.click(screen.getByRole('option', { name: 'LAN voice / Voice Small' }));
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...defaultLocalSpeechSettings,
+      outputEnabled: true,
+      synthesisMode: 'online',
+      onlineTtsModelRef: 'lan-tts/voice-small',
+      onlineTtsVoice: '',
+    });
+    expect(saveConfiguration).not.toHaveBeenCalled();
+
+    rerender(
+      <VoiceSettingsTab
+        value={{
+          ...defaultLocalSpeechSettings,
+          outputEnabled: true,
+          synthesisMode: 'online',
+          onlineTtsModelRef: 'lan-tts/voice-small',
+        }}
+        onChange={onChange}
+      />,
+    );
+    const speakerSelector = screen.getByRole('combobox', {
+      name: i18nService.t('voiceSpeaker'),
+    });
+    expect(speakerSelector.textContent).toContain(i18nService.t('voiceSelectSpeaker'));
+    fireEvent.click(speakerSelector);
+    expect(screen.queryByRole('option', { name: 'Nova' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Echo' }));
 
     await vi.waitFor(() => {
       expect(onChange).toHaveBeenCalledWith({
         ...defaultLocalSpeechSettings,
         outputEnabled: true,
         synthesisMode: 'online',
-        onlineTtsModelRef: 'lan-tts/voice-hq',
+        onlineTtsModelRef: 'lan-tts/voice-small',
+        onlineTtsVoice: 'echo',
       });
       expect(saveConfiguration).toHaveBeenCalledWith({
         provider: 'openai',
         baseUrl: 'http://speech.local/v1',
         apiKey: 'secret',
-        model: 'voice-hq',
-        voice: 'nova',
+        model: 'voice-small',
+        voice: 'echo',
       });
     });
     expect(screen.queryByRole('button', { name: i18nService.t('voiceModelDownload') })).toBeNull();
@@ -331,13 +370,11 @@ describe('VoiceSettingsTab', () => {
   it('keeps the previous selection and reports a Gateway model switch failure', async () => {
     mockConfig.onlineModelProviders = {
       'speech-recognition': {
-        defaultProviderId: 'office',
         providers: {
           office: {
             displayName: 'Office speech',
             baseUrl: 'http://speech.lan/v1',
             apiKey: 'key',
-            defaultModel: 'model-a',
             models: [
               { id: 'model-a', name: 'Model A' },
               { id: 'model-b', name: 'Model B' },

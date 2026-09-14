@@ -27,6 +27,7 @@ describe('settings app config updates', () => {
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
+        onlineModelProviders: defaultConfig.onlineModelProviders!,
       }),
     ).toEqual({ appearance });
   });
@@ -56,6 +57,7 @@ describe('settings app config updates', () => {
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
+        onlineModelProviders: defaultConfig.onlineModelProviders!,
       }),
     ).toMatchObject({ api, providers });
   });
@@ -76,6 +78,7 @@ describe('settings app config updates', () => {
         developerMode: defaultConfig.developerMode,
         voice: defaultConfig.voice,
         shortcuts: defaultConfig.shortcuts!,
+        onlineModelProviders: defaultConfig.onlineModelProviders!,
       }),
     ).toEqual({
       useSystemProxy: !defaultConfig.useSystemProxy,
@@ -100,8 +103,42 @@ describe('settings app config updates', () => {
         developerMode: defaultConfig.developerMode,
         voice,
         shortcuts: defaultConfig.shortcuts!,
+        onlineModelProviders: defaultConfig.onlineModelProviders!,
       }),
     ).toEqual({ voice });
+  });
+
+  test('persists non-language model settings independently', () => {
+    const providers = defaultConfig.providers!;
+    const onlineModelProviders = {
+      image: {
+        providers: {
+          'image-api': {
+            displayName: 'Image API',
+            baseUrl: 'https://image.test/v1',
+            apiKey: 'secret',
+            models: [{ id: 'image-pro', name: 'Image Pro' }],
+          },
+        },
+      },
+    };
+
+    expect(
+      buildSettingsAppConfigUpdate(defaultConfig, {
+        api: defaultConfig.api,
+        providers,
+        currentProviders: providers,
+        theme: defaultConfig.theme,
+        appearance: defaultConfig.appearance,
+        language: defaultConfig.language,
+        useSystemProxy: defaultConfig.useSystemProxy,
+        proxy: defaultConfig.proxy,
+        developerMode: defaultConfig.developerMode,
+        voice: defaultConfig.voice,
+        shortcuts: defaultConfig.shortcuts!,
+        onlineModelProviders,
+      }),
+    ).toEqual({ onlineModelProviders });
   });
 });
 

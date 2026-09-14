@@ -1,6 +1,5 @@
 import {
   ArrowPathIcon,
-  CheckIcon,
   CubeIcon,
   EyeIcon,
   EyeSlashIcon,
@@ -14,30 +13,30 @@ import { normalizeOpenClawProviderId, validateCustomProviderDisplayName } from '
 import { parseProviderModelsResponse } from '@shared/providers/modelDiscovery';
 import React, { useEffect, useRef, useState } from 'react';
 
-import type { AppConfig } from '@/app/config';
-import { configService } from '@/services/config';
+import type { AppConfig, OnlineModelVoiceConfig } from '@/app/config';
 import { i18nService } from '@/services/i18n';
 
 import {
-  buildCustomOnlineEndpointPreview,
-  buildCustomOnlineModelsUrl,
-  buildCustomOnlineOpenApiUrl,
+  getNonLanguageModelCategoryValidationError,
+  type NonLanguageModelCategory,
+} from './nonLanguageModelConfig';
+import {
+  buildNonLanguageModelEndpointPreview,
+  buildNonLanguageModelModelsUrl,
+  buildNonLanguageModelOpenApiUrl,
   buildVoiceDiscoveryUrls,
-  type CustomOnlineModelKind,
-  normalizeCustomOnlineBaseUrl,
-} from './customOnlineModelUrls';
+  type NonLanguageModelKind,
+} from './nonLanguageModelUrls';
 
-export type { CustomOnlineModelKind } from './customOnlineModelUrls';
+export type { NonLanguageModelKind } from './nonLanguageModelUrls';
 export {
-  buildCustomOnlineEndpointPreview,
-  buildCustomOnlineModelsUrl,
-  normalizeCustomOnlineBaseUrl,
-} from './customOnlineModelUrls';
+  buildNonLanguageModelEndpointPreview,
+  buildNonLanguageModelModelsUrl,
+  normalizeNonLanguageModelBaseUrl,
+} from './nonLanguageModelUrls';
 
-type Category = NonNullable<AppConfig['onlineModelProviders']>[CustomOnlineModelKind];
+type Category = NonNullable<AppConfig['onlineModelProviders']>[NonLanguageModelKind];
 type Provider = NonNullable<Category>['providers'][string];
-
-const emptyCategory = (): NonNullable<Category> => ({ providers: {} });
 
 const PROTOCOL_HINT_KEYS = {
   'speech-recognition': 'customRecognitionProtocolHint',
@@ -48,8 +47,8 @@ const PROTOCOL_HINT_KEYS = {
 
 const DISCOVERY_TIMEOUT_MS = 10_000;
 
-type DiscoveredVoice = { id: string; name: string };
-type DiscoveredModel = { id: string; name: string; voice?: string };
+type DiscoveredVoice = OnlineModelVoiceConfig;
+type DiscoveredModel = { id: string; name: string; voices?: DiscoveredVoice[] };
 type DetectionRequestsRef = React.MutableRefObject<Set<string>>;
 
 const FOCUSABLE_SELECTOR = [
@@ -81,6 +80,23 @@ const trapDialogTab = (event: React.KeyboardEvent<HTMLDivElement>): void => {
       : currentIndex + 1;
   event.preventDefault();
   focusable[nextIndex]?.focus();
+};
+
+const handleDialogConfirmKey = (
+  event: React.KeyboardEvent<HTMLDivElement>,
+  confirm: () => void,
+): boolean => {
+  if (
+    event.key !== 'Enter' ||
+    event.nativeEvent.isComposing ||
+    event.target instanceof HTMLButtonElement
+  ) {
+    return false;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  confirm();
+  return true;
 };
 
 const cancelDetectionRequests = (requests: DetectionRequestsRef): void => {
@@ -170,14 +186,15 @@ const resolveOpenApiSchema = (
   return reference
     .slice(2)
     .split('/')
-    .reduce<unknown>((current, segment) => toRecord(current)?.[decodeURIComponent(segment)], root) as
-    | Record<string, unknown>
-    | null;
+    .reduce<unknown>(
+      (current, segment) => toRecord(current)?.[decodeURIComponent(segment)],
+      root,
+    ) as Record<string, unknown> | null;
 };
 
 export const parseOpenApiDefaultModels = (
   payload: unknown,
-  kind: CustomOnlineModelKind,
+  kind: NonLanguageModelKind,
   endpointUrl: string,
 ): DiscoveredModel[] => {
   const root = toRecord(payload);
@@ -210,31 +227,35 @@ export const parseOpenApiDefaultModels = (
     .map(model => ({
       id: model.trim(),
       name: model.trim(),
-      ...(voice ? { voice } : {}),
+      ...(voice ? { voices: [{ id: voice, name: voice }] } : {}),
     }));
 };
 
-interface Props {
-  kind: CustomOnlineModelKind;
+interface NonLanguageModelSettingsProps {
+  kind: NonLanguageModelKind;
+  category: NonLanguageModelCategory;
+  setCategory: React.Dispatch<React.SetStateAction<NonLanguageModelCategory>>;
 }
 
-const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
-  const initial = configService.getConfig().onlineModelProviders?.[kind] ?? emptyCategory();
-  const [category, setCategory] = useState<NonNullable<Category>>(() => structuredClone(initial));
-  const [activeProviderId, setActiveProviderId] = useState(Object.keys(initial.providers)[0] ?? '');
+const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
+  kind,
+  category,
+  setCategory,
+}) => {
+  const [activeProviderId, setActiveProviderId] = useState(
+    Object.keys(category.providers)[0] ?? '',
+  );
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [providerName, setProviderName] = useState('');
   const [modelDialog, setModelDialog] = useState<{ previousId?: string } | null>(null);
   const [modelId, setModelId] = useState('');
   const [modelName, setModelName] = useState('');
-  const [modelVoice, setModelVoice] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
   const [formError, setFormError] = useState('');
   const [detectingModels, setDetectingModels] = useState(false);
   const [detectionMessage, setDetectionMessage] = useState('');
   const [detectedVoices, setDetectedVoices] = useState<DiscoveredVoice[]>([]);
+  const [manualVoiceId, setManualVoiceId] = useState('');
   const [detectingVoices, setDetectingVoices] = useState(false);
   const [voiceDetectionMessage, setVoiceDetectionMessage] = useState('');
   const modelDetectionGenerationRef = useRef(0);
@@ -277,6 +298,12 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
     [],
   );
 
+  useEffect(() => {
+    if (!category.providers[activeProviderId]) {
+      setActiveProviderId(Object.keys(category.providers)[0] ?? '');
+    }
+  }, [activeProviderId, category.providers]);
+
   const invalidateModelDetection = (): void => {
     modelDetectionGenerationRef.current += 1;
     cancelDetectionRequests(modelDetectionRequestsRef);
@@ -308,12 +335,15 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
 
   const providerEntries = Object.entries(category.providers);
   const activeProvider = category.providers[activeProviderId];
+  const supportsCatalogDefault = kind === 'image' || kind === 'video';
   const defaultRef =
-    category.defaultProviderId && category.providers[category.defaultProviderId]
+    supportsCatalogDefault &&
+    category.defaultProviderId &&
+    category.providers[category.defaultProviderId]
       ? `${category.defaultProviderId}/${category.providers[category.defaultProviderId].defaultModel ?? ''}`
       : '';
   const endpointPreview = activeProvider
-    ? buildCustomOnlineEndpointPreview(kind, activeProvider.baseUrl)
+    ? buildNonLanguageModelEndpointPreview(kind, activeProvider.baseUrl)
     : '';
 
   const providerNameError = (name: string, currentId?: string): string => {
@@ -340,7 +370,6 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
         [activeProviderId]: { ...current.providers[activeProviderId], ...patch },
       },
     }));
-    setSaveState('idle');
   };
 
   const nextProviderId = (name: string): string => {
@@ -374,20 +403,6 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
     closeProviderDialog();
     setProviderName('');
     setFormError('');
-    setSaveState('idle');
-  };
-
-  const clearGatewayConfiguration = async (): Promise<void> => {
-    if (kind === 'speech-recognition') {
-      await window.electron.onlineAsr.clearConfiguration();
-    } else if (kind === 'speech-synthesis') {
-      await window.electron.onlineTts.clearConfiguration();
-    } else {
-      await window.electron.mediaGenerationModels.saveConfiguration(kind, {
-        primary: '',
-        fallbacks: [],
-      });
-    }
   };
 
   const deleteProvider = (id: string): void => {
@@ -395,36 +410,17 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
     invalidateVoiceDetection();
     const remaining = Object.fromEntries(providerEntries.filter(([key]) => key !== id));
     if (Object.keys(remaining).length === 0) {
-      setSaving(true);
-      setSaveState('idle');
-      void clearGatewayConfiguration()
-        .then(async () => {
-          const config = configService.getConfig();
-          const all = config.onlineModelProviders ?? {};
-          const voice =
-            kind === 'speech-recognition'
-              ? { ...config.voice, onlineAsrModelRef: '' }
-              : kind === 'speech-synthesis'
-                ? { ...config.voice, onlineTtsModelRef: '' }
-                : config.voice;
-          await configService.updateConfig({
-            onlineModelProviders: { ...all, [kind]: emptyCategory() },
-            voice,
-          });
-          setCategory(emptyCategory());
-          setActiveProviderId('');
-          setSaveState('saved');
-        })
-        .catch(() => setSaveState('error'))
-        .finally(() => setSaving(false));
+      setCategory({ providers: {} });
+      setActiveProviderId('');
       return;
     }
     setCategory(current => ({
       providers: remaining,
-      ...(current.defaultProviderId === id ? {} : { defaultProviderId: current.defaultProviderId }),
+      ...(supportsCatalogDefault && current.defaultProviderId !== id
+        ? { defaultProviderId: current.defaultProviderId }
+        : {}),
     }));
     if (activeProviderId === id) setActiveProviderId(Object.keys(remaining)[0] ?? '');
-    setSaveState('idle');
   };
 
   const openModelDialog = (model?: Provider['models'][number]): void => {
@@ -434,8 +430,8 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
     setModelDialog(model ? { previousId: model.id } : {});
     setModelId(model?.id ?? '');
     setModelName(model?.name ?? '');
-    setModelVoice(model?.voice ?? '');
-    setDetectedVoices([]);
+    setDetectedVoices(model?.voices ?? []);
+    setManualVoiceId('');
     setVoiceDetectionMessage('');
     setFormError('');
   };
@@ -451,25 +447,24 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
       setFormError(i18nService.t(id ? 'mediaModelAlreadyExists' : 'mediaModelInvalidId'));
       return;
     }
-    if (kind === 'speech-synthesis' && !modelVoice.trim()) {
-      setFormError(i18nService.t('customModelVoiceRequired'));
-      return;
-    }
     const nextModel = {
       id,
       name,
-      ...(kind === 'speech-synthesis' ? { voice: modelVoice.trim() } : {}),
+      ...(kind === 'speech-synthesis' && detectedVoices.length > 0
+        ? { voices: detectedVoices }
+        : {}),
     };
     const models = modelDialog?.previousId
       ? activeProvider.models.map(model =>
           model.id === modelDialog.previousId ? nextModel : model,
         )
       : [...activeProvider.models, nextModel];
-    const defaultModel =
-      activeProvider.defaultModel === modelDialog?.previousId
+    const defaultModel = supportsCatalogDefault
+      ? activeProvider.defaultModel === modelDialog?.previousId
         ? id
-        : (activeProvider.defaultModel ?? (models.length === 1 ? id : undefined));
-    updateProvider({ models, defaultModel });
+        : (activeProvider.defaultModel ?? (models.length === 1 ? id : undefined))
+      : undefined;
+    updateProvider({ models, ...(defaultModel ? { defaultModel } : {}) });
     closeModelDialog();
   };
 
@@ -478,12 +473,26 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
     const models = activeProvider.models.filter(model => model.id !== id);
     updateProvider({
       models,
-      defaultModel:
-        activeProvider.defaultModel === id ? models[0]?.id : activeProvider.defaultModel,
+      ...(supportsCatalogDefault
+        ? {
+            defaultModel:
+              activeProvider.defaultModel === id ? models[0]?.id : activeProvider.defaultModel,
+          }
+        : {}),
     });
   };
 
+  const addManualVoice = (): void => {
+    const id = manualVoiceId.trim();
+    if (!id) return;
+    setDetectedVoices(current =>
+      current.some(voice => voice.id === id) ? current : [...current, { id, name: id }],
+    );
+    setManualVoiceId('');
+  };
+
   const setDefaultModel = (id: string): void => {
+    if (!supportsCatalogDefault) return;
     updateProvider({ defaultModel: id });
     setCategory(current => ({ ...current, defaultProviderId: activeProviderId }));
   };
@@ -505,7 +514,7 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
       let lastError = '';
       try {
         const response = await fetchWithDiscoveryTimeout(
-          { url: buildCustomOnlineModelsUrl(kind, baseUrl), method: 'GET', headers },
+          { url: buildNonLanguageModelModelsUrl(kind, baseUrl), method: 'GET', headers },
           modelDetectionRequestsRef,
         );
         if (generation !== modelDetectionGenerationRef.current) return;
@@ -522,7 +531,7 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
       if (discovered.length === 0) {
         try {
           const response = await fetchWithDiscoveryTimeout(
-            { url: buildCustomOnlineOpenApiUrl(kind, baseUrl), method: 'GET', headers },
+            { url: buildNonLanguageModelOpenApiUrl(kind, baseUrl), method: 'GET', headers },
             modelDetectionRequestsRef,
           );
           if (generation !== modelDetectionGenerationRef.current) return;
@@ -531,7 +540,7 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
             discovered = parseOpenApiDefaultModels(
               response.data,
               kind,
-              buildCustomOnlineEndpointPreview(kind, baseUrl),
+              buildNonLanguageModelEndpointPreview(kind, baseUrl),
             );
           } else {
             lastError = `${response.status} ${response.statusText}`.trim();
@@ -556,8 +565,8 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
               models: [
                 ...provider.models.map(model => {
                   const found = discoveredById.get(model.id);
-                  return found?.voice && !model.voice?.trim()
-                    ? { ...model, voice: found.voice }
+                  return found?.voices?.length && !model.voices?.length
+                    ? { ...model, voices: found.voices }
                     : model;
                 }),
                 ...discovered
@@ -565,14 +574,13 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
                   .map(model => ({
                     id: model.id,
                     name: model.name,
-                    ...(model.voice ? { voice: model.voice } : {}),
+                    ...(model.voices?.length ? { voices: model.voices } : {}),
                   })),
               ],
             },
           },
         };
       });
-      setSaveState('idle');
       setDetectionMessage(
         i18nService
           .t(discovered.length ? 'modelDetectionSummarySimple' : 'noModelsDetected')
@@ -623,7 +631,9 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
           receivedValidResponse = true;
           const voices = parseDiscoveredVoices(response.data, detectingModelId);
           if (voices.length === 0) continue;
-          setDetectedVoices(voices);
+          setDetectedVoices(current => [
+            ...new Map([...current, ...voices].map(voice => [voice.id, voice])).values(),
+          ]);
           setVoiceDetectionMessage(
             i18nService.t('voiceDetectionSummary').replace('{count}', String(voices.length)),
           );
@@ -644,98 +654,11 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
     }
   };
 
-  const getProviderValidationError = (provider: Provider, providerId: string): string => {
-    if (!provider.displayName.trim()) return i18nService.t('customModelProviderNameRequired');
-    const nameError = providerNameError(provider.displayName, providerId);
-    if (nameError) return nameError;
-    try {
-      const url = new URL(normalizeCustomOnlineBaseUrl(kind, provider.baseUrl));
-      const protocols =
-        kind === 'speech-recognition' ? ['http:', 'https:', 'ws:', 'wss:'] : ['http:', 'https:'];
-      if (!protocols.includes(url.protocol) || url.username || url.password) throw new Error();
-    } catch {
-      return i18nService.t('customModelProviderUrlInvalid');
-    }
-    if (!provider.defaultModel) return i18nService.t('customModelDefaultRequired');
-    const defaultModel = provider.models.find(model => model.id === provider.defaultModel);
-    if (!defaultModel) return i18nService.t('customModelDefaultRequired');
-    if (kind === 'speech-synthesis' && !defaultModel?.voice?.trim()) {
-      return i18nService.t('customModelVoiceRequired');
-    }
-    return '';
-  };
-
-  const validationError = (() => {
-    if (!activeProvider) return '';
-    const activeError = getProviderValidationError(activeProvider, activeProviderId);
-    if (activeError) return activeError;
-    for (const [providerId, provider] of Object.entries(category.providers)) {
-      if (providerId === activeProviderId) continue;
-      const error = getProviderValidationError(provider, providerId);
-      if (error) {
-        return i18nService
-          .t('customModelProviderInvalid')
-          .replace('{provider}', provider.displayName || providerId)
-          .replace('{error}', error);
-      }
-    }
-    return '';
-  })();
-
-  const save = async (): Promise<void> => {
-    if (!activeProvider || validationError) return;
-    setSaving(true);
-    setSaveState('idle');
-    try {
-      const nextCategory = {
-        ...category,
-        providers: Object.fromEntries(
-          Object.entries(category.providers).map(([id, provider]) => [
-            id,
-            {
-              ...provider,
-              baseUrl: normalizeCustomOnlineBaseUrl(kind, provider.baseUrl),
-            },
-          ]),
-        ),
-        defaultProviderId: category.defaultProviderId ?? activeProviderId,
-      };
-      const all = configService.getConfig().onlineModelProviders ?? {};
-      const provider = nextCategory.providers[nextCategory.defaultProviderId ?? activeProviderId];
-      if (!provider?.defaultModel) throw new Error('Default model missing.');
-      const common = {
-        provider: 'openai',
-        baseUrl: normalizeCustomOnlineBaseUrl(kind, provider.baseUrl),
-        apiKey: provider.apiKey.trim() || 'local',
-        model: provider.defaultModel,
-      };
-      if (kind === 'speech-recognition') {
-        await window.electron.onlineAsr.saveConfiguration(common);
-      } else if (kind === 'speech-synthesis') {
-        const selectedModel = provider.models.find(model => model.id === provider.defaultModel);
-        const voice = selectedModel?.voice?.trim();
-        if (!voice) throw new Error('Default speech synthesis model voice missing.');
-        await window.electron.onlineTts.saveConfiguration({
-          ...common,
-          voice,
-        });
-      } else {
-        await window.electron.mediaGenerationModels.saveConfiguration(kind, {
-          primary: `openai/${provider.defaultModel}`,
-          fallbacks: [],
-          baseUrl: normalizeCustomOnlineBaseUrl(kind, provider.baseUrl),
-          apiKey: provider.apiKey.trim() || 'local',
-        });
-      }
-      await configService.updateConfig({ onlineModelProviders: { ...all, [kind]: nextCategory } });
-      setCategory(nextCategory);
-      setSaveState('saved');
-    } catch {
-      setSaveState('error');
-    } finally {
-      setSaving(false);
-    }
-  };
+  const validationError = getNonLanguageModelCategoryValidationError(
+    kind,
+    category,
+    activeProviderId,
+  );
 
   const inputClass =
     'mt-1 block h-9 w-full rounded-xl border border-border-input bg-white px-3 text-xs text-foreground shadow-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 dark:bg-surface';
@@ -808,25 +731,38 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="mx-auto flex w-full max-w-md items-start gap-3">
+                <label
+                  htmlFor={`${activeProviderId}-displayName`}
+                  className="shrink-0 py-1.5 text-xs font-medium text-foreground"
+                >
+                  {i18nService.t('customDisplayName')}
+                </label>
+                <div className="min-w-0 flex-1">
+                  <input
+                    id={`${activeProviderId}-displayName`}
+                    value={activeProvider.displayName}
+                    onChange={event => {
+                      updateProvider({ displayName: event.target.value });
+                      setFormError('');
+                    }}
+                    aria-invalid={Boolean(
+                      providerNameError(activeProvider.displayName, activeProviderId),
+                    )}
+                    className={`${inputClass} mt-0 text-center`}
+                  />
+                </div>
+              </div>
               <div className="rounded-xl border border-border bg-surface p-3">
-                <h3 className="mb-2 text-xs font-semibold text-foreground">
-                  {i18nService.t('providerCredentials')}
-                </h3>
+                <div className="mb-2 flex items-center gap-2">
+                  <h3 className="shrink-0 text-xs font-semibold text-foreground">
+                    {i18nService.t('providerCredentials')}
+                  </h3>
+                  <span className="truncate text-[10px] text-muted">
+                    {i18nService.t(PROTOCOL_HINT_KEYS[kind])}
+                  </span>
+                </div>
                 <div className="grid grid-cols-2 gap-2.5">
-                  <label className="text-xs text-secondary">
-                    {i18nService.t('customDisplayName')}
-                    <input
-                      value={activeProvider.displayName}
-                      onChange={event => {
-                        updateProvider({ displayName: event.target.value });
-                        setFormError('');
-                      }}
-                      aria-invalid={Boolean(
-                        providerNameError(activeProvider.displayName, activeProviderId),
-                      )}
-                      className={inputClass}
-                    />
-                  </label>
                   <div className="text-xs text-secondary">
                     <label htmlFor={`${activeProviderId}-base-url`}>
                       {i18nService.t('baseUrl')}
@@ -881,9 +817,6 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
                     </button>
                   </label>
                 </div>
-                <p className="mt-2 text-[10px] text-muted">
-                  {i18nService.t(PROTOCOL_HINT_KEYS[kind])}
-                </p>
               </div>
               <div className="rounded-xl border border-border bg-surface p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -944,26 +877,29 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
                           <div className="truncate text-[11px] font-medium text-foreground">
                             {model.name}
                           </div>
-                          <div className="truncate text-[10px] text-secondary">{model.id}</div>
-                          {kind === 'speech-synthesis' && model.voice ? (
+                          {kind === 'speech-synthesis' && model.voices?.length ? (
                             <div className="truncate text-[10px] text-muted">
-                              {i18nService.t('voiceSpeaker')}: {model.voice}
+                              {i18nService
+                                .t('availableVoiceCount')
+                                .replace('{count}', String(model.voices.length))}
                             </div>
                           ) : null}
                         </div>
-                        {isDefault ? (
-                          <span className="mr-1 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary">
-                            {i18nService.t('mediaModelDefaultBadge')}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setDefaultModel(model.id)}
-                            className="mr-1 rounded px-1.5 py-1 text-[10px] text-secondary hover:text-primary"
-                          >
-                            {i18nService.t('mediaModelSetDefault')}
-                          </button>
-                        )}
+                        {supportsCatalogDefault ? (
+                          isDefault ? (
+                            <span className="mr-1 rounded-md bg-primary-muted px-1.5 py-0.5 text-[10px] text-primary">
+                              {i18nService.t('mediaModelDefaultBadge')}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setDefaultModel(model.id)}
+                              className="mr-1 rounded px-1.5 py-1 text-[10px] text-secondary hover:text-primary"
+                            >
+                              {i18nService.t('mediaModelSetDefault')}
+                            </button>
+                          )
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => openModelDialog(model)}
@@ -989,29 +925,11 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
                     </div>
                   ) : null}
                 </div>
-                <div className="mt-3 flex items-center justify-end gap-3 border-t border-border pt-3">
-                  {validationError ? (
-                    <span className="mr-auto text-xs text-amber-600">{validationError}</span>
-                  ) : null}
-                  {saveState !== 'idle' ? (
-                    <span
-                      className={`text-xs ${saveState === 'error' ? 'text-red-500' : 'text-green-600'}`}
-                    >
-                      {i18nService.t(
-                        saveState === 'error' ? 'mediaModelSaveFailed' : 'mediaModelSaved',
-                      )}
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={Boolean(validationError) || saving}
-                    onClick={() => void save()}
-                    className="h-9 rounded-lg bg-primary px-4 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    <CheckIcon className="mr-1 inline h-4 w-4" />
-                    {i18nService.t(saving ? 'mediaModelSaving' : 'mediaModelSave')}
-                  </button>
-                </div>
+                {validationError ? (
+                  <div className="mt-3 border-t border-border pt-3 text-xs text-amber-600">
+                    {validationError}
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -1027,6 +945,7 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
             tabIndex={-1}
             className="w-full max-w-sm rounded-2xl border border-border bg-background p-5"
             onKeyDown={event => {
+              if (handleDialogConfirmKey(event, addProvider)) return;
               if (event.key === 'Escape') closeProviderDialog();
               else trapDialogTab(event);
             }}
@@ -1042,9 +961,6 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
                 onChange={event => {
                   setProviderName(event.target.value);
                   setFormError('');
-                }}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') addProvider();
                 }}
                 className={inputClass}
               />
@@ -1078,6 +994,7 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
             tabIndex={-1}
             className="w-full max-w-md rounded-2xl border border-border bg-background p-5"
             onKeyDown={event => {
+              if (handleDialogConfirmKey(event, applyModel)) return;
               if (event.key === 'Escape') closeModelDialog();
               else trapDialogTab(event);
             }}
@@ -1112,9 +1029,7 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
               {kind === 'speech-synthesis' ? (
                 <div className="text-xs text-secondary">
                   <div className="flex items-center justify-between gap-2">
-                    <label htmlFor="custom-online-model-voice">
-                      {i18nService.t('voiceSpeaker')}
-                    </label>
+                    <span>{i18nService.t('availableVoices')}</span>
                     <button
                       type="button"
                       onClick={() => void detectVoices()}
@@ -1138,21 +1053,56 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
                       {i18nService.t(detectingVoices ? 'detectingVoices' : 'detectVoices')}
                     </button>
                   </div>
-                  <input
-                    id="custom-online-model-voice"
-                    list="custom-online-model-voice-options"
-                    value={modelVoice}
-                    onChange={event => {
-                      setModelVoice(event.target.value);
-                      setFormError('');
-                    }}
-                    className={inputClass}
-                  />
-                  <datalist id="custom-online-model-voice-options">
-                    {detectedVoices.map(voice => (
-                      <option key={voice.id} value={voice.id} label={voice.name} />
-                    ))}
-                  </datalist>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      aria-label={i18nService.t('manualVoiceId')}
+                      value={manualVoiceId}
+                      onChange={event => setManualVoiceId(event.target.value)}
+                      placeholder={i18nService.t('manualVoiceIdPlaceholder')}
+                      className={`${inputClass} mt-0 min-w-0 flex-1`}
+                    />
+                    <button
+                      type="button"
+                      disabled={!manualVoiceId.trim()}
+                      onClick={addManualVoice}
+                      className="h-9 shrink-0 rounded-lg border border-border-input px-3 text-xs text-foreground disabled:opacity-50"
+                    >
+                      {i18nService.t('addVoice')}
+                    </button>
+                  </div>
+                  {detectedVoices.length > 0 ? (
+                    <div
+                      role="list"
+                      aria-label={i18nService.t('availableVoices')}
+                      className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-background p-1"
+                    >
+                      {detectedVoices.map(voice => (
+                        <div
+                          key={voice.id}
+                          role="listitem"
+                          aria-label={voice.name}
+                          className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-foreground"
+                        >
+                          <span className="truncate">{voice.name}</span>
+                          {voice.name !== voice.id ? (
+                            <span className="truncate text-[10px] text-muted">{voice.id}</span>
+                          ) : null}
+                          <button
+                            type="button"
+                            aria-label={`${i18nService.t('deleteVoice')}: ${voice.name}`}
+                            onClick={() =>
+                              setDetectedVoices(current =>
+                                current.filter(candidate => candidate.id !== voice.id),
+                              )
+                            }
+                            className="ml-1 shrink-0 p-1 text-secondary hover:text-red-500"
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   {voiceDetectionMessage ? (
                     <p className="mt-1 text-[10px] text-muted" role="status">
                       {voiceDetectionMessage}
@@ -1189,4 +1139,4 @@ const CustomOnlineModelSettings: React.FC<Props> = ({ kind }) => {
   );
 };
 
-export default CustomOnlineModelSettings;
+export default NonLanguageModelSettings;

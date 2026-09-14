@@ -1,10 +1,6 @@
-export type CustomOnlineModelKind =
-  | 'speech-recognition'
-  | 'speech-synthesis'
-  | 'image'
-  | 'video';
+export type NonLanguageModelKind = 'speech-recognition' | 'speech-synthesis' | 'image' | 'video';
 
-const ENDPOINT_SUFFIXES: Record<CustomOnlineModelKind, string> = {
+const ENDPOINT_SUFFIXES: Record<NonLanguageModelKind, string> = {
   'speech-recognition': '/realtime',
   'speech-synthesis': '/audio/speech',
   image: '/images/generations',
@@ -24,8 +20,8 @@ const appendUrlPath = (baseUrl: string, suffix: string): string => {
   return url.toString();
 };
 
-export const normalizeCustomOnlineBaseUrl = (
-  kind: CustomOnlineModelKind,
+export const normalizeNonLanguageModelBaseUrl = (
+  kind: NonLanguageModelKind,
   baseUrl: string,
 ): string => {
   const trimmed = baseUrl.trim();
@@ -44,11 +40,11 @@ export const normalizeCustomOnlineBaseUrl = (
   }
 };
 
-export const buildCustomOnlineEndpointPreview = (
-  kind: CustomOnlineModelKind,
+export const buildNonLanguageModelEndpointPreview = (
+  kind: NonLanguageModelKind,
   baseUrl: string,
 ): string => {
-  const normalized = normalizeCustomOnlineBaseUrl(kind, baseUrl);
+  const normalized = normalizeNonLanguageModelBaseUrl(kind, baseUrl);
   if (!normalized) return '';
   const suffix = ENDPOINT_SUFFIXES[kind];
 
@@ -67,11 +63,11 @@ export const buildCustomOnlineEndpointPreview = (
   }
 };
 
-export const buildCustomOnlineModelsUrl = (
-  kind: CustomOnlineModelKind,
+export const buildNonLanguageModelModelsUrl = (
+  kind: NonLanguageModelKind,
   baseUrl: string,
 ): string => {
-  const normalized = normalizeCustomOnlineBaseUrl(kind, baseUrl);
+  const normalized = normalizeNonLanguageModelBaseUrl(kind, baseUrl);
   const modelsUrl = new URL(appendUrlPath(normalized, '/models'));
   if (modelsUrl.protocol === 'ws:') modelsUrl.protocol = 'http:';
   if (modelsUrl.protocol === 'wss:') modelsUrl.protocol = 'https:';
@@ -79,7 +75,7 @@ export const buildCustomOnlineModelsUrl = (
 };
 
 export const buildVoiceDiscoveryUrls = (baseUrl: string): string[] => {
-  const normalized = normalizeCustomOnlineBaseUrl('speech-synthesis', baseUrl);
+  const normalized = normalizeNonLanguageModelBaseUrl('speech-synthesis', baseUrl);
   const base = new URL(normalized);
   const serviceRoot = new URL(normalized);
   serviceRoot.pathname = serviceRoot.pathname.replace(/\/v\d+\/?$/i, '') || '/';
@@ -90,11 +86,11 @@ export const buildVoiceDiscoveryUrls = (baseUrl: string): string[] => {
   ];
 };
 
-export const buildCustomOnlineOpenApiUrl = (
-  kind: CustomOnlineModelKind,
+export const buildNonLanguageModelOpenApiUrl = (
+  kind: NonLanguageModelKind,
   baseUrl: string,
 ): string => {
-  const serviceRoot = new URL(normalizeCustomOnlineBaseUrl(kind, baseUrl));
+  const serviceRoot = new URL(normalizeNonLanguageModelBaseUrl(kind, baseUrl));
   serviceRoot.pathname = serviceRoot.pathname.replace(/\/v\d+\/?$/i, '') || '/';
   serviceRoot.search = '';
   return appendUrlPath(serviceRoot.toString(), '/openapi.json');

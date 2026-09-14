@@ -36,6 +36,7 @@ export interface LocalSpeechSettings {
   synthesisMode: SpeechSynthesisMode;
   ttsModelId: LocalTtsModelId;
   onlineTtsModelRef: string;
+  onlineTtsVoice: string;
   voiceId: number;
   speechRate: number;
   synthesisThreads: number;
@@ -57,6 +58,7 @@ export const defaultLocalSpeechSettings: LocalSpeechSettings = {
   synthesisMode: 'local',
   ttsModelId: LOCAL_TTS_MODEL_ID,
   onlineTtsModelRef: '',
+  onlineTtsVoice: '',
   voiceId: LOCAL_TTS_DEFAULT_VOICE_ID,
   speechRate: 1,
   synthesisThreads: 2,
@@ -152,6 +154,7 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     ttsModelId,
     onlineTtsModelRef:
       typeof candidate.onlineTtsModelRef === 'string' ? candidate.onlineTtsModelRef : '',
+    onlineTtsVoice: typeof candidate.onlineTtsVoice === 'string' ? candidate.onlineTtsVoice : '',
     voiceId: clampInteger(
       candidate.voiceId,
       ttsModelId === LOCAL_TTS_MODEL_ID ? defaultLocalSpeechSettings.voiceId : 0,

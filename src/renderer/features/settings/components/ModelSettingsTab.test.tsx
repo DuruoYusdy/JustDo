@@ -1,142 +1,102 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppConfig } from '@/app/config';
-
+import type { LanguageModelSettingsProps } from './LanguageModelSettings';
 import ModelSettingsTab from './ModelSettingsTab';
 
 vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key },
 }));
 
-const providers: NonNullable<AppConfig['providers']> = {
-  builtin_models: {
-    enabled: true,
-    readonly: true,
-    apiKey: '',
-    baseUrl: '',
-    apiFormat: 'openai',
-    models: [],
-  },
-  custom_0: {
-    enabled: false,
-    apiKey: 'secret',
-    baseUrl: 'https://example.test/v1',
-    apiFormat: 'openai',
-    displayName: 'Acme',
-    models: [],
-  },
-};
+vi.mock('./LanguageModelSettings', () => ({
+  default: () => <div>language-model-settings</div>,
+}));
 
-const renderTab = (
-  options: {
-    displayNameError?: string | null;
-    providers?: NonNullable<AppConfig['providers']>;
-  } = {},
-) => {
-  const handleProviderConfigChange = vi.fn();
-  const setDisplayNameError = vi.fn();
+vi.mock('./NonLanguageModelSettings', () => ({
+  default: ({ kind }: { kind: string }) => (
+    <div data-testid="non-language-panel">{`non-language-${kind}`}</div>
+  ),
+}));
 
-  render(
-    <ModelSettingsTab
-      activeProvider="custom_0"
-      providers={options.providers ?? providers}
-      isTesting={false}
-      displayNameError={options.displayNameError ?? null}
-      providerRequiresApiKey={() => true}
-      isProviderReadOnly={provider => provider === 'builtin_models'}
-      getProviderDefaultBaseUrl={() => null}
-      handleProviderChange={vi.fn()}
-      handleProviderConfigChange={handleProviderConfigChange}
-      toggleProviderEnabled={vi.fn()}
-      handleAddCustomProvider={vi.fn()}
-      handleAddModel={vi.fn()}
-      handleDetectModels={vi.fn()}
-      handleEditModel={vi.fn()}
-      handleDeleteModel={vi.fn()}
-      handleModelEnabledChange={vi.fn()}
-      handleSetAllModelsEnabled={vi.fn()}
-      handleTestConnection={vi.fn()}
-      handleTestModelConnection={vi.fn()}
-      handleRefreshBuiltinModels={vi.fn()}
-      isRefreshingBuiltinModels={false}
-      isDetectingModels={false}
-      modelDiscoveryMessage={null}
-      modelConnectionTestStatuses={{}}
-      setDisplayNameError={setDisplayNameError}
-      setProviders={vi.fn()}
-      setError={vi.fn()}
-      onRequestDeleteProvider={vi.fn()}
-    />,
-  );
+afterEach(cleanup);
 
-  return { handleProviderConfigChange, setDisplayNameError };
+const languageSettings = {} as LanguageModelSettingsProps;
+const nonLanguageSettings = {
+  categories: {},
+  setCategory: vi.fn(),
 };
 
 describe('ModelSettingsTab', () => {
-  afterEach(cleanup);
+  it('renders the language model settings as the default panel', () => {
+    render(
+      <ModelSettingsTab
+        activeKind="language"
+        onKindChange={vi.fn()}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
 
-  test('reveals and hides the API key without changing its value', () => {
-    const { handleProviderConfigChange } = renderTab();
-    const input = screen.getByLabelText(/apiKey/) as HTMLInputElement;
-    expect(input.type).toBe('password');
-    fireEvent.click(screen.getByRole('button', { name: 'showApiKey' }));
-    expect(input.type).toBe('text');
-    expect(input.value).toBe('secret');
-    fireEvent.click(screen.getByRole('button', { name: 'hideApiKey' }));
-    expect(input.type).toBe('password');
-    expect(input.value).toBe('secret');
-    expect(handleProviderConfigChange).not.toHaveBeenCalled();
+    expect(screen.getByText('language-model-settings')).toBeTruthy();
+    expect(
+      screen.getByRole('tab', { name: 'modelTypeLanguage' }).getAttribute('aria-selected'),
+    ).toBe('true');
   });
 
-  test.each([
-    ['JustDo', 'providerNameReserved'],
-    ['Invalid@Name', 'providerNameInvalid'],
-  ])('keeps %s in parent state while reporting %s', (value, expectedError) => {
-    const { handleProviderConfigChange, setDisplayNameError } = renderTab();
+  it('requests a model category change from the tab bar', () => {
+    const onKindChange = vi.fn();
+    render(
+      <ModelSettingsTab
+        activeKind="language"
+        onKindChange={onKindChange}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
 
-    fireEvent.change(screen.getByLabelText('customDisplayName'), { target: { value } });
-
-    expect(handleProviderConfigChange).toHaveBeenCalledWith('custom_0', 'displayName', value);
-    expect(setDisplayNameError).toHaveBeenCalledWith(expectedError);
+    fireEvent.click(screen.getByRole('tab', { name: 'modelTypeSpeechRecognition' }));
+    expect(onKindChange).toHaveBeenCalledWith('speech-recognition');
   });
 
-  test('connects the inline validation message to the input', () => {
-    renderTab({ displayNameError: 'providerNameInvalid' });
+  it('offers image and video generation categories', () => {
+    const onKindChange = vi.fn();
+    render(
+      <ModelSettingsTab
+        activeKind="video"
+        onKindChange={onKindChange}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
 
-    const input = screen.getByLabelText('customDisplayName');
-    expect(input.getAttribute('aria-invalid')).toBe('true');
-    expect(input.getAttribute('aria-describedby')).toBe('custom_0-displayName-error');
-    expect(screen.getByRole('alert').textContent).toBe('providerNameInvalid');
+    expect(screen.getByText('non-language-video')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'modelTypeImage' }));
+    expect(onKindChange).toHaveBeenCalledWith('image');
   });
 
-  test('keeps newly appended providers at the end instead of sorting them alphabetically', () => {
-    renderTab({
-      providers: {
-        ...providers,
-        zulu: {
-          enabled: false,
-          apiKey: '',
-          baseUrl: '',
-          apiFormat: 'openai',
-          displayName: 'Zulu',
-          models: [],
-        },
-        alpha: {
-          enabled: false,
-          apiKey: '',
-          baseUrl: '',
-          apiFormat: 'openai',
-          displayName: 'Alpha',
-          models: [],
-        },
-      },
-    });
+  it('remounts custom settings when the model category changes', () => {
+    const { rerender } = render(
+      <ModelSettingsTab
+        activeKind="speech-recognition"
+        onKindChange={vi.fn()}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
+    const recognitionPanel = screen.getByTestId('non-language-panel');
 
-    const zulu = screen.getByText('Zulu');
-    const alpha = screen.getByText('Alpha');
-    expect(zulu.compareDocumentPosition(alpha) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    rerender(
+      <ModelSettingsTab
+        activeKind="image"
+        onKindChange={vi.fn()}
+        languageSettings={languageSettings}
+        nonLanguageSettings={nonLanguageSettings}
+      />,
+    );
+
+    expect(screen.getByTestId('non-language-panel')).not.toBe(recognitionPanel);
+    expect(screen.getByText('non-language-image')).toBeTruthy();
   });
 });

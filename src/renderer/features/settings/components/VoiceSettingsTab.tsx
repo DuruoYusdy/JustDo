@@ -25,7 +25,7 @@ import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
-import { normalizeCustomOnlineBaseUrl } from './customOnlineModelUrls';
+import { normalizeNonLanguageModelBaseUrl } from './nonLanguageModelUrls';
 import VoiceInputDiagnostics from './VoiceInputDiagnostics';
 import VoiceOutputDiagnostics from './VoiceOutputDiagnostics';
 
@@ -212,7 +212,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
   ): Array<{ value: string; label: string }> =>
     Object.entries(category?.providers ?? {}).flatMap(([providerId, provider]) =>
       provider.models
-        .filter(model => !requireVoice || Boolean(model.voice?.trim()))
+        .filter(model => !requireVoice || Boolean(model.voices?.length))
         .map(model => ({
           value: `${providerId}/${model.id}`,
           label: `${provider.displayName} / ${model.name}`,
@@ -220,30 +220,18 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     );
   const recognitionModelOptions = buildOnlineModelOptions(recognitionCategory);
   const synthesisModelOptions = buildOnlineModelOptions(synthesisCategory, true);
-  const resolveCategoryDefault = (category: typeof recognitionCategory): string => {
-    const providerId = category?.defaultProviderId;
-    const modelId = providerId ? category.providers[providerId]?.defaultModel : undefined;
-    return providerId && modelId ? `${providerId}/${modelId}` : '';
-  };
   const resolveSelectedModel = (
     options: Array<{ value: string; label: string }>,
     savedReference: string,
-    defaultReference: string,
-  ): string =>
-    [savedReference, defaultReference].find(reference =>
-      options.some(option => option.value === reference),
-    ) ??
-    options[0]?.value ??
-    '';
+  ): string => (options.some(option => option.value === savedReference) ? savedReference : '');
   const selectedRecognitionModel = resolveSelectedModel(
     recognitionModelOptions,
     value.onlineAsrModelRef,
-    resolveCategoryDefault(recognitionCategory),
   );
+  const onlineAsrConfigured = Boolean(selectedRecognitionModel);
   const selectedSynthesisModel = resolveSelectedModel(
     synthesisModelOptions,
     value.onlineTtsModelRef,
-    resolveCategoryDefault(synthesisCategory),
   );
   const resolveOnlineProvider = (category: typeof recognitionCategory, reference: string) => {
     const separator = reference.indexOf('/');
@@ -253,7 +241,28 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     const modelConfig = provider?.models.find(item => item.id === model);
     return provider && modelConfig ? { provider, model: modelConfig } : null;
   };
+  const selectedSynthesisProvider = resolveOnlineProvider(
+    synthesisCategory,
+    selectedSynthesisModel,
+  );
+  const selectedSynthesisModelVoices = selectedSynthesisProvider?.model.voices ?? [];
+  const synthesisVoiceOptions = Array.from(
+    new Map(
+      selectedSynthesisModelVoices
+        .filter(voice => Boolean(voice.id.trim()))
+        .map(voice => [
+          voice.id.trim(),
+          { value: voice.id.trim(), label: voice.name.trim() || voice.id.trim() },
+        ]),
+    ).values(),
+  );
+  const selectedSynthesisVoice =
+    [value.onlineTtsVoice].find(voice =>
+      synthesisVoiceOptions.some(option => option.value === voice),
+    ) ?? '';
+  const onlineTtsConfigured = Boolean(selectedSynthesisModel && selectedSynthesisVoice);
   const applyOnlineRecognitionModel = async (reference: string): Promise<void> => {
+    if (!reference) return;
     const selection = resolveOnlineProvider(recognitionCategory, reference);
     if (!selection) return;
     const generation = ++asrStatusGenerationRef.current;
@@ -263,7 +272,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     try {
       await window.electron.onlineAsr.saveConfiguration({
         provider: 'openai',
-        baseUrl: normalizeCustomOnlineBaseUrl('speech-recognition', selection.provider.baseUrl),
+        baseUrl: normalizeNonLanguageModelBaseUrl('speech-recognition', selection.provider.baseUrl),
         apiKey: selection.provider.apiKey || 'local',
         model: selection.model.id,
       });
@@ -282,10 +291,13 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
       }
     }
   };
-  const applyOnlineSynthesisModel = async (reference: string): Promise<void> => {
+  const applyOnlineSynthesisSelection = async (
+    reference: string,
+    selectedVoice?: string,
+  ): Promise<void> => {
     const selection = resolveOnlineProvider(synthesisCategory, reference);
     if (!selection) return;
-    const voice = selection.model.voice?.trim();
+    const voice = selectedVoice?.trim() || selection.model.voices?.[0]?.id.trim();
     if (!voice) {
       setOnlineTtsModelError(i18nService.t('customModelVoiceRequired'));
       return;
@@ -297,13 +309,13 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
     try {
       await window.electron.onlineTts.saveConfiguration({
         provider: 'openai',
-        baseUrl: normalizeCustomOnlineBaseUrl('speech-synthesis', selection.provider.baseUrl),
+        baseUrl: normalizeNonLanguageModelBaseUrl('speech-synthesis', selection.provider.baseUrl),
         apiKey: selection.provider.apiKey || 'local',
         model: selection.model.id,
         voice,
       });
       if (generation !== ttsStatusGenerationRef.current) return;
-      update({ onlineTtsModelRef: reference });
+      update({ onlineTtsModelRef: reference, onlineTtsVoice: voice });
       const status = await window.electron.onlineTts.getStatus();
       if (generation === ttsStatusGenerationRef.current) setOnlineTtsStatus(status);
     } catch (error) {
@@ -317,6 +329,12 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
       }
     }
   };
+  const applyOnlineSynthesisModel = (reference: string): void => {
+    update({ onlineTtsModelRef: reference, onlineTtsVoice: '' });
+    setOnlineTtsModelError('');
+  };
+  const applyOnlineSynthesisVoice = (voice: string): Promise<void> =>
+    voice ? applyOnlineSynthesisSelection(selectedSynthesisModel, voice) : Promise.resolve();
   const asrStatus = statuses.find(status => status.id === value.asrModelId) ?? null;
   const ttsStatus = statuses.find(status => status.id === value.ttsModelId) ?? null;
 
@@ -499,7 +517,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           <div className="flex items-center gap-2 text-xs text-secondary" role="status">
             {onlineStatusLoading ? (
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            ) : onlineStatus?.available ? (
+            ) : onlineAsrConfigured ? (
               <CheckCircleIcon className="h-4 w-4 text-green-500" />
             ) : (
               <ExclamationTriangleIcon className="h-4 w-4 text-amber-500" />
@@ -507,9 +525,11 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             <span>
               {onlineStatusLoading
                 ? i18nService.t('voiceOnlineChecking')
-                : onlineStatus?.available
+                : onlineAsrConfigured && onlineStatus?.available
                   ? i18nService.t('voiceOnlineReady')
-                  : i18nService.t('voiceOnlineUnavailable')}
+                  : onlineAsrConfigured
+                    ? i18nService.t('voiceOnlineConfigured')
+                    : i18nService.t('voiceOnlineUnavailable')}
             </span>
             {onlineModelError ? (
               <span className="text-red-500" role="alert">
@@ -608,7 +628,10 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   onChange={applyOnlineRecognitionModel}
                   options={
                     recognitionModelOptions.length > 0
-                      ? recognitionModelOptions
+                      ? [
+                          { value: '', label: i18nService.t('voiceSelectModel') },
+                          ...recognitionModelOptions,
+                        ]
                       : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
                   }
                 />
@@ -811,7 +834,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
           <div className="flex items-center gap-2 text-xs text-secondary" role="status">
             {onlineTtsStatusLoading ? (
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            ) : onlineTtsStatus?.available ? (
+            ) : onlineTtsConfigured ? (
               <CheckCircleIcon className="h-4 w-4 text-green-500" />
             ) : (
               <ExclamationTriangleIcon className="h-4 w-4 text-amber-500" />
@@ -819,9 +842,11 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             <span>
               {onlineTtsStatusLoading
                 ? i18nService.t('voiceOnlineTtsChecking')
-                : onlineTtsStatus?.available
+                : onlineTtsConfigured && onlineTtsStatus?.available
                   ? i18nService.t('voiceOnlineTtsReady')
-                  : i18nService.t('voiceOnlineTtsUnavailable')}
+                  : onlineTtsConfigured
+                    ? i18nService.t('voiceOnlineTtsConfigured')
+                    : i18nService.t('voiceOnlineTtsUnavailable')}
             </span>
             {onlineTtsModelError ? (
               <span className="text-red-500" role="alert">
@@ -917,34 +942,72 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               </div>
             </>
           ) : (
-            <div className="flex items-center justify-between gap-8">
-              <div>
-                <label
-                  htmlFor="voice-online-tts-model"
-                  className="text-sm font-medium text-foreground"
-                >
-                  {i18nService.t('voiceSynthesisModel')}
-                </label>
-                <p className="mt-1 text-xs leading-5 text-secondary">
-                  {i18nService.t('voiceOnlineModelSelectionDescription')}
-                </p>
+            <div className="space-y-5">
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <label
+                    htmlFor="voice-online-tts-model"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    {i18nService.t('voiceSynthesisModel')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-secondary">
+                    {i18nService.t('voiceOnlineModelSelectionDescription')}
+                  </p>
+                </div>
+                <div className="w-64 shrink-0">
+                  <ThemedSelect
+                    id="voice-online-tts-model"
+                    value={selectedSynthesisModel}
+                    disabled={
+                      !value.outputEnabled ||
+                      synthesisModelOptions.length === 0 ||
+                      onlineTtsModelSaving
+                    }
+                    onChange={applyOnlineSynthesisModel}
+                    options={
+                      synthesisModelOptions.length > 0
+                        ? [
+                            { value: '', label: i18nService.t('voiceSelectModel') },
+                            ...synthesisModelOptions,
+                          ]
+                        : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
+                    }
+                  />
+                </div>
               </div>
-              <div className="w-64 shrink-0">
-                <ThemedSelect
-                  id="voice-online-tts-model"
-                  value={selectedSynthesisModel}
-                  disabled={
-                    !value.outputEnabled ||
-                    synthesisModelOptions.length === 0 ||
-                    onlineTtsModelSaving
-                  }
-                  onChange={applyOnlineSynthesisModel}
-                  options={
-                    synthesisModelOptions.length > 0
-                      ? synthesisModelOptions
-                      : [{ value: '', label: i18nService.t('voiceNoOnlineModelsConfigured') }]
-                  }
-                />
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <label
+                    htmlFor="voice-online-tts-speaker"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    {i18nService.t('voiceSpeaker')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-secondary">
+                    {i18nService.t('voiceOnlineSpeakerDescription')}
+                  </p>
+                </div>
+                <div className="w-64 shrink-0">
+                  <ThemedSelect
+                    id="voice-online-tts-speaker"
+                    value={selectedSynthesisVoice}
+                    disabled={
+                      !value.outputEnabled ||
+                      synthesisVoiceOptions.length === 0 ||
+                      onlineTtsModelSaving
+                    }
+                    onChange={applyOnlineSynthesisVoice}
+                    options={
+                      synthesisVoiceOptions.length > 0
+                        ? [
+                            { value: '', label: i18nService.t('voiceSelectSpeaker') },
+                            ...synthesisVoiceOptions,
+                          ]
+                        : [{ value: '', label: i18nService.t('voiceNoSpeakersConfigured') }]
+                    }
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -981,7 +1044,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
             available={
               value.synthesisMode === 'local'
                 ? ttsStatus?.phase === 'ready'
-                : onlineTtsStatus?.available === true
+                : onlineTtsConfigured && onlineTtsStatus?.available === true
             }
             configurationKey={[
               value.synthesisMode,
@@ -990,6 +1053,7 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
               value.speechRate,
               value.synthesisThreads,
               value.onlineTtsModelRef,
+              value.onlineTtsVoice,
             ].join(':')}
           />
         ) : null}
