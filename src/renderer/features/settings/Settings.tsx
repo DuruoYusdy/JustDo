@@ -2804,6 +2804,7 @@ const Settings: React.FC<SettingsProps> = ({
             nonLanguageSettings={{
               categories: nonLanguageModelProviders,
               setCategory: setNonLanguageModelCategory,
+              setCategories: setNonLanguageModelProviders,
             }}
           />
         );

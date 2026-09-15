@@ -26,6 +26,7 @@ const languageSettings = {} as LanguageModelSettingsProps;
 const nonLanguageSettings = {
   categories: {},
   setCategory: vi.fn(),
+  setCategories: vi.fn(),
 };
 
 describe('ModelSettingsTab', () => {
@@ -72,6 +73,8 @@ describe('ModelSettingsTab', () => {
     );
 
     expect(screen.getByText('non-language-video')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'import' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'export' })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'modelTypeImage' }));
     expect(onKindChange).toHaveBeenCalledWith('image');
   });

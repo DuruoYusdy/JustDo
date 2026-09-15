@@ -12,7 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { normalizeOpenClawProviderId } from '@shared/providers';
 import { buildOpenAIChatCompletionsUrl } from '@shared/providers/modelDiscovery';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import {
   type AppConfig,
@@ -24,15 +24,8 @@ import {
   isReservedProviderDisplayName,
   validateDisplayName,
 } from '@/app/config';
-import { APP_NAME, EXPORT_PASSWORD } from '@/app/constants/app';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
 import { getModelActionAvailability } from '@/features/settings/modelSettingsAvailability';
-import {
-  createProvidersExportPayload,
-  mergeImportedProviders,
-  parseProvidersImportPayload,
-} from '@/features/settings/providerTransfer';
-import { decryptWithPassword, encryptWithPassword } from '@/services/encryption';
 import { i18nService } from '@/services/i18n';
 import PencilIcon from '@/shared/components/icons/PencilIcon';
 import PlusCircleIcon from '@/shared/components/icons/PlusCircleIcon';
@@ -53,9 +46,6 @@ const modelToolbarButtonClassName =
 
 const modelBulkActionButtonClassName =
   'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] font-medium text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-secondary';
-
-const providerTransferButtonClassName =
-  'inline-flex h-7 items-center rounded-lg border border-border-input !bg-white px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-foreground/25 hover:!bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/15 disabled:cursor-not-allowed disabled:text-muted disabled:opacity-40 dark:!bg-surface dark:hover:!bg-surface-raised/60';
 
 export interface LanguageModelSettingsProps {
   activeProvider: ProviderType;
@@ -121,17 +111,12 @@ const LanguageModelSettings: React.FC<LanguageModelSettingsProps> = ({
   modelConnectionTestStatuses,
   displayNameError,
   setDisplayNameError,
-  setProviders,
-  setError,
   onRequestDeleteProvider,
 }) => {
-  const importInputRef = useRef<HTMLInputElement>(null);
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
   useEffect(() => {
     setIsApiKeyVisible(false);
   }, [activeProvider]);
-  const [isImporting, setIsImporting] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
   const activeConfig: ProviderConfig = providers[activeProvider] ??
     Object.values(providers)[0] ?? {
       enabled: false,
@@ -163,95 +148,11 @@ const LanguageModelSettings: React.FC<LanguageModelSettingsProps> = ({
     : undefined;
   const providerEntries = Object.entries(providers);
 
-  const handleExport = async () => {
-    setError(null);
-    setIsExporting(true);
-    try {
-      const exportedProviders = await Promise.all(
-        Object.entries(providers)
-          .filter(([key, config]) => !isProviderReadOnly(key, config))
-          .map(async ([key, config]) => ({
-            key,
-            config,
-            apiKey: await encryptWithPassword(config.apiKey, EXPORT_PASSWORD),
-          })),
-      );
-      const blob = new Blob(
-        [JSON.stringify(createProvidersExportPayload(exportedProviders), null, 2)],
-        { type: 'application/json' },
-      );
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${APP_NAME}-providers-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError(i18nService.t('exportProvidersFailed'));
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    setError(null);
-    setIsImporting(true);
-    try {
-      const payload: unknown = JSON.parse(await file.text());
-      const serializedProviders = parseProvidersImportPayload(payload);
-      const entries = await Promise.all(
-        serializedProviders.map(async config => {
-          const apiKey =
-            typeof config.apiKey === 'string'
-              ? config.apiKey
-              : await decryptWithPassword(config.apiKey, EXPORT_PASSWORD);
-          return { ...config, apiKey };
-        }),
-      );
-      setProviders(previous => mergeImportedProviders(previous, entries));
-    } catch {
-      setError(i18nService.t('importProvidersFailed'));
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
   return (
     <div className="mx-auto flex w-full max-w-[980px] items-start gap-5">
       <div className="shrink-0 space-y-1.5 overflow-y-auto" style={{ width: 240 }}>
-        {/* Heading with import/export */}
-        <div className="mb-2 flex h-8 items-center justify-between px-1">
+        <div className="mb-2 flex h-8 items-center px-1">
           <h3 className="text-sm font-medium text-foreground">{i18nService.t('modelProviders')}</h3>
-          <div className="flex items-center space-x-1">
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={handleImport}
-            />
-            <button
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-              disabled={isImporting || isExporting || isModelActionBusy}
-              className={providerTransferButtonClassName}
-            >
-              {i18nService.t('import')}
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={isImporting || isExporting || isModelActionBusy}
-              className={providerTransferButtonClassName}
-            >
-              {i18nService.t('export')}
-            </button>
-          </div>
         </div>
 
         {providerEntries.map(([provider, config]) => {

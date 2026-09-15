@@ -3,8 +3,9 @@ import { describe, expect, test } from 'vitest';
 import { EXPORT_FORMAT_TYPE } from '@/app/constants/app';
 import {
   createProvidersExportPayload,
+  mergeImportedOnlineModelProviders,
   mergeImportedProviders,
-  parseProvidersImportPayload,
+  parseModelProvidersImportPayload,
   PROVIDERS_EXPORT_VERSION,
 } from '@/features/settings/providerTransfer';
 
@@ -23,7 +24,7 @@ const providerConfig = {
 };
 
 describe('provider transfer format', () => {
-  test('exports version 3 providers as a list without internal keys', () => {
+  test('exports version 4 providers as a list without internal keys', () => {
     const payload = createProvidersExportPayload([
       {
         key: 'custom_7',
@@ -42,41 +43,17 @@ describe('provider transfer format', () => {
           displayName: 'AcmeProxy',
         },
       ],
+      onlineModelProviders: {},
     });
     expect(JSON.stringify(payload)).not.toContain('custom_7');
   });
 
-  test('parses legacy version 2 and uses its display name instead of its internal key', () => {
-    const providers = parseProvidersImportPayload({
-      type: EXPORT_FORMAT_TYPE,
-      version: 2,
-      providers: {
-        custom_0: { ...providerConfig, apiKey: encryptedApiKey, displayName: 'AcmeProxy' },
-      },
-    });
-
-    expect(providers).toEqual([
-      { ...providerConfig, apiKey: encryptedApiKey, displayName: 'AcmeProxy' },
-    ]);
-  });
-
-  test('supplies the legacy default display name when version 2 omitted it', () => {
-    const providers = parseProvidersImportPayload({
-      type: EXPORT_FORMAT_TYPE,
-      version: 2,
-      providers: {
-        custom_4: { ...providerConfig, apiKey: encryptedApiKey },
-      },
-    });
-
-    expect(providers[0].displayName).toBe('Custom4');
-  });
-
   test('rejects duplicate display names ignoring case', () => {
     expect(() =>
-      parseProvidersImportPayload({
+      parseModelProvidersImportPayload({
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
+        onlineModelProviders: {},
         providers: [
           { ...providerConfig, apiKey: encryptedApiKey, displayName: 'AcmeProxy' },
           { ...providerConfig, apiKey: encryptedApiKey, displayName: 'acmeproxy' },
@@ -87,9 +64,10 @@ describe('provider transfer format', () => {
 
   test('rejects an application-reserved provider name during import', () => {
     expect(() =>
-      parseProvidersImportPayload({
+      parseModelProvidersImportPayload({
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
+        onlineModelProviders: {},
         providers: [{ ...providerConfig, apiKey: encryptedApiKey, displayName: 'JustDo' }],
       }),
     ).toThrow('Invalid provider display name');
@@ -97,12 +75,157 @@ describe('provider transfer format', () => {
 
   test('accepts an explicitly configured OpenClaw provider name during import', () => {
     expect(
-      parseProvidersImportPayload({
+      parseModelProvidersImportPayload({
         type: EXPORT_FORMAT_TYPE,
         version: PROVIDERS_EXPORT_VERSION,
+        onlineModelProviders: {},
         providers: [{ ...providerConfig, apiKey: encryptedApiKey, displayName: 'OpenCode' }],
       }),
-    ).toHaveLength(1);
+    ).toMatchObject({ providers: [{ displayName: 'OpenCode' }] });
+  });
+
+  test('exports and parses every non-language model category', () => {
+    const imageProvider = {
+      displayName: 'Image Lab',
+      baseUrl: 'https://images.example.com/v1',
+      apiKey: 'secret',
+      defaultModel: 'image-1',
+      models: [{ id: 'image-1', name: 'Image One' }],
+    };
+    const payload = createProvidersExportPayload([], {
+      image: {
+        defaultProviderId: 'image-lab',
+        providers: [
+          {
+            key: 'image-lab',
+            config: imageProvider,
+            apiKey: encryptedApiKey,
+          },
+        ],
+      },
+      'speech-recognition': {
+        providers: [
+          {
+            key: 'speech-lab',
+            config: {
+              displayName: 'Speech Lab',
+              baseUrl: 'https://speech.example.com/v1',
+              apiKey: 'secret',
+              models: [{ id: 'asr-1', name: 'ASR One' }],
+            },
+            apiKey: encryptedApiKey,
+          },
+        ],
+      },
+    });
+
+    expect(payload.onlineModelProviders.image).toEqual({
+      defaultProvider: 'Image Lab',
+      providers: [{ ...imageProvider, apiKey: encryptedApiKey }],
+    });
+    expect(parseModelProvidersImportPayload(payload).onlineModelProviders).toEqual(
+      payload.onlineModelProviders,
+    );
+  });
+
+  test.each([2, 3])('rejects obsolete version %s files', version => {
+    expect(() =>
+      parseModelProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version,
+        providers: [],
+      }),
+    ).toThrow('Unsupported providers file version');
+  });
+
+  test('rejects a default provider that is absent from its category', () => {
+    expect(() =>
+      parseModelProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version: PROVIDERS_EXPORT_VERSION,
+        providers: [],
+        onlineModelProviders: {
+          image: {
+            defaultProvider: 'Missing Lab',
+            providers: [
+              {
+                displayName: 'Image Lab',
+                baseUrl: 'https://images.example.com/v1',
+                apiKey: encryptedApiKey,
+                defaultModel: 'image-1',
+                models: [{ id: 'image-1', name: 'Image One' }],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow('Invalid online model default provider');
+  });
+
+  test('rejects duplicate model and voice ids', () => {
+    const payload = (models: unknown[]) => ({
+      type: EXPORT_FORMAT_TYPE,
+      version: PROVIDERS_EXPORT_VERSION,
+      providers: [],
+      onlineModelProviders: {
+        'speech-synthesis': {
+          providers: [
+            {
+              displayName: 'Speech Lab',
+              baseUrl: 'https://speech.example.com/v1',
+              apiKey: encryptedApiKey,
+              models,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(() =>
+      parseModelProvidersImportPayload(
+        payload([
+          { id: 'tts-1', name: 'First' },
+          { id: 'tts-1', name: 'Duplicate' },
+        ]),
+      ),
+    ).toThrow('Duplicate online model id');
+    expect(() =>
+      parseModelProvidersImportPayload(
+        payload([
+          {
+            id: 'tts-1',
+            name: 'TTS One',
+            voices: [
+              { id: 'voice-1', name: 'First' },
+              { id: 'voice-1', name: 'Duplicate' },
+            ],
+          },
+        ]),
+      ),
+    ).toThrow('Invalid online model voices');
+  });
+
+  test('rejects an image default model that is absent from the provider', () => {
+    expect(() =>
+      parseModelProvidersImportPayload({
+        type: EXPORT_FORMAT_TYPE,
+        version: PROVIDERS_EXPORT_VERSION,
+        providers: [],
+        onlineModelProviders: {
+          image: {
+            providers: [
+              {
+                displayName: 'Image Lab',
+                baseUrl: 'https://images.example.com/v1',
+                apiKey: encryptedApiKey,
+                defaultModel: 'missing',
+                models: [{ id: 'image-1', name: 'Image One' }],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow('Invalid online model default');
   });
 });
 
@@ -134,5 +257,61 @@ describe('mergeImportedProviders', () => {
     expect(merged.acmeproxy.displayName).toBe('AcmeProxy');
     expect(merged.acmeproxy.identity).toEqual(expect.any(String));
     expect(merged.custom_0.displayName).toBe('Existing');
+  });
+
+  test('does not overwrite a provider whose key collides with a new display name', () => {
+    const existing = {
+      acme: { ...providerConfig, displayName: 'Renamed' },
+    };
+
+    const merged = mergeImportedProviders(existing, [{ ...providerConfig, displayName: 'Acme' }]);
+
+    expect(merged.acme.displayName).toBe('Renamed');
+    expect(merged['acme-2'].displayName).toBe('Acme');
+  });
+});
+
+describe('mergeImportedOnlineModelProviders', () => {
+  test('updates matching providers, adds new providers, and restores the imported default', () => {
+    const existing = {
+      image: {
+        defaultProviderId: 'existing',
+        providers: {
+          existing: {
+            displayName: 'Image Lab',
+            baseUrl: 'https://old.example.com',
+            apiKey: 'old',
+            defaultModel: 'old-model',
+            models: [{ id: 'old-model', name: 'Old' }],
+          },
+        },
+      },
+    };
+
+    const merged = mergeImportedOnlineModelProviders(existing, {
+      image: {
+        defaultProvider: 'New Lab',
+        providers: [
+          {
+            displayName: 'image lab',
+            baseUrl: 'https://new.example.com',
+            apiKey: 'updated',
+            defaultModel: 'new-model',
+            models: [{ id: 'new-model', name: 'New' }],
+          },
+          {
+            displayName: 'New Lab',
+            baseUrl: 'https://another.example.com',
+            apiKey: 'new',
+            defaultModel: 'another-model',
+            models: [{ id: 'another-model', name: 'Another' }],
+          },
+        ],
+      },
+    });
+
+    expect(merged.image?.providers.existing.baseUrl).toBe('https://new.example.com');
+    expect(merged.image?.providers['new lab'].apiKey).toBe('new');
+    expect(merged.image?.defaultProviderId).toBe('new lab');
   });
 });
