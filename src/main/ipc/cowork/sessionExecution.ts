@@ -24,6 +24,7 @@ interface SessionExecutionHandlerDependencies {
 
 interface StartSessionOptions {
   prompt: string;
+  gatewayPrompt?: string;
   cwd?: string;
   title?: string;
   activeSkillIds?: string[];
@@ -53,6 +54,12 @@ export const registerCoworkSessionExecutionHandlers = ({
     try {
       if (!options || typeof options.prompt !== 'string' || !options.prompt.trim()) {
         return { success: false, error: 'Prompt is required.' };
+      }
+      if (
+        options.gatewayPrompt !== undefined &&
+        (typeof options.gatewayPrompt !== 'string' || !options.gatewayPrompt.trim())
+      ) {
+        return { success: false, error: 'Gateway prompt is invalid.' };
       }
       if (options.agentId && normalizeOpenClawAgentId(options.agentId) === ScheduledTaskAgentId) {
         return { success: false, error: 'The scheduler agent is reserved for scheduled tasks.' };
@@ -103,8 +110,17 @@ export const registerCoworkSessionExecutionHandlers = ({
             })
           : undefined;
 
-      const run = getCoworkEngineRouter()
-        .startSession(session.id, options.prompt, {
+      let resolveAdmission!: () => void;
+      let rejectAdmission!: (error: unknown) => void;
+      let admissionSettled = false;
+      const admission = new Promise<void>((resolve, reject) => {
+        resolveAdmission = resolve;
+        rejectAdmission = reject;
+      });
+      const run = getCoworkEngineRouter().startSession(
+        session.id,
+        options.gatewayPrompt ?? options.prompt,
+        {
           skillIds: options.activeSkillIds,
           workspaceRoot: resolvedWorkspaceRoot,
           confirmationMode: 'modal',
@@ -112,8 +128,24 @@ export const registerCoworkSessionExecutionHandlers = ({
           agentId: options.agentId,
           clientTurnId: options.clientTurnId,
           planMode: options.planMode === true,
+          onAccepted: () => {
+            admissionSettled = true;
+            resolveAdmission();
+          },
+        },
+      );
+      void run
+        .then(() => {
+          if (!admissionSettled) {
+            admissionSettled = true;
+            resolveAdmission();
+          }
         })
         .catch(error => {
+          if (!admissionSettled) {
+            admissionSettled = true;
+            rejectAdmission(error);
+          }
           console.error('[Cowork] session error:', error);
           try {
             if (store.getSession(session.id)?.status !== 'error') {
@@ -124,7 +156,7 @@ export const registerCoworkSessionExecutionHandlers = ({
             console.error('[Cowork] failed to send error notification to renderer:', handlerError);
           }
         });
-      void run;
+      await admission;
 
       return {
         success: true,

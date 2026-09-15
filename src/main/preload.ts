@@ -9,12 +9,23 @@ import {
 } from '../shared/appUpdate';
 import {
   type BrowserActionResult,
+  type BrowserClearDataRange,
+  type BrowserClearDataRequest,
+  type BrowserClearDataResult,
+  type BrowserClearDataSummaryResult,
   type BrowserConnectionTestResult,
+  type BrowserDownloadListResult,
+  type BrowserHistoryListResult,
+  type BrowserImportRequest,
+  type BrowserImportResult,
+  type BrowserImportSourcesResult,
   BrowserIpc,
   type BrowserMode,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
+  type BrowserPanelOpenTabEvent,
   type BrowserStatusResult,
+  normalizeBrowserPanelOpenTabEvent,
 } from '../shared/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
@@ -248,6 +259,37 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserIpc.CopyExtensionPairing),
     testExtensionConnection: (): Promise<BrowserConnectionTestResult> =>
       ipcRenderer.invoke(BrowserIpc.TestExtensionConnection),
+    onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelOpenTabEvent(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelOpenTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelOpenTab, handler);
+    },
+    listImportSources: (): Promise<BrowserImportSourcesResult> =>
+      ipcRenderer.invoke(BrowserIpc.ListImportSources),
+    importData: (request: BrowserImportRequest): Promise<BrowserImportResult> =>
+      ipcRenderer.invoke(BrowserIpc.ImportData, request),
+    listHistory: (query = ''): Promise<BrowserHistoryListResult> =>
+      ipcRenderer.invoke(BrowserIpc.ListHistory, query),
+    deleteHistory: (urls: string[]): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.DeleteHistory, urls),
+    clearHistory: (): Promise<BrowserActionResult> => ipcRenderer.invoke(BrowserIpc.ClearHistory),
+    listDownloads: (query = ''): Promise<BrowserDownloadListResult> =>
+      ipcRenderer.invoke(BrowserIpc.ListDownloads, query),
+    deleteDownloads: (ids: string[]): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.DeleteDownloads, ids),
+    clearDownloads: (): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.ClearDownloads),
+    openDownload: (id: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.OpenDownload, id),
+    revealDownload: (id: string): Promise<BrowserActionResult> =>
+      ipcRenderer.invoke(BrowserIpc.RevealDownload, id),
+    getClearDataSummary: (range: BrowserClearDataRange): Promise<BrowserClearDataSummaryResult> =>
+      ipcRenderer.invoke(BrowserIpc.GetClearDataSummary, range),
+    clearBrowsingData: (request: BrowserClearDataRequest): Promise<BrowserClearDataResult> =>
+      ipcRenderer.invoke(BrowserIpc.ClearBrowsingData, request),
   },
   api: {
     // 普通 API 请求（非流式）
@@ -380,6 +422,7 @@ contextBridge.exposeInMainWorld('electron', {
     // Session management
     startSession: (options: {
       prompt: string;
+      gatewayPrompt?: string;
       cwd?: string;
       title?: string;
       activeSkillIds?: string[];

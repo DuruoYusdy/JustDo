@@ -402,6 +402,7 @@ const App: React.FC = () => {
   const handleShowSettings = useCallback((options?: SettingsOpenOptions) => {
     setSettingsOptions({
       initialTab: options?.initialTab,
+      browserPage: options?.browserPage,
       notice: options?.notice,
     });
     setShowSettings(true);

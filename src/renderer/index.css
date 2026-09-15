@@ -170,6 +170,15 @@ select::-ms-expand {
   app-region: no-drag;
 }
 
+/* The hotspot sits in the center of the speech bubble, matching the point used
+   by elementFromPoint while keeping inspect mode visually distinct from drawing. */
+.browser-element-annotation-cursor {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M14 2.5C7.1 2.5 2 7.1 2 13c0 5.8 5.1 10.5 12 10.5 1.4 0 2.8-.2 4.1-.7l5.5 2.2-1.8-5C24.4 18.1 26 15.7 26 13 26 7.1 20.9 2.5 14 2.5Z' fill='%231687ff' stroke='white' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E")
+      14 13,
+    pointer;
+}
+
 .window-controls-floating {
   user-select: none;
 }

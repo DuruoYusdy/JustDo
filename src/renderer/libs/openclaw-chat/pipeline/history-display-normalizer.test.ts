@@ -1,3 +1,4 @@
+import { composeBrowserGatewayPrompt } from '@shared/browser';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -35,6 +36,45 @@ describe('projectGatewayHistoryForDisplay', () => {
     ]);
 
     expect(projected).toEqual([{ role: 'user', content: 'Improve chapter two' }]);
+  });
+
+  test('hides browser context while preserving the original user prompt', () => {
+    const projected = projectGatewayHistoryForDisplay([
+      {
+        role: 'user',
+        content: composeBrowserGatewayPrompt('Review this marked control.', [
+          {
+            id: 'annotation-1',
+            modelContext: 'Untrusted browser context',
+            title: 'Example',
+            displayUrl: 'example.com',
+            markedRegionCount: 1,
+            inspectedElement: true,
+            dataUrl: 'data:image/png;base64,YWJj',
+            fileName: 'browser-annotation.png',
+            addedAt: 1,
+          },
+        ]),
+      },
+    ]);
+
+    expect(projected).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Review this marked control.' },
+          {
+            type: 'browser_annotation',
+            annotation: {
+              id: 'annotation-1',
+              title: 'Example',
+              displayUrl: 'example.com',
+              markedRegionCount: 1,
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   test('removes persisted control artifacts while preserving legitimate assistant text', () => {

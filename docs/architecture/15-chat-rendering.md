@@ -10,6 +10,8 @@
 输入区的麦克风在 Renderer 录音并编码单声道 WAV，由 Main 调用本地 Whisper
 CLI 转写；返回文本只写入可编辑 draft，不会自动发送消息。
 
+浏览器工作区的标注也是 Composer draft，而不是独立 transcript。每个 session id（首页使用 `__home__`）在 cowork slice 保存最多 4 份标注；图片总量沿用 20 MB 限制，结构化上下文总长最多 8,000 字符。完成标注后，网页上方显示可编辑评论条：左侧可展开清洗后的 HTML 元素详情，中间录入评论，右侧按当前语音设置显示语音输入及提交动作。评论写入普通用户草稿，不再注入固定提示词。卡片可预览和移除，切换会话不会串用草稿；网页本身始终是可直接操作的嵌入式 Chromium guest，只有检查/画笔/矩形模式启用覆盖 Canvas，切换 Tab、导航或刷新会使尚未加入草稿的覆盖状态失效。截图仅在提交评论时生成。
+
 本文按 `v2026.8.27` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Gateway client 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
 
 ## 1. 目标与不变量
@@ -228,6 +230,10 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 ## 16. Attachments 与路径
 
 附件转换为Gateway content blocks，历史媒体从结构化message提取。OpenClaw 在消息的 `openclawDelivery.mediaUrls` 中记录模型输出的原始 `MEDIA:` 引用；JustDo 保留这个字段并直接生成文件卡片，不依赖 managed `/api/chat/media/outgoing/...` 下载地址。Windows 绝对路径原样用于文件操作，相对路径与当前工作空间目录拼接；白名单扩展名通过 Main 读取真实文件并在可编辑侧边栏打开，“使用系统工具打开”交给系统关联工具，“打开所在的文件夹”交给系统文件管理器。文件是否存在不影响卡片生成；用户点击时若文件已不存在，操作层显示“文件不存在”。对于已经通过本地媒体根目录、常规文件、符号链接和大小检查的 trusted local MEDIA 文件，无法识别 MIME 时以 `application/octet-stream` 的附件交付；不能借此放宽远程或不可信来源。消息复制遵循 OpenClaw WebChat 的可见 Markdown 语义，不承诺复制已被展示投影移除的原始 `MEDIA:` 指令。Markdown本地路径链接经专门utility转成应用操作；图片保存由Main shell IPC执行。双击消息图片通过专用IPC打开无 parent 的独立原生查看窗口，查看器使用单独的沙箱Renderer和最小权限preload，并在自身窗口内处理滚轮缩放、拖动与双击复位；最大化/还原由操作系统窗口框架负责，不受聊天主窗口尺寸限制。Renderer不能直接读 `file://`；`localfile://` 使用需遵守安全文档中的限制。
+
+浏览器标注发送采用 display prompt / gateway prompt 双通道：乐观消息和历史展示保留用户原文，Gateway prompt 在原文前加入版本化、明确标记为不可信页面报告的结构化上下文。历史正规化识别并移除此前缀，避免内部上下文在重载后显示成用户正文。模型明确 `supportsImage=true` 时，合成 PNG 作为普通图片附件与结构化文本一起发送；能力为 false 或未知时只发文本并在草稿卡提示。Slash command 不消费标注；Goal awaiting-input 通道当前不支持附件，因此仅发送结构化文本。完成 Goal 后的反馈会建立新 Goal，而 Gateway 将 `message` 直接持久化为 objective，因此该路径同样不消费浏览器标注，标注保留到下一条普通消息，避免内部上下文污染 Goal。失败发送保留草稿，成功时按本次提交的 annotation id 删除，发送期间新加入的标注不受影响。
+
+用户消息不会把给模型的浏览器上下文直接显示为正文。上下文信封同时携带一份有界、清洗后的显示元数据；发送瞬间与历史重载使用同一投影逻辑，将其恢复为 `browser_annotation` 内容块。消息气泡按原始顺序渲染图片与元素引用卡：卡片默认显示元素标签、可读名称和页面来源，展开后显示 role、稳定 CSS selector、viewport rect、区域数量和页面标题。显示元数据不包含截图、输入值、Cookie 或完整 DOM，最多恢复 4 份标注；旧版不含显示元数据的历史仍只显示原用户正文。
 
 语音输入同样只写入可编辑 draft，不直接提交消息。离线模式中，Renderer 从选定麦克风、Windows 系统 loopback、两条独立来源或用户选择的媒体文件取得音频，并转换成有大小上限的单声道 PCM16 WAV 分段；Main 只接收 WAV 与白名单模型 ID，调用对应本地 sherpa-onnx 参数布局。会议模式在持续采集时串行转写分段，以时间戳和“我/会议声音”标记插入 draft，避免麦克风与远端播放预先混音后丢失来源。
 

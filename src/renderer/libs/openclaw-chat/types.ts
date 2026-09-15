@@ -3,6 +3,8 @@
  * These are the types used by the rendering pipeline and ordinary Content renderer.
  */
 
+import type { BrowserAnnotationDisplay } from '@shared/browser';
+
 // ─── ChatItem (rendering pipeline output) ───────────────────────────────────
 
 /** Union type for items in the chat thread */
@@ -72,6 +74,10 @@ export type MessageContentItem =
         label: string;
         mimeType?: string;
       };
+    }
+  | {
+      type: 'browser_annotation';
+      annotation: BrowserAnnotationDisplay;
     }
   | {
       type: 'canvas';

@@ -48,7 +48,12 @@ describe('cowork session execution permissions', () => {
       getSession: vi.fn().mockReturnValue(session('ask')),
       getAgent: vi.fn().mockReturnValue({ model: 'openai/gpt-5' }),
     } as unknown as CoworkStore;
-    const startSession = vi.fn().mockResolvedValue(undefined);
+    const startSession = vi.fn(
+      (_sessionId: string, _prompt: string, options?: { onAccepted?: () => void }) => {
+        options?.onAccepted?.();
+        return new Promise<void>(() => undefined);
+      },
+    );
     registerCoworkSessionExecutionHandlers({
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
       getCoworkStore: () => store,
@@ -59,14 +64,18 @@ describe('cowork session execution permissions', () => {
 
     const result = await handlers.get('cowork:session:start')?.(
       {},
-      { prompt: 'hello', permissionMode: 'ask' },
+      {
+        prompt: 'hello',
+        gatewayPrompt: '<justdo-browser-context-v1>context</justdo-browser-context-v1>\n\nhello',
+        permissionMode: 'ask',
+      },
     );
     expect(result).toMatchObject({ success: true });
     expect(createSession.mock.calls[0]?.[5]).toBe('full');
     expect(createSession.mock.calls[0]?.[6]).toBe('openai/gpt-5');
     expect(startSession).toHaveBeenCalledWith(
       'session-1',
-      'hello',
+      '<justdo-browser-context-v1>context</justdo-browser-context-v1>\n\nhello',
       expect.objectContaining({ workspaceRoot: 'C:\\workspace' }),
     );
   });
@@ -197,7 +206,7 @@ describe('cowork session execution permissions', () => {
     },
   );
 
-  test('persists an asynchronous runtime start failure as an error', async () => {
+  test('returns an asynchronous runtime admission failure and preserves the error state', async () => {
     const createdSession = { ...session('ask'), status: 'idle' as const };
     const updateSession = vi.fn((_sessionId: string, updates: Partial<CoworkSession>) =>
       Object.assign(createdSession, updates),
@@ -226,7 +235,7 @@ describe('cowork session execution permissions', () => {
 
     await expect(
       handlers.get('cowork:session:start')?.({}, { prompt: 'hello' }),
-    ).resolves.toMatchObject({ success: true });
+    ).resolves.toMatchObject({ success: false, error: 'gateway unavailable' });
     await vi.waitFor(() =>
       expect(updateSession).toHaveBeenCalledWith(createdSession.id, { status: 'error' }),
     );

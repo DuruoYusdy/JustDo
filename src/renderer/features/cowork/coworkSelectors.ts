@@ -39,11 +39,15 @@ export const selectFirstPendingInteraction = createSelector(
 );
 
 // Stable empty array reference to avoid unnecessary re-renders
-const EMPTY_ATTACHMENTS: unknown[] = [];
+const EMPTY_ATTACHMENTS: RootState['cowork']['draftAttachments'][string] = [];
+const EMPTY_BROWSER_ANNOTATIONS: RootState['cowork']['draftBrowserAnnotations'][string] = [];
 const EMPTY_SESSIONS: CoworkSessionSummary[] = [];
 
 export const selectDraftAttachments = (state: RootState, draftKey: string) =>
   state.cowork.draftAttachments[draftKey] ?? EMPTY_ATTACHMENTS;
+
+export const selectDraftBrowserAnnotations = (state: RootState, draftKey: string) =>
+  state.cowork.draftBrowserAnnotations[draftKey] ?? EMPTY_BROWSER_ANNOTATIONS;
 
 // Session Group derived selectors
 export const selectSessionsByGroup = createSelector(

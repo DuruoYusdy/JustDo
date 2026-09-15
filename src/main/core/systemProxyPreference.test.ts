@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   setFixedProxyUrl: vi.fn(),
   setProxy: vi.fn(),
   setSystemProxyEnabled: vi.fn(),
+  browserCloseAllConnections: vi.fn(),
+  browserSetProxy: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -18,6 +20,10 @@ vi.mock('electron', () => ({
       setProxy: mocks.setProxy,
       closeAllConnections: mocks.closeAllConnections,
     },
+    fromPartition: vi.fn(() => ({
+      setProxy: mocks.browserSetProxy,
+      closeAllConnections: mocks.browserCloseAllConnections,
+    })),
   },
 }));
 
@@ -35,6 +41,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.setProxy.mockResolvedValue(undefined);
   mocks.closeAllConnections.mockResolvedValue(undefined);
+  mocks.browserSetProxy.mockResolvedValue(undefined);
+  mocks.browserCloseAllConnections.mockResolvedValue(undefined);
   mocks.resolveSystemProxyUrl.mockResolvedValue('http://system-proxy:8080');
 });
 
@@ -77,5 +85,22 @@ describe('applySystemProxyPreference', () => {
       expect.objectContaining({ mode: 'fixed_servers' }),
     );
     expect(mocks.closeAllConnections).toHaveBeenCalledTimes(2);
+    expect(mocks.browserCloseAllConnections).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([
+    [ProxyProtocol.HTTP, '80', 'http://proxy.example'],
+    [ProxyProtocol.HTTPS, '443', 'https://proxy.example'],
+  ])('accepts the default %s proxy port', async (protocol, port, expectedRule) => {
+    await applySystemProxyPreference({
+      proxy: { mode: ProxyMode.CUSTOM, custom: { protocol, host: 'proxy.example', port } },
+    });
+
+    expect(mocks.setProxy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mode: 'fixed_servers', proxyRules: expectedRule }),
+    );
+    expect(mocks.browserSetProxy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mode: 'fixed_servers', proxyRules: expectedRule }),
+    );
   });
 });

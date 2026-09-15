@@ -1,3 +1,4 @@
+import { parseBrowserAnnotationPrompt } from '@shared/browser';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
@@ -245,10 +246,43 @@ export function shouldHideMessage(message: unknown): boolean {
 export function projectGatewayHistoryForDisplay(messages: unknown[]): unknown[] {
   return messages
     .map(projectGoalFeedbackForDisplay)
+    .map(projectBrowserAnnotationForDisplay)
     .map(stripAssistantSilentReplySuffix)
     .filter(message => !shouldHideMessage(message))
     .filter(message => !isLegacyInterruptedStatusMessage(message))
     .filter(message => !asRecord(message)?.__openclawStreamFallback);
+}
+
+function projectBrowserAnnotationForDisplay(message: unknown): unknown {
+  const record = asRecord(message);
+  if (!record || String(record.role ?? '').toLowerCase() !== 'user') return message;
+  const projectText = (value: string): unknown[] | null => {
+    const parsed = parseBrowserAnnotationPrompt(value);
+    if (!parsed) return null;
+    return [
+      { type: 'text', text: parsed.userText },
+      ...parsed.annotations.map(annotation => ({ type: 'browser_annotation', annotation })),
+    ];
+  };
+  if (typeof record.content === 'string') {
+    const content = projectText(record.content);
+    return content === null ? message : { ...record, content };
+  }
+  if (typeof record.text === 'string') {
+    const content = projectText(record.text);
+    return content === null ? message : { ...record, text: undefined, content };
+  }
+  if (!Array.isArray(record.content)) return message;
+  let changed = false;
+  const content = record.content.flatMap(block => {
+    const item = asRecord(block);
+    if (item?.type !== 'text' || typeof item.text !== 'string') return [block];
+    const projected = projectText(item.text);
+    if (projected === null) return [block];
+    changed = true;
+    return projected;
+  });
+  return changed ? { ...record, content } : message;
 }
 
 function projectGoalFeedbackForDisplay(message: unknown): unknown {

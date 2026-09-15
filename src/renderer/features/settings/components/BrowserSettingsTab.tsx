@@ -3,9 +3,11 @@ import {
   ArrowTopRightOnSquareIcon,
   CheckCircleIcon,
   ClipboardDocumentIcon,
+  ClockIcon,
   ComputerDesktopIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
+  MagnifyingGlassIcon,
   PuzzlePieceIcon,
   UserCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -14,7 +16,10 @@ import {
   type BrowserConnectionTestResult,
   BrowserMode,
   type BrowserMode as BrowserModeValue,
+  BrowserSearchEngine,
+  type BrowserSearchEngine as BrowserSearchEngineValue,
   normalizeBrowserMode,
+  normalizeBrowserSearchEngine,
 } from '@shared/browser';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
@@ -22,6 +27,8 @@ import {
   browserConnectionVerificationReducer,
   initialBrowserConnectionVerificationState,
 } from '@/features/settings/browserConnectionVerification';
+import BrowserDownloadsPage from '@/features/settings/components/BrowserDownloadsPage';
+import BrowserHistoryPage from '@/features/settings/components/BrowserHistoryPage';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -71,14 +78,14 @@ const SetupStep: React.FC<StepProps> = ({
   action,
   feedback,
 }) => (
-  <div className="flex gap-3 px-4 py-3">
+  <div className="flex items-start gap-2.5 px-3.5 py-2.5">
     <div aria-hidden="true">
       {complete ? (
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white shadow-sm shadow-primary/20">
-          <CheckCircleIcon className="h-3.5 w-3.5" />
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white">
+          <CheckCircleIcon className="h-3 w-3" />
         </span>
       ) : (
-        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface-raised/60 text-[11px] font-semibold text-muted">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface-raised/60 text-[10px] font-semibold text-muted">
           {number}
         </span>
       )}
@@ -87,7 +94,7 @@ const SetupStep: React.FC<StepProps> = ({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h4 className="text-[13px] font-semibold leading-5 text-foreground">{title}</h4>
-          <p className="whitespace-pre-line text-left text-[12px] leading-[18px] text-secondary">
+          <p className="whitespace-pre-line text-left text-[12px] leading-[17px] text-secondary">
             {description}
           </p>
         </div>
@@ -119,9 +126,21 @@ const ExtensionPairingDescription: React.FC = () => {
   );
 };
 
-const BrowserSettingsTab: React.FC = () => {
+const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = ({
+  initialPage,
+}) => {
+  const [page, setPage] = useState<'main' | 'history' | 'downloads'>(initialPage ?? 'main');
   const [browserMode, setBrowserMode] = useState<BrowserModeValue>(() =>
     normalizeBrowserMode(configService.getConfig().browserMode),
+  );
+  const [searchEngine, setSearchEngine] = useState<BrowserSearchEngineValue>(() =>
+    normalizeBrowserSearchEngine(configService.getConfig().browserSearchEngine),
+  );
+  const [downloadDirectory, setDownloadDirectory] = useState(
+    () => configService.getConfig().browserDownloadDirectory ?? '',
+  );
+  const [askDownloadLocation, setAskDownloadLocation] = useState(
+    () => configService.getConfig().browserAskDownloadLocation ?? true,
   );
   const [status, setStatus] = useState<BrowserConnectionStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -289,6 +308,56 @@ const BrowserSettingsTab: React.FC = () => {
     }
   };
 
+  const selectSearchEngine = async (engine: BrowserSearchEngineValue) => {
+    if (engine === searchEngine) return;
+    const previous = searchEngine;
+    setSearchEngine(engine);
+    try {
+      await configService.updateConfig({ browserSearchEngine: engine });
+    } catch {
+      setSearchEngine(previous);
+      setError(i18nService.t('browserSearchEngineSaveFailed'));
+    }
+  };
+
+  const chooseDownloadDirectory = async () => {
+    setError(null);
+    try {
+      const result = await window.electron.dialog.selectDirectory();
+      if (!result.success) {
+        throw new Error(i18nService.t('browserDownloadSettingsSaveFailed'));
+      }
+      if (!result.path) return;
+      const previous = downloadDirectory;
+      setDownloadDirectory(result.path);
+      try {
+        await configService.updateConfig({ browserDownloadDirectory: result.path });
+      } catch {
+        setDownloadDirectory(previous);
+        throw new Error(i18nService.t('browserDownloadSettingsSaveFailed'));
+      }
+    } catch (directoryError) {
+      setError(
+        directoryError instanceof Error
+          ? directoryError.message
+          : i18nService.t('browserDownloadSettingsSaveFailed'),
+      );
+    }
+  };
+
+  const toggleAskDownloadLocation = async () => {
+    const previous = askDownloadLocation;
+    const next = !previous;
+    setAskDownloadLocation(next);
+    setError(null);
+    try {
+      await configService.updateConfig({ browserAskDownloadLocation: next });
+    } catch {
+      setAskDownloadLocation(previous);
+      setError(i18nService.t('browserDownloadSettingsSaveFailed'));
+    }
+  };
+
   const openRemoteDebugging = async () => {
     setBusyAction('open');
     setError(null);
@@ -450,402 +519,532 @@ const BrowserSettingsTab: React.FC = () => {
         : i18nService.t('browserPortOwnerUnknown')
     : null;
 
-  return (
-    <div className="space-y-4">
-      <div>
-        <div className="flex min-h-6 items-center gap-3">
-          <h3 className="shrink-0 text-base font-semibold text-foreground">
-            {i18nService.t('browserModeTitle')}
-          </h3>
-          <div
-            role={modeApplyState ? 'status' : undefined}
-            aria-live={modeApplyState ? 'polite' : undefined}
-            className="flex min-w-0 flex-1 items-center justify-end gap-1.5 text-right text-xs text-secondary"
-          >
-            {modeApplyState ? (
-              <>
-                {modeApplyState.phase === 'complete' ? (
-                  <CheckCircleIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-                ) : (
-                  <span
-                    className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary"
-                    aria-hidden="true"
-                  />
-                )}
-                <span className="min-w-0 truncate">
-                  {modeApplyState.phase === 'complete'
-                    ? i18nService.t('browserModeChangeComplete')
-                    : modeApplyState.phase === 'restarting'
-                      ? i18nService.t('browserModeGatewayRestarting')
-                      : i18nService.t('browserModeApplying')}
-                </span>
-              </>
-            ) : null}
-          </div>
-        </div>
-        <p className="mt-1 max-w-2xl text-sm leading-5 text-secondary">
-          {i18nService.t('browserModeDescription')}
-        </p>
-      </div>
+  if (page === 'history') return <BrowserHistoryPage onBack={() => setPage('main')} />;
+  if (page === 'downloads') return <BrowserDownloadsPage onBack={() => setPage('main')} />;
 
-      <div
-        role="radiogroup"
-        aria-label={i18nService.t('browserModeTitle')}
-        aria-busy={savingMode}
-        className="grid gap-2 md:grid-cols-3"
-      >
-        {[
-          {
-            mode: BrowserMode.Isolated,
-            icon: ComputerDesktopIcon,
-            title: i18nService.t('browserModeIsolatedTitle'),
-            description: i18nService.t('browserModeIsolatedDescription'),
-          },
-          {
-            mode: BrowserMode.User,
-            icon: UserCircleIcon,
-            title: i18nService.t('browserModeUserTitle'),
-            description: i18nService.t('browserModeUserDescription'),
-          },
-          {
-            mode: BrowserMode.Extension,
-            icon: PuzzlePieceIcon,
-            title: i18nService.t('browserModeExtensionTitle'),
-            description: i18nService.t('browserModeExtensionDescription'),
-          },
-        ].map(option => {
-          const selected = browserMode === option.mode;
-          const Icon = option.icon;
-          return (
-            <button
-              key={option.mode}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              disabled={savingMode || busyAction !== null}
-              onClick={() => void selectBrowserMode(option.mode)}
-              className={`group relative overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:opacity-60 ${
-                selected
-                  ? 'border-primary/55 bg-primary/[0.08] shadow-sm ring-1 ring-primary/10'
-                  : 'border-border/70 bg-surface hover:-translate-y-px hover:border-primary/30 hover:shadow-sm'
-              }`}
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-5 pb-8">
+      <section className="overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
+        <div className="border-b border-border/60 px-4 py-3.5">
+          <div className="flex min-h-6 items-center gap-3">
+            <h3 className="shrink-0 text-base font-semibold text-foreground">
+              {i18nService.t('browserModeTitle')}
+            </h3>
+            <div
+              role={modeApplyState ? 'status' : undefined}
+              aria-live={modeApplyState ? 'polite' : undefined}
+              className="flex min-w-0 flex-1 items-center justify-end gap-1.5 text-right text-xs text-secondary"
             >
-              <span className="flex items-center justify-center gap-2 px-5">
+              {modeApplyState ? (
+                <>
+                  {modeApplyState.phase === 'complete' ? (
+                    <CheckCircleIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                  ) : (
+                    <span
+                      className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span className="min-w-0 truncate">
+                    {modeApplyState.phase === 'complete'
+                      ? i18nService.t('browserModeChangeComplete')
+                      : modeApplyState.phase === 'restarting'
+                        ? i18nService.t('browserModeGatewayRestarting')
+                        : i18nService.t('browserModeApplying')}
+                  </span>
+                </>
+              ) : null}
+            </div>
+          </div>
+          <p className="mt-0.5 max-w-2xl text-xs leading-5 text-secondary">
+            {i18nService.t('browserModeDescription')}
+          </p>
+        </div>
+
+        <div
+          role="radiogroup"
+          aria-label={i18nService.t('browserModeTitle')}
+          aria-busy={savingMode}
+          className="grid gap-2 bg-surface-raised/20 p-3 sm:grid-cols-3"
+        >
+          {[
+            {
+              mode: BrowserMode.Isolated,
+              icon: ComputerDesktopIcon,
+              title: i18nService.t('browserModeIsolatedTitle'),
+              description: i18nService.t('browserModeIsolatedDescription'),
+            },
+            {
+              mode: BrowserMode.User,
+              icon: UserCircleIcon,
+              title: i18nService.t('browserModeUserTitle'),
+              description: i18nService.t('browserModeUserDescription'),
+            },
+            {
+              mode: BrowserMode.Extension,
+              icon: PuzzlePieceIcon,
+              title: i18nService.t('browserModeExtensionTitle'),
+              description: i18nService.t('browserModeExtensionDescription'),
+            },
+          ].map(option => {
+            const selected = browserMode === option.mode;
+            const Icon = option.icon;
+            return (
+              <button
+                key={option.mode}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={savingMode || busyAction !== null}
+                onClick={() => void selectBrowserMode(option.mode)}
+                className={`group flex min-h-[76px] items-start gap-3 rounded-xl border p-3 text-left transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:opacity-60 ${
+                  selected
+                    ? 'border-primary/50 bg-primary/[0.08] text-primary shadow-sm'
+                    : 'border-border/60 bg-surface text-secondary hover:border-primary/25 hover:bg-primary/[0.025]'
+                }`}
+              >
                 <span
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
-                    selected
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-surface-raised/70 text-secondary group-hover:text-foreground'
+                  className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+                    selected ? 'bg-primary/12 text-primary' : 'bg-surface-raised text-secondary'
                   }`}
                 >
                   <Icon className="h-4 w-4" />
                 </span>
-                <span
-                  className={`text-[13px] font-semibold leading-5 ${selected ? 'text-primary' : 'text-foreground'}`}
-                >
-                  {option.title}
+                <span className="min-w-0 flex-1">
+                  <span
+                    className={`block text-[13px] font-semibold leading-5 ${
+                      selected ? 'text-primary' : 'text-foreground'
+                    }`}
+                  >
+                    {option.title}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] leading-4 text-secondary">
+                    {option.description}
+                  </span>
                 </span>
-              </span>
-              <span className="mt-1 block w-full text-center text-[12px] leading-[18px] text-secondary">
-                {option.description}
-              </span>
-              {selected ? (
-                <span className="absolute right-2.5 top-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white">
-                  <CheckCircleIcon className="h-3 w-3" />
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-
-      {modeSwitchWarning ? (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm leading-5 text-foreground"
-        >
-          <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
-          <span className="min-w-0 flex-1">{modeSwitchWarning}</span>
+              </button>
+            );
+          })}
         </div>
-      ) : null}
 
-      {error ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-        >
-          {error}
+        {modeSwitchWarning ? (
+          <div
+            role="alert"
+            className="mx-4 mb-4 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm leading-5 text-foreground"
+          >
+            <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+            <span className="min-w-0 flex-1">{modeSwitchWarning}</span>
+          </div>
+        ) : null}
+
+        {error ? (
+          <div
+            role="alert"
+            className="mx-4 mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          >
+            {error}
+          </div>
+        ) : null}
+        <div className="space-y-3 border-t border-border/60 bg-surface px-4 py-3.5">
+          {browserMode === BrowserMode.Isolated ? (
+            <div className="rounded-xl border border-primary/20 bg-primary/[0.035] px-4 py-3 text-[13px] leading-5 text-foreground">
+              <p>{i18nService.t('browserModeIsolatedActive')}</p>
+              <p className="mt-1 text-xs text-secondary">
+                {i18nService.t('browserModeIsolatedNetworkNotice')}
+              </p>
+            </div>
+          ) : browserMode === BrowserMode.User ? (
+            <>
+              <p className="border-l-2 border-primary/35 pl-3 text-xs leading-5 text-secondary">
+                {i18nService.t('browserUserChromeDescription')}
+              </p>
+              <div
+                role="status"
+                aria-live="polite"
+                className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 ${
+                  status?.endpointReachable
+                    ? 'border-primary/30 bg-primary/5'
+                    : 'border-warning/30 bg-warning/5'
+                }`}
+              >
+                {status?.endpointReachable ? (
+                  <CheckCircleIcon className="h-6 w-6 shrink-0 text-primary" />
+                ) : (
+                  <ExclamationTriangleIcon className="h-6 w-6 shrink-0 text-warning" />
+                )}
+                <div>
+                  <div className="text-sm font-medium text-foreground">{statusLabel}</div>
+                  {status?.activePort ? (
+                    <div className="mt-0.5 space-y-0.5 text-xs text-secondary">
+                      <div>
+                        {i18nService.t('browserDetectedPort')}: {status.activePort}
+                      </div>
+                      {portOwnerLabel ? <div>{portOwnerLabel}</div> : null}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
+                <SetupStep
+                  number={1}
+                  complete={status?.chromeFound === true}
+                  title={i18nService.t('browserStepChromeTitle')}
+                  description={i18nService.t('browserStepChromeDescription')}
+                />
+                <SetupStep
+                  number={2}
+                  complete={status?.remoteDebuggingEnabled === true}
+                  title={i18nService.t('browserStepDebuggingTitle')}
+                  description={i18nService.t('browserStepDebuggingDescription')}
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => void openRemoteDebugging()}
+                      disabled={savingMode || busyAction !== null || status?.chromeFound !== true}
+                      className={actionButtonClassName}
+                    >
+                      <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                      {i18nService.t('browserCopyDebuggingAddress')}
+                    </button>
+                  }
+                />
+                {setupUrlCopied ? (
+                  <div className="mx-5 mb-3 ml-[66px] rounded-lg border border-primary/20 bg-primary/[0.035] px-3 py-2 text-[13px] leading-5 text-foreground">
+                    {i18nService.t('browserDebuggingAddressCopied')}
+                    <code className="ml-1 select-all rounded bg-surface-raised px-1.5 py-0.5 text-xs">
+                      chrome://inspect/#remote-debugging
+                    </code>
+                  </div>
+                ) : null}
+                <SetupStep
+                  number={3}
+                  complete={status?.endpointReachable === true}
+                  title={i18nService.t('browserStepRestartChromeTitle')}
+                  description={
+                    status?.issue === 'port-occupied-by-other-process'
+                      ? i18nService.t('browserStepRestartChromeOccupiedDescription')
+                      : status?.issue === 'chrome-restart-required'
+                        ? i18nService.t('browserStepRestartChromeStaleDescription')
+                        : i18nService.t('browserStepRestartChromeDescription')
+                  }
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => void refresh()}
+                      disabled={savingMode || loading || busyAction !== null}
+                      className={actionButtonClassName}
+                    >
+                      <ArrowPathIcon className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                      {i18nService.t('browserRefreshStatus')}
+                    </button>
+                  }
+                />
+                <SetupStep
+                  number={4}
+                  complete={connectionVerification.user}
+                  title={i18nService.t('browserStepAuthorizeTitle')}
+                  description={i18nService.t('browserStepAuthorizeDescription')}
+                  action={
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void testConnection()}
+                        disabled={
+                          savingMode ||
+                          loading ||
+                          busyAction !== null ||
+                          status?.endpointReachable !== true
+                        }
+                        className={actionButtonClassName}
+                      >
+                        <ArrowPathIcon
+                          className={`h-3.5 w-3.5 ${busyAction === 'test' ? 'animate-spin' : ''}`}
+                        />
+                        {i18nService.t('browserTestConnection')}
+                      </button>
+                      {connectionVerification.user ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 text-sm text-primary">
+                          <CheckCircleIcon className="h-4 w-4" />
+                          {i18nService.t('browserConnectionVerified')}
+                        </span>
+                      ) : null}
+                    </div>
+                  }
+                  feedback={
+                    busyAction === 'test' ? (
+                      <p className="text-xs leading-5 text-secondary" role="status">
+                        {i18nService.t('browserAuthorizationWaiting')}
+                      </p>
+                    ) : userConnectionTestError ? (
+                      <p className="text-xs leading-5 text-destructive" role="alert">
+                        {userConnectionTestError}
+                      </p>
+                    ) : null
+                  }
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="border-l-2 border-primary/35 pl-3 text-xs leading-5 text-secondary">
+                {i18nService.t('browserExtensionDescription')}
+              </p>
+              <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
+                <SetupStep
+                  number={1}
+                  complete={status?.chromeFound === true}
+                  title={i18nService.t('browserExtensionStepChromeTitle')}
+                  description={i18nService.t('browserExtensionStepChromeDescription')}
+                />
+                <SetupStep
+                  number={2}
+                  complete={extensionFolderRevealed}
+                  title={i18nService.t('browserExtensionStepInstallTitle')}
+                  description={i18nService.t('browserExtensionStepInstallDescription')}
+                  action={
+                    <div className="flex min-w-0 flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openExtensionManagement()}
+                        disabled={savingMode || busyAction !== null || status?.chromeFound !== true}
+                        className={actionButtonClassName}
+                      >
+                        <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                        {i18nService.t('browserExtensionOpenPage')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void revealExtension()}
+                        disabled={savingMode || busyAction !== null}
+                        className={actionButtonClassName}
+                      >
+                        <FolderOpenIcon className="h-3.5 w-3.5" />
+                        {i18nService.t('browserExtensionRevealFolder')}
+                      </button>
+                      {setupUrlCopied ? (
+                        <p className="min-w-0 basis-full break-words text-right text-sm leading-6 text-secondary">
+                          {i18nService.t('browserExtensionPageCopied')}{' '}
+                          <code className="select-all rounded bg-surface-raised px-1.5 py-0.5 text-xs">
+                            chrome://extensions
+                          </code>
+                        </p>
+                      ) : null}
+                    </div>
+                  }
+                />
+                <SetupStep
+                  number={3}
+                  complete={extensionPairingCopied}
+                  title={i18nService.t('browserExtensionStepPairTitle')}
+                  description={<ExtensionPairingDescription />}
+                  action={
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void copyExtensionPairing()}
+                        disabled={savingMode || busyAction !== null}
+                        className={actionButtonClassName}
+                      >
+                        <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+                        {i18nService.t('browserExtensionCopyPairing')}
+                      </button>
+                      {extensionPairingCopied ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-primary">
+                          <CheckCircleIcon className="h-4 w-4" />
+                          {i18nService.t('browserExtensionPairingCopied')}
+                        </span>
+                      ) : null}
+                    </div>
+                  }
+                />
+                <SetupStep
+                  number={4}
+                  complete={connectionVerification.extension}
+                  title={i18nService.t('browserExtensionStepVerifyTitle')}
+                  description={i18nService.t('browserExtensionStepVerifyDescription')}
+                  action={
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void testExtensionConnection()}
+                        disabled={
+                          savingMode ||
+                          busyAction !== null ||
+                          extensionTestKind === 'manual' ||
+                          extensionProbeInFlight
+                        }
+                        className={actionButtonClassName}
+                      >
+                        <ArrowPathIcon
+                          className={`h-3.5 w-3.5 ${extensionTestKind ? 'animate-spin' : ''}`}
+                        />
+                        {i18nService.t('browserExtensionTestConnection')}
+                      </button>
+                      {connectionVerification.extension ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 text-sm text-primary">
+                          <CheckCircleIcon className="h-4 w-4" />
+                          {i18nService.t('browserConnectionVerified')}
+                        </span>
+                      ) : null}
+                      {extensionConnectionTestError ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 px-2 text-sm text-destructive"
+                          role="alert"
+                        >
+                          <ExclamationTriangleIcon className="h-4 w-4" />
+                          {extensionConnectionTestError}
+                        </span>
+                      ) : null}
+                    </div>
+                  }
+                />
+              </div>
+            </>
+          )}
         </div>
-      ) : null}
+      </section>
 
-      {browserMode === BrowserMode.Isolated ? (
-        <div className="rounded-xl border border-primary/20 bg-primary/[0.035] px-4 py-3 text-[13px] leading-5 text-foreground">
-          <p>{i18nService.t('browserModeIsolatedActive')}</p>
-          <p className="mt-1 text-xs text-secondary">
-            {i18nService.t('browserModeIsolatedNetworkNotice')}
+      <section className="overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
+        <div className="border-b border-border/60 px-4 py-3.5">
+          <h3 className="text-sm font-semibold text-foreground">
+            {i18nService.t('browserGeneralSettingsTitle')}
+          </h3>
+          <p className="mt-0.5 text-xs leading-5 text-secondary">
+            {i18nService.t('browserGeneralSettingsDescription')}
           </p>
         </div>
-      ) : browserMode === BrowserMode.User ? (
-        <>
-          <div>
-            <h3 className="text-base font-semibold text-foreground">
-              {i18nService.t('browserUserChromeTitle')}
-            </h3>
-            <p className="mt-1 max-w-2xl text-sm leading-5 text-secondary">
-              {i18nService.t('browserUserChromeDescription')}
-            </p>
-          </div>
-
-          <div
-            role="status"
-            aria-live="polite"
-            className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 ${
-              status?.endpointReachable
-                ? 'border-primary/30 bg-primary/5'
-                : 'border-warning/30 bg-warning/5'
-            }`}
-          >
-            {status?.endpointReachable ? (
-              <CheckCircleIcon className="h-6 w-6 shrink-0 text-primary" />
-            ) : (
-              <ExclamationTriangleIcon className="h-6 w-6 shrink-0 text-warning" />
-            )}
-            <div>
-              <div className="text-sm font-medium text-foreground">{statusLabel}</div>
-              {status?.activePort ? (
-                <div className="mt-0.5 space-y-0.5 text-xs text-secondary">
-                  <div>
-                    {i18nService.t('browserDetectedPort')}: {status.activePort}
-                  </div>
-                  {portOwnerLabel ? <div>{portOwnerLabel}</div> : null}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
-            <SetupStep
-              number={1}
-              complete={status?.chromeFound === true}
-              title={i18nService.t('browserStepChromeTitle')}
-              description={i18nService.t('browserStepChromeDescription')}
-            />
-            <SetupStep
-              number={2}
-              complete={status?.remoteDebuggingEnabled === true}
-              title={i18nService.t('browserStepDebuggingTitle')}
-              description={i18nService.t('browserStepDebuggingDescription')}
-              action={
-                <button
-                  type="button"
-                  onClick={() => void openRemoteDebugging()}
-                  disabled={savingMode || busyAction !== null || status?.chromeFound !== true}
-                  className={actionButtonClassName}
+        <div className="divide-y divide-border/60">
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-secondary">
+                <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <label
+                  htmlFor="browser-search-engine"
+                  className="text-sm font-medium text-foreground"
                 >
-                  <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
-                  {i18nService.t('browserCopyDebuggingAddress')}
-                </button>
-              }
-            />
-            {setupUrlCopied ? (
-              <div className="mx-5 mb-3 ml-[66px] rounded-lg border border-primary/20 bg-primary/[0.035] px-3 py-2 text-[13px] leading-5 text-foreground">
-                {i18nService.t('browserDebuggingAddressCopied')}
-                <code className="ml-1 select-all rounded bg-surface-raised px-1.5 py-0.5 text-xs">
-                  chrome://inspect/#remote-debugging
-                </code>
+                  {i18nService.t('browserSearchEngineTitle')}
+                </label>
+                <p className="mt-0.5 text-xs text-secondary">
+                  {i18nService.t('browserSearchEngineDescription')}
+                </p>
               </div>
-            ) : null}
-            <SetupStep
-              number={3}
-              complete={status?.endpointReachable === true}
-              title={i18nService.t('browserStepRestartChromeTitle')}
-              description={
-                status?.issue === 'port-occupied-by-other-process'
-                  ? i18nService.t('browserStepRestartChromeOccupiedDescription')
-                  : status?.issue === 'chrome-restart-required'
-                    ? i18nService.t('browserStepRestartChromeStaleDescription')
-                    : i18nService.t('browserStepRestartChromeDescription')
+            </div>
+            <select
+              id="browser-search-engine"
+              value={searchEngine}
+              onChange={event =>
+                void selectSearchEngine(normalizeBrowserSearchEngine(event.target.value))
               }
-              action={
-                <button
-                  type="button"
-                  onClick={() => void refresh()}
-                  disabled={savingMode || loading || busyAction !== null}
-                  className={actionButtonClassName}
-                >
-                  <ArrowPathIcon className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                  {i18nService.t('browserRefreshStatus')}
-                </button>
-              }
-            />
-            <SetupStep
-              number={4}
-              complete={connectionVerification.user}
-              title={i18nService.t('browserStepAuthorizeTitle')}
-              description={i18nService.t('browserStepAuthorizeDescription')}
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void testConnection()}
-                    disabled={
-                      savingMode ||
-                      loading ||
-                      busyAction !== null ||
-                      status?.endpointReachable !== true
-                    }
-                    className={actionButtonClassName}
-                  >
-                    <ArrowPathIcon
-                      className={`h-3.5 w-3.5 ${busyAction === 'test' ? 'animate-spin' : ''}`}
-                    />
-                    {i18nService.t('browserTestConnection')}
-                  </button>
-                  {connectionVerification.user ? (
-                    <span className="inline-flex items-center gap-1.5 px-2 text-sm text-primary">
-                      <CheckCircleIcon className="h-4 w-4" />
-                      {i18nService.t('browserConnectionVerified')}
-                    </span>
-                  ) : null}
+              className="h-8 min-w-32 rounded-md border border-border bg-surface px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+            >
+              <option value={BrowserSearchEngine.Baidu}>
+                {i18nService.t('browserSearchEngineBaidu')}
+              </option>
+              <option value={BrowserSearchEngine.Google}>
+                {i18nService.t('browserSearchEngineGoogle')}
+              </option>
+            </select>
+          </div>
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-secondary">
+                <ClockIcon className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">
+                  {i18nService.t('browserHistoryTitle')}
                 </div>
-              }
-              feedback={
-                busyAction === 'test' ? (
-                  <p className="text-xs leading-5 text-secondary" role="status">
-                    {i18nService.t('browserAuthorizationWaiting')}
-                  </p>
-                ) : userConnectionTestError ? (
-                  <p className="text-xs leading-5 text-destructive" role="alert">
-                    {userConnectionTestError}
-                  </p>
-                ) : null
-              }
-            />
+                <p className="mt-0.5 text-xs text-secondary">
+                  {i18nService.t('browserHistoryDescription')}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={actionButtonClassName}
+              onClick={() => setPage('history')}
+            >
+              {i18nService.t('browserManage')}
+            </button>
           </div>
-        </>
-      ) : (
-        <>
-          <div>
-            <h3 className="text-base font-semibold text-foreground">
-              {i18nService.t('browserExtensionTitle')}
-            </h3>
-            <p className="mt-1 max-w-2xl text-sm leading-5 text-secondary">
-              {i18nService.t('browserExtensionDescription')}
-            </p>
-          </div>
+        </div>
+      </section>
 
-          <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
-            <SetupStep
-              number={1}
-              complete={status?.chromeFound === true}
-              title={i18nService.t('browserExtensionStepChromeTitle')}
-              description={i18nService.t('browserExtensionStepChromeDescription')}
-            />
-            <SetupStep
-              number={2}
-              complete={extensionFolderRevealed}
-              title={i18nService.t('browserExtensionStepInstallTitle')}
-              description={i18nService.t('browserExtensionStepInstallDescription')}
-              action={
-                <div className="flex min-w-0 flex-wrap justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void openExtensionManagement()}
-                    disabled={savingMode || busyAction !== null || status?.chromeFound !== true}
-                    className={actionButtonClassName}
-                  >
-                    <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
-                    {i18nService.t('browserExtensionOpenPage')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void revealExtension()}
-                    disabled={savingMode || busyAction !== null}
-                    className={actionButtonClassName}
-                  >
-                    <FolderOpenIcon className="h-3.5 w-3.5" />
-                    {i18nService.t('browserExtensionRevealFolder')}
-                  </button>
-                  {setupUrlCopied ? (
-                    <p className="min-w-0 basis-full break-words text-right text-sm leading-6 text-secondary">
-                      {i18nService.t('browserExtensionPageCopied')}{' '}
-                      <code className="select-all rounded bg-surface-raised px-1.5 py-0.5 text-xs">
-                        chrome://extensions
-                      </code>
-                    </p>
-                  ) : null}
-                </div>
-              }
-            />
-            <SetupStep
-              number={3}
-              complete={extensionPairingCopied}
-              title={i18nService.t('browserExtensionStepPairTitle')}
-              description={<ExtensionPairingDescription />}
-              action={
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void copyExtensionPairing()}
-                    disabled={savingMode || busyAction !== null}
-                    className={actionButtonClassName}
-                  >
-                    <ClipboardDocumentIcon className="h-3.5 w-3.5" />
-                    {i18nService.t('browserExtensionCopyPairing')}
-                  </button>
-                  {extensionPairingCopied ? (
-                    <span className="inline-flex items-center gap-1.5 text-sm text-primary">
-                      <CheckCircleIcon className="h-4 w-4" />
-                      {i18nService.t('browserExtensionPairingCopied')}
-                    </span>
-                  ) : null}
-                </div>
-              }
-            />
-            <SetupStep
-              number={4}
-              complete={connectionVerification.extension}
-              title={i18nService.t('browserExtensionStepVerifyTitle')}
-              description={i18nService.t('browserExtensionStepVerifyDescription')}
-              action={
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void testExtensionConnection()}
-                    disabled={
-                      savingMode ||
-                      busyAction !== null ||
-                      extensionTestKind === 'manual' ||
-                      extensionProbeInFlight
-                    }
-                    className={actionButtonClassName}
-                  >
-                    <ArrowPathIcon
-                      className={`h-3.5 w-3.5 ${extensionTestKind ? 'animate-spin' : ''}`}
-                    />
-                    {i18nService.t('browserExtensionTestConnection')}
-                  </button>
-                  {connectionVerification.extension ? (
-                    <span className="inline-flex items-center gap-1.5 px-2 text-sm text-primary">
-                      <CheckCircleIcon className="h-4 w-4" />
-                      {i18nService.t('browserConnectionVerified')}
-                    </span>
-                  ) : null}
-                  {extensionConnectionTestError ? (
-                    <span
-                      className="inline-flex items-center gap-1.5 px-2 text-sm text-destructive"
-                      role="alert"
-                    >
-                      <ExclamationTriangleIcon className="h-4 w-4" />
-                      {extensionConnectionTestError}
-                    </span>
-                  ) : null}
-                </div>
-              }
-            />
+      <section className="overflow-hidden rounded-2xl border border-border/70 bg-surface shadow-sm">
+        <div className="border-b border-border/60 px-4 py-3.5">
+          <h3 className="text-sm font-semibold text-foreground">
+            {i18nService.t('browserDownloadSettingsTitle')}
+          </h3>
+        </div>
+        <div className="divide-y divide-border/60">
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {i18nService.t('browserDownloadLocationTitle')}
+              </div>
+              <p
+                className="mt-0.5 max-w-[620px] truncate text-xs text-secondary"
+                title={downloadDirectory || i18nService.t('browserDownloadSystemFolder')}
+              >
+                {downloadDirectory || i18nService.t('browserDownloadSystemFolder')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className={actionButtonClassName}
+              onClick={() => void chooseDownloadDirectory()}
+            >
+              {i18nService.t('browserDownloadChangeLocation')}
+            </button>
           </div>
-        </>
-      )}
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {i18nService.t('browserAskDownloadLocationTitle')}
+              </div>
+              <p className="mt-0.5 text-xs text-secondary">
+                {i18nService.t('browserAskDownloadLocationDescription')}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={askDownloadLocation}
+              aria-label={i18nService.t('browserAskDownloadLocationTitle')}
+              onClick={() => void toggleAskDownloadLocation()}
+              className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 shadow-inner transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                askDownloadLocation ? 'bg-primary' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                  askDownloadLocation ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {i18nService.t('browserDownloadsTitle')}
+              </div>
+              <p className="mt-0.5 text-xs text-secondary">
+                {i18nService.t('browserDownloadsDescription')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className={actionButtonClassName}
+              onClick={() => setPage('downloads')}
+            >
+              {i18nService.t('browserManage')}
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };

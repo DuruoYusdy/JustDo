@@ -3,11 +3,17 @@ import {
   ArrowPathIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
+  GlobeAltIcon,
   QueueListIcon,
   StopCircleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
+import {
+  BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH,
+  type BrowserAnnotationDraft,
+  serializeBrowserAnnotationContext,
+} from '@shared/browser';
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
@@ -30,6 +36,15 @@ import {
 import { useDispatch, useSelector } from 'react-redux';
 
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import {
+  BROWSER_ANNOTATION_MAX_COUNT,
+  BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
+  browserAnnotationDataBytes,
+} from '@/features/browser/browserAnnotation';
+import BrowserPanel, {
+  BROWSER_PANEL_DEFAULT_WIDTH,
+  BROWSER_PANEL_OVERLAY_THRESHOLD,
+} from '@/features/browser/BrowserPanel';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
@@ -71,6 +86,7 @@ import {
   selectCoworkConfig,
   selectCoworkSessions,
   selectCurrentSession,
+  selectDraftBrowserAnnotations,
   selectIsOpenClawEngine,
   selectIsStreaming,
   selectSessionRuntimeActivity,
@@ -78,6 +94,7 @@ import {
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
+  addDraftBrowserAnnotation,
   setCurrentSession,
   setPlanMode,
   setStreaming,
@@ -196,7 +213,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [selectedSubagent, setSelectedSubagent] = useState<Subtask | null>(null);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [isSubtaskListOpen, setIsSubtaskListOpen] = useState(false);
+  const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
+  const [hasBrowserPanelOpened, setHasBrowserPanelOpened] = useState(false);
+  const [browserPanelWidth, setBrowserPanelWidth] = useState(BROWSER_PANEL_DEFAULT_WIDTH);
+  const [browserPanelTargetId, setBrowserPanelTargetId] = useState<string | null>(null);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
+  const browserPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [planPreviewState, dispatchPlanPreview] = useReducer(
     planPreviewReducer,
@@ -241,6 +263,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
   const pendingAttachmentsRef = useRef<CoworkAttachmentPayload[]>([]);
+  const pendingGatewayPromptRef = useRef<string | undefined>(undefined);
   const pendingInitialGoalRef = useRef<{ sessionId: string; objective: string } | null>(null);
 
   const currentSession = useSelector(selectCurrentSession);
@@ -278,6 +301,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       return success;
     },
     [onPlanRespond, planInteraction],
+  );
+  const handleAddBrowserAnnotation = useCallback(
+    (annotation: BrowserAnnotationDraft, comment: string): boolean => {
+      if (currentSessionId?.startsWith('temp-')) return false;
+      const draftKey = currentSessionId ?? '__home__';
+      const state = store.getState();
+      const existing = selectDraftBrowserAnnotations(state, draftKey);
+      const nextContextLength = serializeBrowserAnnotationContext([...existing, annotation]).length;
+      const imageBytes = existing.reduce(
+        (total, item) => total + browserAnnotationDataBytes(item.dataUrl),
+        0,
+      );
+      if (
+        existing.length >= BROWSER_ANNOTATION_MAX_COUNT ||
+        nextContextLength > BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH ||
+        imageBytes + browserAnnotationDataBytes(annotation.dataUrl) >
+          BROWSER_ANNOTATION_MAX_IMAGE_BYTES
+      ) {
+        return false;
+      }
+      dispatch(addDraftBrowserAnnotation({ draftKey, annotation }));
+      const nextComment = comment.trim();
+      if (nextComment) promptInputRef.current?.appendValue(nextComment);
+      requestAnimationFrame(() => promptInputRef.current?.focus());
+      return true;
+    },
+    [currentSessionId, dispatch],
   );
   useEffect(() => {
     if (currentSessionId) return;
@@ -451,6 +501,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const handleStartSession = async (
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
+    gatewayPrompt?: string,
   ): Promise<boolean | void> => {
     if (!ensureOpenClawReadyForSubmit()) return false;
     // Prevent duplicate submissions
@@ -530,6 +581,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // target the previously selected, running session.
       pendingPromptRef.current = prompt;
       pendingAttachmentsRef.current = attachments ?? [];
+      pendingGatewayPromptRef.current = gatewayPrompt;
       debugLog('[CoworkView] handleStartSession:', {
         prompt: prompt.slice(0, 60),
         wrapperRefExists: !!chatWrapperRef.current,
@@ -543,6 +595,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const { session: startedSession, error: startError } = await coworkService.startSession(
         {
           prompt,
+          gatewayPrompt,
           title: fallbackTitle,
           cwd: config.workingDirectory || undefined,
           activeSkillIds: sessionSkillIds,
@@ -666,6 +719,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsSubtaskListOpen(false);
     requestAnimationFrame(() => subtaskListToggleRef.current?.focus());
   }, []);
+
+  const closeBrowserPanel = useCallback(() => {
+    setIsBrowserPanelOpen(false);
+    requestAnimationFrame(() => browserPanelToggleRef.current?.focus());
+  }, []);
+
+  const toggleBrowserPanel = useCallback(() => {
+    setIsSubtaskListOpen(false);
+    if (isBrowserPanelOpen && browserPanelWidth > BROWSER_PANEL_OVERLAY_THRESHOLD) {
+      setBrowserPanelWidth(BROWSER_PANEL_DEFAULT_WIDTH);
+      return;
+    }
+    if (!isBrowserPanelOpen) setHasBrowserPanelOpened(true);
+    setIsBrowserPanelOpen(open => !open);
+  }, [browserPanelWidth, isBrowserPanelOpen]);
+
+  const browserPanelToggleLabel = isBrowserPanelOpen
+    ? browserPanelWidth > BROWSER_PANEL_OVERLAY_THRESHOLD
+      ? 'browserPanelRestoreWidth'
+      : 'browserPanelClose'
+    : 'browserPanelOpen';
 
   const activeSubtaskCount = subtasks.filter(subtask => isActiveSubtask(subtask.status)).length;
 
@@ -1037,9 +1111,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     chatWrapperRef.current.setPendingUserMessage(
       pendingPromptRef.current,
       pendingAttachmentsRef.current,
+      pendingGatewayPromptRef.current,
     );
     pendingPromptRef.current = null;
     pendingAttachmentsRef.current = [];
+    pendingGatewayPromptRef.current = undefined;
   });
 
   if (!isInitialized) {
@@ -1081,7 +1157,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           </div>
         )}
       </div>
-      <div className="non-draggable flex items-center">
+      <div className="non-draggable flex items-center gap-1">
+        <button
+          ref={browserPanelToggleRef}
+          type="button"
+          onClick={toggleBrowserPanel}
+          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+            isBrowserPanelOpen
+              ? 'bg-surface-raised text-primary'
+              : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+          }`}
+          title={i18nService.t(browserPanelToggleLabel)}
+          aria-label={i18nService.t(browserPanelToggleLabel)}
+          aria-expanded={isBrowserPanelOpen}
+        >
+          <GlobeAltIcon className="h-[18px] w-[18px]" />
+        </button>
         <WindowTitleBar inline />
       </div>
     </div>
@@ -1407,12 +1498,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               </button>
             )}
             <button
+              ref={browserPanelToggleRef}
+              type="button"
+              disabled={currentSession.id.startsWith('temp-')}
+              onMouseDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation();
+                toggleBrowserPanel();
+              }}
+              className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                isBrowserPanelOpen
+                  ? 'bg-surface-raised text-primary'
+                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+              }`}
+              title={i18nService.t(browserPanelToggleLabel)}
+              aria-label={i18nService.t(browserPanelToggleLabel)}
+              aria-expanded={isBrowserPanelOpen}
+            >
+              <GlobeAltIcon className="h-[18px] w-[18px]" />
+            </button>
+            <button
               ref={subtaskListToggleRef}
               type="button"
               onMouseDown={event => event.stopPropagation()}
               onClick={event => {
                 event.stopPropagation();
                 setIsSubtaskListOpen(open => !open);
+                setIsBrowserPanelOpen(false);
               }}
               className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                 isSubtaskListOpen
@@ -1517,6 +1629,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 <div className="relative isolate rounded-2xl">
                   <div className="shadow-glow-accent rounded-2xl">
                     <CoworkPromptInput
+                      ref={promptInputRef}
                       onSubmit={handleSendMessage}
                       onStop={handleStopSession}
                       stopOperationKey={getSessionStopOperationKey(
@@ -1580,6 +1693,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             onOpenSubtask={setSelectedSubagent}
             onSubtasksChange={handleSubtasksChange}
           />
+          {hasBrowserPanelOpened && (
+            <BrowserPanel
+              key="persistent-browser-panel"
+              draftKey={currentSession.id}
+              isOpen={isBrowserPanelOpen && !currentSession.id.startsWith('temp-')}
+              width={browserPanelWidth}
+              activeTargetId={browserPanelTargetId}
+              onClose={closeBrowserPanel}
+              onWidthChange={setBrowserPanelWidth}
+              onActiveTargetChange={setBrowserPanelTargetId}
+              onAddAnnotation={handleAddBrowserAnnotation}
+              onRequestBrowserSettings={browserPage =>
+                onRequestAppSettings?.({ initialTab: 'browser', browserPage })
+              }
+            />
+          )}
           <SubagentMessageDrawer
             parentSessionId={currentSession.id}
             subagent={visiblePlanInteraction ? null : selectedSubagent}
@@ -1623,42 +1752,60 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       {homeHeader}
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
-          <div className="space-y-12">
-            {/* Welcome Section */}
-            <div className="text-center space-y-5">
-              <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
-              <h2 className="text-3xl font-bold tracking-tight text-foreground">
-                {i18nService.t(greetingKey)}
-              </h2>
-              <p className="text-sm text-secondary max-w-md mx-auto">
-                {i18nService.t('coworkGreetingSupport')}
-              </p>
-            </div>
+      <div className="relative flex min-h-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
+            <div className="space-y-12">
+              {/* Welcome Section */}
+              <div className="text-center space-y-5">
+                <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
+                <h2 className="text-3xl font-bold tracking-tight text-foreground">
+                  {i18nService.t(greetingKey)}
+                </h2>
+                <p className="text-sm text-secondary max-w-md mx-auto">
+                  {i18nService.t('coworkGreetingSupport')}
+                </p>
+              </div>
 
-            {/* Prompt Input Area - Large version with folder selector */}
-            <div className="space-y-3">
-              <div className="shadow-glow-accent rounded-2xl">
-                <CoworkPromptInput
-                  ref={promptInputRef}
-                  onSubmit={handleStartSession}
-                  onStop={handleStopSession}
-                  isStreaming={isStreaming}
-                  disabled={!isEngineReady}
-                  placeholder={i18nService.t('coworkPlaceholder')}
-                  size="large"
-                  workingDirectory={config.workingDirectory}
-                  onWorkingDirectoryChange={async (dir: string) => {
-                    await coworkService.updateConfig({ workingDirectory: dir });
-                  }}
-                  showFolderSelector={true}
-                  showModelSelector={true}
-                />
+              {/* Prompt Input Area - Large version with folder selector */}
+              <div className="space-y-3">
+                <div className="shadow-glow-accent rounded-2xl">
+                  <CoworkPromptInput
+                    ref={promptInputRef}
+                    onSubmit={handleStartSession}
+                    onStop={handleStopSession}
+                    isStreaming={isStreaming}
+                    disabled={!isEngineReady}
+                    placeholder={i18nService.t('coworkPlaceholder')}
+                    size="large"
+                    workingDirectory={config.workingDirectory}
+                    onWorkingDirectoryChange={async (dir: string) => {
+                      await coworkService.updateConfig({ workingDirectory: dir });
+                    }}
+                    showFolderSelector={true}
+                    showModelSelector={true}
+                  />
+                </div>
               </div>
             </div>
           </div>
         </div>
+        {hasBrowserPanelOpened && (
+          <BrowserPanel
+            key="persistent-browser-panel"
+            draftKey="__home__"
+            isOpen={isBrowserPanelOpen}
+            width={browserPanelWidth}
+            activeTargetId={browserPanelTargetId}
+            onClose={closeBrowserPanel}
+            onWidthChange={setBrowserPanelWidth}
+            onActiveTargetChange={setBrowserPanelTargetId}
+            onAddAnnotation={handleAddBrowserAnnotation}
+            onRequestBrowserSettings={browserPage =>
+              onRequestAppSettings?.({ initialTab: 'browser', browserPage })
+            }
+          />
+        )}
       </div>
     </div>
   );

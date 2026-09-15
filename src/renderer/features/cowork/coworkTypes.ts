@@ -154,6 +154,8 @@ export interface CoworkSessionSummary {
 // Start session options
 export interface CoworkStartOptions {
   prompt: string;
+  /** Runtime-only prompt; the visible optimistic message and title still use prompt. */
+  gatewayPrompt?: string;
   cwd?: string;
   title?: string;
   activeSkillIds?: string[];

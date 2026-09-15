@@ -12,6 +12,7 @@ import BrowserSettingsTab, { extensionConnectionErrorMessage } from './BrowserSe
 const mocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
   reloadFromStore: vi.fn(),
+  updateConfig: vi.fn(),
   translate: vi.fn((key: string) => key),
 }));
 
@@ -19,6 +20,7 @@ vi.mock('@/services/config', () => ({
   configService: {
     getConfig: mocks.getConfig,
     reloadFromStore: mocks.reloadFromStore,
+    updateConfig: mocks.updateConfig,
   },
 }));
 
@@ -65,6 +67,9 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
     configurable: true,
     value: {
       browser,
+      dialog: {
+        selectDirectory: vi.fn().mockResolvedValue({ success: true, path: null }),
+      },
       openclaw: {
         engine: {
           onProgress: vi.fn((callback: (status: OpenClawEngineStatus) => void) => {
@@ -96,6 +101,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
   beforeEach(() => {
     mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Extension });
     mocks.reloadFromStore.mockResolvedValue(undefined);
+    mocks.updateConfig.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -115,6 +121,54 @@ describe('BrowserSettingsTab extension connection checks', () => {
     fireEvent.click(screen.getByRole('radio', { name: /browserModeUserTitle/ }));
     await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.User));
     expect(screen.queryByText('browserModeIsolatedNetworkNotice')).toBeNull();
+  });
+
+  test('persists the selected address bar search engine', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    installElectronBrowserMock();
+
+    render(<BrowserSettingsTab />);
+
+    fireEvent.change(screen.getByLabelText('browserSearchEngineTitle'), {
+      target: { value: 'google' },
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateConfig).toHaveBeenCalledWith({ browserSearchEngine: 'google' }),
+    );
+  });
+
+  test('persists the download directory and ask-before-saving preference', async () => {
+    mocks.getConfig.mockReturnValue({
+      browserMode: BrowserMode.Isolated,
+      browserDownloadDirectory: '',
+      browserAskDownloadLocation: true,
+    });
+    installElectronBrowserMock();
+    const selectDirectory = vi
+      .fn()
+      .mockResolvedValue({ success: true, path: 'C:\\Users\\fixture\\Downloads' });
+    window.electron.dialog.selectDirectory = selectDirectory;
+
+    render(<BrowserSettingsTab />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'browserDownloadChangeLocation' }));
+    await waitFor(() =>
+      expect(mocks.updateConfig).toHaveBeenCalledWith({
+        browserDownloadDirectory: 'C:\\Users\\fixture\\Downloads',
+      }),
+    );
+    expect(screen.getByText('C:\\Users\\fixture\\Downloads')).toBeTruthy();
+
+    const askSwitch = screen.getByRole('switch', {
+      name: 'browserAskDownloadLocationTitle',
+    });
+    expect(askSwitch.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(askSwitch);
+    await waitFor(() =>
+      expect(mocks.updateConfig).toHaveBeenCalledWith({ browserAskDownloadLocation: false }),
+    );
+    expect(askSwitch.getAttribute('aria-checked')).toBe('false');
   });
 
   test('checks automatically without locking setup controls or losing success to Chrome status', async () => {
@@ -346,6 +400,11 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(testExtensionConnection).toHaveBeenCalledTimes(7);
     expect(screen.getByRole('alert')).toBeTruthy();
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
+    expect(
+      screen
+        .getByRole('button', { name: 'browserExtensionTestConnection' })
+        .parentElement?.classList.contains('justify-end'),
+    ).toBe(true);
   });
 
   test('lets a manual test take over an automatic retry and wait for a delayed reconnect', async () => {

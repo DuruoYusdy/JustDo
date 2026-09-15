@@ -211,7 +211,7 @@ flowchart LR
 
 ### 13.5 本机能力
 
-文件预览/编辑、浏览器控制、代理、日志导出、auto-launch、prevent-sleep、更新等只在 Main 调用 OS/Electron。Renderer 只能通过专用 preload 方法表达意图。
+文件预览/编辑、代理、日志导出、auto-launch、prevent-sleep、更新等只在 Main 调用 OS/Electron。右侧浏览器是受 Main attach policy 约束的沙箱化网页 guest：Renderer 负责浏览器 UI 与原生 guest 交互，固定 guest preload 只返回清洗后的元素摘要；它不获得 Node、系统文件或 Gateway 凭据。
 
 ## 14. 正常、降级和阻断三类结果
 
@@ -250,7 +250,7 @@ Gateway stdout 会被 `gatewayLogFilter.ts` 有意压缩；缺少某条 stream �
 - 内置模型完整认证 UI/handler 尚未接入，启动暂使用 Enabled access。
 - Marketplace adapter/安装框架已存在，但默认 provider 列表为空。
 - 本地 SQLite 与 OpenClaw state 未做全库静态加密。
-- Windows/Linux 当前有 `no-sandbox` 启动开关；这提高了保持 preload/Renderer 边界的必要性。
+- 主 Renderer 与外部网页 guest 均保持 Chromium sandbox；不得为生产运行添加全局 `no-sandbox` 开关。
 - CSP 的 `connect-src *`、local file protocol 边界和 Windows updater 签名验证配置仍需持续收紧。
 - Browser extension 首次 debugger 确认依赖用户操作，配对 token 在复制阶段属于剪贴板敏感信息。
 

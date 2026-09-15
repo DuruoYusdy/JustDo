@@ -135,6 +135,7 @@ const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
+  browserPage?: 'history' | 'downloads';
   notice?: string;
   noticeI18nKey?: string;
   noticeExtra?: string;
@@ -378,6 +379,7 @@ const Settings: React.FC<SettingsProps> = ({
   onClose,
   developerModeAvailable,
   initialTab,
+  browserPage,
   notice,
   noticeI18nKey,
   noticeExtra,
@@ -2041,14 +2043,14 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
-      key: 'browser',
-      label: i18nService.t('browserSettings'),
-      icon: <GlobeAltIcon className="h-5 w-5" />,
-    },
-    {
       key: 'voice',
       label: i18nService.t('voiceSettings'),
       icon: <MicrophoneIcon className="h-5 w-5" />,
+    },
+    {
+      key: 'browser',
+      label: i18nService.t('browserSettings'),
+      icon: <GlobeAltIcon className="h-5 w-5" />,
     },
     {
       key: 'usage',
@@ -2827,7 +2829,7 @@ const Settings: React.FC<SettingsProps> = ({
         );
 
       case 'browser':
-        return <BrowserSettingsTab />;
+        return <BrowserSettingsTab initialPage={browserPage} />;
       case 'voice':
         return <VoiceSettingsTab value={voice} onChange={setVoice} />;
 

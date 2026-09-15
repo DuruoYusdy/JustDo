@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'child_process';
-import { app, clipboard, ipcMain, shell } from 'electron';
+import { app, clipboard, ipcMain, session, shell } from 'electron';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
@@ -7,20 +7,47 @@ import path from 'path';
 import { promisify } from 'util';
 
 import {
+  BROWSER_GUEST_CREDENTIALS_GET_CHANNEL,
+  BROWSER_PANEL_PARTITION,
   type BrowserActionResult,
+  type BrowserClearDataResult,
+  type BrowserClearDataSummaryResult,
   type BrowserConnectionIssue,
   type BrowserConnectionStatus,
   type BrowserConnectionTestResult,
+  type BrowserDownloadListResult,
+  type BrowserHistoryListResult,
+  type BrowserImportRequest,
+  type BrowserImportResult,
+  type BrowserImportSourcesResult,
   BrowserIpc,
   BrowserMode,
   type BrowserMode as BrowserModeValue,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
   type BrowserPortOwner,
+  isBrowserClearDataRange,
   isBrowserProfileRunning,
   normalizeBrowserMode,
   parseDevToolsActivePort,
 } from '../../../shared/browser';
+import {
+  clearBrowserData,
+  getBrowserClearDataSummary,
+  isBrowserClearDataRequest,
+} from '../../browser/browserClearDataService';
+import {
+  clearBrowserDownloads,
+  clearBrowserHistory,
+  deleteBrowserDownloads,
+  deleteBrowserHistory,
+  getBrowserDownloadPath,
+  getImportedCredentials,
+  importChromeData,
+  listBrowserDownloads,
+  listBrowserHistory,
+  listChromeImportSources,
+} from '../../browser/browserDataImportService';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
@@ -530,6 +557,21 @@ export const registerBrowserHandlers = ({
   hasActiveSessions,
   setBrowserMode,
 }: BrowserHandlerDependencies): void => {
+  ipcMain.handle(BROWSER_GUEST_CREDENTIALS_GET_CHANNEL, event => {
+    if (
+      event.sender.getType() !== 'webview' ||
+      event.sender.session !== session.fromPartition(BROWSER_PANEL_PARTITION) ||
+      event.senderFrame !== event.sender.mainFrame
+    ) {
+      return [];
+    }
+    try {
+      const credentials = getImportedCredentials(new URL(event.senderFrame.url).origin);
+      return credentials.length === 1 ? credentials : [];
+    } catch {
+      return [];
+    }
+  });
   ipcMain.handle(BrowserIpc.GetStatus, async () => {
     try {
       return { success: true, status: await getBrowserConnectionStatus() };
@@ -604,6 +646,130 @@ export const registerBrowserHandlers = ({
       clearTimeout(refocusTimer);
     }
   });
+
+  ipcMain.handle(BrowserIpc.ListImportSources, (event): BrowserImportSourcesResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      return { success: true, sources: listChromeImportSources() };
+    } catch {
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle(
+    BrowserIpc.ImportData,
+    async (event, request: BrowserImportRequest): Promise<BrowserImportResult> => {
+      if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+      return importChromeData(request);
+    },
+  );
+
+  ipcMain.handle(BrowserIpc.ListHistory, (event, query: unknown): BrowserHistoryListResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      return { success: true, entries: listBrowserHistory(typeof query === 'string' ? query : '') };
+    } catch {
+      return { success: false };
+    }
+  });
+  ipcMain.handle(BrowserIpc.DeleteHistory, (event, urls: unknown): BrowserActionResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      deleteBrowserHistory(
+        Array.isArray(urls) ? urls.filter(value => typeof value === 'string') : [],
+      );
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  });
+  ipcMain.handle(BrowserIpc.ClearHistory, (event): BrowserActionResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      clearBrowserHistory();
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle(BrowserIpc.ListDownloads, (event, query: unknown): BrowserDownloadListResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      return {
+        success: true,
+        entries: listBrowserDownloads(typeof query === 'string' ? query : ''),
+      };
+    } catch {
+      return { success: false };
+    }
+  });
+  ipcMain.handle(BrowserIpc.DeleteDownloads, (event, ids: unknown): BrowserActionResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      deleteBrowserDownloads(
+        Array.isArray(ids) ? ids.filter(value => typeof value === 'string') : [],
+      );
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  });
+  ipcMain.handle(BrowserIpc.ClearDownloads, (event): BrowserActionResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      clearBrowserDownloads();
+      return { success: true };
+    } catch {
+      return { success: false };
+    }
+  });
+  ipcMain.handle(
+    BrowserIpc.OpenDownload,
+    async (event, id: unknown): Promise<BrowserActionResult> => {
+      if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+      try {
+        const filePath = typeof id === 'string' ? getBrowserDownloadPath(id) : null;
+        if (!filePath) return { success: false, error: 'Downloaded file is unavailable.' };
+        const error = await shell.openPath(filePath);
+        return error
+          ? { success: false, error: 'Downloaded file is unavailable.' }
+          : { success: true };
+      } catch {
+        return { success: false, error: 'Downloaded file is unavailable.' };
+      }
+    },
+  );
+  ipcMain.handle(BrowserIpc.RevealDownload, (event, id: unknown): BrowserActionResult => {
+    if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+    try {
+      const filePath = typeof id === 'string' ? getBrowserDownloadPath(id) : null;
+      if (!filePath) return { success: false, error: 'Downloaded file is unavailable.' };
+      shell.showItemInFolder(filePath);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Downloaded file is unavailable.' };
+    }
+  });
+
+  ipcMain.handle(
+    BrowserIpc.GetClearDataSummary,
+    async (event, range: unknown): Promise<BrowserClearDataSummaryResult> => {
+      if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+      if (!isBrowserClearDataRange(range)) return { success: false, error: 'Invalid range.' };
+      return getBrowserClearDataSummary(range);
+    },
+  );
+  ipcMain.handle(
+    BrowserIpc.ClearBrowsingData,
+    async (event, request: unknown): Promise<BrowserClearDataResult> => {
+      if (event.sender.getType() !== 'window') return { success: false, error: 'Access denied.' };
+      if (!isBrowserClearDataRequest(request)) {
+        return { success: false, errorCode: 'invalid-request' };
+      }
+      return clearBrowserData(request);
+    },
+  );
 
   ipcMain.handle(
     BrowserIpc.TestExtensionConnection,

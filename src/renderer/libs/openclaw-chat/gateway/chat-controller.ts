@@ -13,6 +13,7 @@
  * omits from bounded history payloads.
  */
 
+import { parseBrowserAnnotationPrompt } from '@shared/browser';
 import {
   type CoworkAttachmentPayload,
   isImageMimeType,
@@ -711,15 +712,26 @@ export class ChatController {
 
   /** Set an optimistic user message shown until the next loadHistory.
    *  Also marks chatSending=true so fallback history reloads are deferred. */
-  setPendingUserMessage(text: string, attachments: CoworkAttachmentPayload[] = []): void {
+  setPendingUserMessage(
+    text: string,
+    attachments: CoworkAttachmentPayload[] = [],
+    gatewayMessage?: string,
+  ): void {
     debugLog('[ChatCtrl] setPendingUserMessage:', text.slice(0, 60));
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
-    this.state.pendingUserMessage = {
+    const displaySource =
+      gatewayMessage && parseBrowserAnnotationPrompt(gatewayMessage) ? gatewayMessage : text;
+    const rawPendingMessage = {
       role: 'user',
-      content: attachmentBlocks.length > 0 ? [{ type: 'text', text }, ...attachmentBlocks] : text,
+      content:
+        attachmentBlocks.length > 0
+          ? [{ type: 'text', text: displaySource }, ...attachmentBlocks]
+          : displaySource,
       text,
       timestamp: Date.now(),
     };
+    this.state.pendingUserMessage = (projectGatewayHistoryForDisplay([rawPendingMessage])[0] ??
+      rawPendingMessage) as NonNullable<ChatState['pendingUserMessage']>;
     this.state.chatSending = true;
     this.beginRunActivity(`justdo-pending-${Date.now()}`);
     this.notify();
@@ -5183,12 +5195,14 @@ export class ChatController {
     }
     if (this.state.chatSending) throw new Error('A message is already being sent');
 
-    const goalStartObjective = parseGoalStartObjective(gatewayMessage);
+    const browserPrompt = parseBrowserAnnotationPrompt(gatewayMessage);
+    const commandMessage = browserPrompt?.userText ?? gatewayMessage;
+    const goalStartObjective = parseGoalStartObjective(commandMessage);
     const gatewayOutboundMessage = goalStartObjective ?? gatewayMessage;
     const displayMessage =
-      goalStartObjective ?? extractGoalFollowUpRequest(gatewayMessage) ?? message;
+      extractGoalFollowUpRequest(commandMessage) ?? goalStartObjective ?? message;
     const slashCommand =
-      goalStartObjective === null ? resolveSlashCommandBehavior(gatewayMessage) : null;
+      goalStartObjective === null ? resolveSlashCommandBehavior(commandMessage) : null;
     if (slashCommand?.execution === SlashCommandExecution.Blocked) {
       const error = new Error(
         `The /${slashCommand.name} command is managed by the app and cannot be run from chat.`,
@@ -5278,15 +5292,19 @@ export class ChatController {
 
     // Optimistic: append user message immediately
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
-    const userMessage = {
+    const optimisticDisplayMessage = browserPrompt && goalStartObjective === null
+      ? gatewayOutboundMessage
+      : displayMessage;
+    const rawUserMessage = {
       role: 'user',
       content:
         attachmentBlocks.length > 0
-          ? [{ type: 'text', text: displayMessage }, ...attachmentBlocks]
-          : displayMessage,
+          ? [{ type: 'text', text: optimisticDisplayMessage }, ...attachmentBlocks]
+          : optimisticDisplayMessage,
       timestamp: Date.now(),
       __openclaw: { idempotencyKey: runId, runId },
     };
+    const userMessage = projectGatewayHistoryForDisplay([rawUserMessage])[0] ?? rawUserMessage;
     // A post-send history refresh can race Gateway transcript persistence,
     // especially when the run is stopped before the model replies. Protect
     // the prompt until chat.history contains its authoritative replacement.

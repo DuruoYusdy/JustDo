@@ -1,3 +1,4 @@
+import { composeBrowserGatewayPrompt } from '@shared/browser';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('./markdown', () => ({
@@ -109,6 +110,109 @@ describe('shouldRenderGroupAvatarByPrevItem', () => {
     expect(shouldRenderGroupAvatarByPrevItem(createGroup('assistant'), createGroup('user'))).toBe(
       true,
     );
+  });
+});
+
+describe('browser annotation messages', () => {
+  test('renders a compact expandable element reference in a user bubble', () => {
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        ...createGroup('user'),
+        messages: [
+          {
+            key: 'browser-annotation-message',
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Please update this button.' },
+                {
+                  type: 'browser_annotation',
+                  annotation: {
+                    id: 'annotation-1',
+                    title: 'Settings',
+                    displayUrl: 'example.com',
+                    markedRegionCount: 1,
+                    element: {
+                      tag: 'button',
+                      id: 'save',
+                      classes: ['primary'],
+                      role: 'button',
+                      name: 'Save changes',
+                      cssPath: 'main > button#save',
+                      rect: { x: 10, y: 20, width: 100, height: 40 },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(rendered).toContain('browser-annotation-message');
+    expect(rendered).toContain('Save changes');
+    expect(rendered).toContain('button');
+    expect(rendered).not.toContain('&lt;button#save&gt;');
+    expect(rendered).toContain('main > button#save');
+    expect(rendered).toContain('example.com');
+    expect(rendered).toContain('selector');
+    expect(rendered).toContain('bounds');
+    expect(rendered).not.toContain('已标注网页元素');
+  });
+
+  test.each([
+    ['first-session raw string', false],
+    ['continued-session raw text block', true],
+  ])('never renders browser gateway context for %s', (_name, contentArray) => {
+    const gatewayPrompt = composeBrowserGatewayPrompt('Please update this button.', [
+      {
+        id: 'annotation-1',
+        modelContext: 'RAW_HTML_SHOULD_NEVER_FLASH <button id="save">Save</button>',
+        title: 'Settings',
+        displayUrl: 'example.com',
+        markedRegionCount: 0,
+        inspectedElement: true,
+        display: {
+          id: 'annotation-1',
+          title: 'Settings',
+          displayUrl: 'example.com',
+          markedRegionCount: 0,
+          element: {
+            tag: 'button',
+            id: 'save',
+            classes: [],
+            role: 'button',
+            name: 'Save',
+            cssPath: 'button#save',
+            rect: { x: 10, y: 20, width: 100, height: 40 },
+          },
+        },
+        dataUrl: 'data:image/png;base64,YWJj',
+        fileName: 'browser-annotation.png',
+        addedAt: 1,
+      },
+    ]);
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        ...createGroup('user'),
+        messages: [
+          {
+            key: 'raw-browser-message',
+            message: {
+              role: 'user',
+              content: contentArray ? [{ type: 'text', text: gatewayPrompt }] : gatewayPrompt,
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(rendered).toContain('browser-annotation-message');
+    expect(rendered).toContain('Save');
+    expect(rendered).toContain('Please update this button.');
+    expect(rendered).not.toContain('RAW_HTML_SHOULD_NEVER_FLASH');
+    expect(rendered).not.toContain('justdo-browser-context-v1');
   });
 });
 

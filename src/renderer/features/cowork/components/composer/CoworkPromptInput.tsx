@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
+import { composeBrowserGatewayPrompt } from '@shared/browser';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import {
   GoalExecutionPhase,
@@ -20,6 +21,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import BrowserAnnotationCard from '@/features/browser/BrowserAnnotationCard';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/composer/AttachmentCard';
 import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer/blockedSlashCommand';
@@ -68,18 +70,24 @@ import {
   canStopCoworkRun,
   isCoworkRunActive,
 } from '@/features/cowork/components/status/coworkRunActivity';
-import { selectDraftAttachments, selectDraftPrompts } from '@/features/cowork/coworkSelectors';
+import {
+  selectDraftAttachments,
+  selectDraftBrowserAnnotations,
+  selectDraftPrompts,
+} from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
 import {
   addDraftAttachment,
   beginManualModelSelection,
   clearDraftAttachments,
+  clearDraftBrowserAnnotations,
   completeManualModelSelection,
   confirmCurrentSessionModelSelection,
   confirmDefaultModelSelection,
   confirmManualModelSelection,
   type DraftAttachment,
   hydrateDraftImageAttachment,
+  removeDraftBrowserAnnotation,
   rollbackManualModelSelection,
   setDraftAttachments,
   setDraftPrompt,
@@ -184,6 +192,8 @@ const getSendShortcutLabel = (value: string): string => {
 export interface CoworkPromptInputRef {
   /** 设置输入框值 */
   setValue: (value: string) => void;
+  /** 在当前可见草稿后追加文字，不依赖延迟持久化状态 */
+  appendValue: (value: string) => void;
   /** 设置图片附件（用于重新编辑消息时还原图片） */
   setAttachments: (attachments: CoworkAttachmentPayload[]) => void;
   /** 聚焦输入框 */
@@ -276,6 +286,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const attachments = useSelector((state: RootState) =>
       selectDraftAttachments(state, draftKey),
     ) as CoworkAttachment[];
+    const browserAnnotations = useSelector((state: RootState) =>
+      selectDraftBrowserAnnotations(state, draftKey),
+    );
     const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const agents = useSelector((state: RootState) => state.agent.agents);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
@@ -379,6 +392,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [slashMenuExpanded, setSlashMenuExpanded] = useState(false);
     const [sessionGoal, setSessionGoal] = useState<SessionGoal | null>(null);
     const [goalExecution, setGoalExecution] = useState<GoalExecutionSnapshot | null>(null);
+    const browserAnnotationsUseGoalTextChannel =
+      !!sessionGoal &&
+      (sessionGoal.status === SessionGoalStatus.Blocked ||
+        sessionGoal.status === SessionGoalStatus.UsageLimited ||
+        sessionGoal.status === SessionGoalStatus.BudgetLimited ||
+        (goalExecution?.phase === GoalExecutionPhase.AwaitingInput &&
+          (!goalExecution.goalId || goalExecution.goalId === sessionGoal.id)));
+    const browserAnnotationsDeferredForGoal = completionFeedback !== null;
     const sessionGoalRef = useRef<SessionGoal | null>(null);
     const [pendingGoalObjective, setPendingGoalObjective] = useState<string | null>(
       initialGoalObjective,
@@ -686,6 +707,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // 暴露方法给父组件
     React.useImperativeHandle(ref, () => ({
       setValue: (newValue: string) => {
+        latestValueRef.current = newValue;
         setValue(newValue);
         // 触发自动调整高度
         requestAnimationFrame(() => {
@@ -694,6 +716,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             textarea.style.height = 'auto';
             textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
           }
+        });
+      },
+      appendValue: (appendedValue: string) => {
+        const clean = appendedValue.trim();
+        if (!clean) return;
+        const currentValue = latestValueRef.current;
+        const nextValue = currentValue.trim() ? `${currentValue.trimEnd()}\n\n${clean}` : clean;
+        latestValueRef.current = nextValue;
+        setValue(nextValue);
+        requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          textarea.style.height = 'auto';
+          textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)}px`;
+          textarea.focus();
+          textarea.setSelectionRange(nextValue.length, nextValue.length);
         });
       },
       setAttachments: (payloads: CoworkAttachmentPayload[]) => {
@@ -917,6 +955,25 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             }
           }
 
+          const rawSlashCommand = trimmedValue.startsWith('/');
+          const submittedBrowserAnnotations = rawSlashCommand ? [] : browserAnnotations;
+          const userAttachmentPayloadCount = attachmentPayloads.length;
+          if (modelSupportsImage && !resumeWithInput) {
+            for (const annotation of submittedBrowserAnnotations) {
+              const extracted = extractBase64FromDataUrl(annotation.dataUrl);
+              if (!extracted) {
+                attachmentPreparationFailed = true;
+                imagePreparationFailed = true;
+                continue;
+              }
+              attachmentPayloads.push({
+                name: annotation.fileName,
+                mimeType: extracted.mimeType,
+                base64Data: extracted.base64Data,
+              });
+            }
+          }
+
           if (!submissionIsCurrent() || isStopPending() || goalActionPendingRef.current) return;
           if (attachmentPreparationFailed) {
             if (!modelSupportsImage && imagePreparationFailed) {
@@ -951,6 +1008,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             dispatch(clearDraftAttachments(draftKey));
           };
           const finalPrompt = appendMediaDirectiveLines(trimmedValue, mediaDirectivePaths);
+          const browserGatewayPrompt = composeBrowserGatewayPrompt(
+            finalPrompt,
+            submittedBrowserAnnotations,
+          );
+          const clearSubmittedBrowserAnnotations = () => {
+            dispatch(
+              clearDraftBrowserAnnotations({
+                draftKey,
+                annotationIds: submittedBrowserAnnotations.map(annotation => annotation.id),
+              }),
+            );
+          };
           const feedback = submittedCompletionFeedback;
           if (feedback && sessionId && !submittedViaPlanCommand && !trimmedValue.startsWith('/')) {
             const outcome = await submitGoalCompletionFeedback({
@@ -975,11 +1044,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               },
               canSend: submissionIsCurrent,
               feedback: finalPrompt,
-              send: async gatewayPrompt =>
+              send: async goalPrompt =>
                 onSubmit(
                   finalPrompt,
-                  attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
-                  gatewayPrompt,
+                  userAttachmentPayloadCount > 0
+                    ? attachmentPayloads.slice(0, userAttachmentPayloadCount)
+                    : undefined,
+                  goalPrompt,
                 ),
             });
             if (outcome === 'context_changed') return;
@@ -1011,7 +1082,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             return;
           }
           if (resumeWithInput) {
-            if (finalPrompt.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
+            if (browserGatewayPrompt.length > SESSION_GOAL_MAX_NOTE_LENGTH) {
               window.dispatchEvent(
                 new CustomEvent('app:showToast', {
                   detail: i18nService
@@ -1026,7 +1097,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               resumed = await mutateGoal({
                 action: SessionGoalMutationAction.Resume,
                 goalId: goalForResume.id,
-                note: finalPrompt,
+                note: browserGatewayPrompt,
               });
             });
             if (!started || !resumed) {
@@ -1038,6 +1109,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               return;
             }
             clearSubmittedInput();
+            clearSubmittedBrowserAnnotations();
             return;
           }
           const goalObjective = submittedViaPlanCommand
@@ -1063,6 +1135,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             result = await onSubmit(
               finalPrompt,
               attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
+              submittedBrowserAnnotations.length > 0 ? browserGatewayPrompt : undefined,
             );
           } catch (error) {
             if (goalClear) cancelGoalClear();
@@ -1072,7 +1145,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             throw error;
           }
           if (!submissionIsCurrent()) {
-            if (result !== false && !clearBeforeSubmit) clearSubmittedInput(false);
+            if (result !== false) {
+              if (!clearBeforeSubmit) clearSubmittedInput(false);
+              clearSubmittedBrowserAnnotations();
+            }
             return;
           }
           if (result === false) {
@@ -1098,6 +1174,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           if (!clearBeforeSubmit) {
             clearSubmittedInput();
           }
+          clearSubmittedBrowserAnnotations();
         } finally {
           submittedDraftsRef.current.delete(draftKey);
         }
@@ -1109,6 +1186,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         disabled,
         onSubmit,
         attachments,
+        browserAnnotations,
         showFolderSelector,
         workingDirectory,
         dispatch,
@@ -2358,6 +2436,31 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 key={attachment.path}
                 attachment={attachment}
                 onRemove={handleRemoveAttachment}
+              />
+            ))}
+          </div>
+        )}
+        {browserAnnotations.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {browserAnnotations.map(annotation => (
+              <BrowserAnnotationCard
+                key={annotation.id}
+                annotation={annotation}
+                includesImage={
+                  modelSupportsImage &&
+                  !browserAnnotationsUseGoalTextChannel &&
+                  !browserAnnotationsDeferredForGoal
+                }
+                textOnlyMessage={
+                  browserAnnotationsDeferredForGoal
+                    ? i18nService.t('browserAnnotationGoalDeferred')
+                    : browserAnnotationsUseGoalTextChannel
+                    ? i18nService.t('browserAnnotationGoalTextOnly')
+                    : undefined
+                }
+                onRemove={() =>
+                  dispatch(removeDraftBrowserAnnotation({ draftKey, annotationId: annotation.id }))
+                }
               />
             ))}
           </div>

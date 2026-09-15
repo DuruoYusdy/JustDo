@@ -1,6 +1,6 @@
 # 浏览器设置与 OpenClaw v2026.9.2 边界
 
-本文描述 JustDo 浏览器设置对 OpenClaw v2026.9.2 Browser plugin 的产品映射、诊断边界和扩展分发方式。浏览器执行、profile driver、relay 协议与 tab 授权由 OpenClaw 持有；JustDo 只持有模式选择、设置引导和 IPC 安全边界。
+本文描述 JustDo 浏览器设置、右侧嵌入式浏览器工作区，以及它们与 OpenClaw v2026.9.2 Browser plugin 的边界。OpenClaw 持有 Agent 浏览器执行、profile driver、relay 协议与 tab 授权；JustDo 持有模式选择、设置引导、可直接操作的嵌入式网页、用户标注和 Electron guest 安全边界。
 
 ## 1. 产品模式
 
@@ -35,6 +35,8 @@ OpenClaw Browser plugin 将 `browser.profiles` 与 `browser.defaultProfile` 声�
 JustDo 仍在运行中会话存在时阻止切换。这是产品级一致性策略：避免同一个任务的省略 profile 调用在执行途中改变路由，不表示 OpenClaw 缺少热更新能力。
 
 当前 JustDo 将根 `browser` block 视为应用管理配置。若以后开放自定义 browser profiles，必须改为字段级 merge 并明确保留 `snapshotDefaults`、`tabCleanup`、`extensionRelay`、自定义 profiles 等用户字段。
+
+右侧浏览器地址栏同时承担导航与搜索：可识别的 HTTP(S) 地址直接导航，其余非空内容经过 URL 编码后交给 `app_config.browserSearchEngine` 选择的百度或 Google。未知或旧版本缺失的搜索引擎配置回退为百度。
 
 ## 3. 用户浏览器
 
@@ -94,7 +96,16 @@ Browser service 由第一次 `browser.request` 或 OpenClaw 的 Gateway extensio
 
 ## 5. 安全边界
 
-- Renderer 不接收 Gateway token、relay key、CDP credential、页面内容或本机配置路径。
+- 右侧工作区使用 Electron `<webview>` 承载真实网页，交互模式下点击、输入、滚动和选择直接进入 guest 页面，不通过截图坐标遥控外部 Chrome。
+- guest 使用 `persist:justdo-browser` 持久 partition；系统/自定义/直连代理偏好同时应用到 default session 与该 partition，因此不依赖 OpenClaw 隔离浏览器的网络环境。
+- `will-attach-webview` 把 preload 强制覆盖为有限的检查、viewport、快捷键和凭据确认 bridge，关闭 Node、嵌套 webview 和不安全内容，仅允许 HTTP(S) 与 `about:blank`；request guard 阻止非网页导航，权限请求默认拒绝。下载设置允许选择保存目录并决定是否逐次询问；询问时由 Main 串行显示保存对话框，自动保存时由 Main 分配不覆盖已有文件的路径，两种方式均记录状态；`target=_blank` GET 导航进入受管 guest Tab，无法安全重放的 POST popup 会明确阻止。
+- 检查元素只执行应用内置脚本，脚本只插入经过有限数值化的坐标。返回文本折叠空白并限制长度，不读取表单值、cookie、页面存储或完整 DOM。
+- 浏览期间不抓取截图；用户完成元素、画笔或矩形标注后会出现评论条，可展开清洗后的 HTML 元素详情、输入或语音录入评论。仅在用户提交评论时调用 guest `capturePage()`，在 Renderer 内合成标注 PNG，并沿用 20 MB 附件上限。
+- 嵌入式 tab id 仅标识 JustDo UI guest，不伪装成 OpenClaw browser target。Renderer 仍不接收 Gateway token、relay key、CDP credential 或本机配置路径。
+- 页面报告始终是不可信数据，加入模型上下文时必须显式标记，不能被解释为用户指令。
+- 浏览器数据导入只允许 Main 进程读取本机 Chrome Profile。Renderer 只接收 Profile 名称、导入计数和错误码，不接收源路径、Cookie 值或密码。Chrome 历史记录写入独立的 `browser-import.sqlite`；密码先用 Chrome 当前用户密钥解密，再通过 Electron `safeStorage` 二次加密保存；Cookie 直接写入 `persist:justdo-browser` session。页面点击密码框只能请求显示应用自有确认条；用户在 guest 外明确点击“填充”后，Main 才向专用 partition 的主 frame 返回唯一匹配的同源凭据。Chrome `v20` 应用绑定数据无法由当前进程验证解密时必须逐项跳过并报告，禁止写入乱码或伪报成功。
+- 内置浏览器下载由 Electron `will-download` 生命周期记录到 `browser-import.sqlite`，设置页可选择下载目录、切换下载前询问、搜索并查看进度与状态、打开文件、在文件夹中定位、删除单条记录或清空记录。具体下载文件路径始终留在 Main，Renderer 仅持有随机记录 ID；删除或清空只影响历史记录，不删除用户文件。
+- “清除浏览数据”通过显式 IPC 清理 `persist:justdo-browser` 与 `browser-import.sqlite`。历史、下载记录和导入的自动填充凭据按所选时间范围精确删除；Cookie、站点存储和缓存受 Electron session API 限制，只能清除该 partition 的全部对应数据，界面必须明确提示，不能伪报时间精度。下载清理仍只删除记录，不删除磁盘文件。站点权限始终被 guest 权限策略拒绝，因此不展示无效的站点设置清理项。
 - Pairing string 只写剪贴板；日志仅记录非秘密 relay port 或动作结果。
 - 浏览器 extension 资源必须与锁定 OpenClaw 版本整体同步。
 - `dangerouslyAllowPrivateNetwork` 表示允许浏览器访问私网，不表示禁止互联网；UI 不得把 profile 隔离描述成网络隔离。
@@ -112,5 +123,8 @@ Browser service 由第一次 `browser.request` 或 OpenClaw 的 Gateway extensio
 - pairing key 创建/复用且不经 IPC 返回；
 - 模式同步失败与活动会话竞态回滚；
 - 构建和安装包包含完整的官方扩展目录。
+- guest URL 白名单、权限拒绝、preload/Node 清除及 default-session 代理继承。
+- 元素摘要与 URL 清洗、坐标映射、Tab/会话切换的旧检查响应拒绝，以及视觉/非视觉模型附件分流。
+- Chrome 导入的自动测试覆盖请求白名单、历史 URL credentials 清洗、Cookie SameSite/host-only/partition/v24 host digest 转换和清理范围；Profile 枚举、系统解密、密码二次加密及应用绑定项计数通过 Windows 手工 smoke 验证。
 
-手工 smoke 需要分别验证隔离浏览器启动、Chrome MCP 首次授权、扩展手动配对、All tabs/Selected tabs、移除授权、Gateway 重启后重连，以及 Windows 打包资源路径。
+手工 smoke 需要分别验证嵌入式网页在 system/custom/direct proxy 下的加载、真实点击/输入/滚动、同页新窗口导航、检查与标注；另行验证隔离浏览器启动、Chrome MCP 首次授权、扩展手动配对、All tabs/Selected tabs、移除授权、Gateway 重启后重连，以及 Windows 打包资源路径。

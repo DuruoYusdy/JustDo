@@ -2,6 +2,7 @@
  * Message normalization utilities for chat rendering.
  */
 
+import { type BrowserAnnotationDisplay, parseBrowserAnnotationPrompt } from '@shared/browser';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/openclaw/modelRef';
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
@@ -34,6 +35,56 @@ function pickTrimmedString(...values: unknown[]): string | null {
     }
   }
   return null;
+}
+
+function coerceBrowserAnnotation(value: unknown): BrowserAnnotationDisplay | null {
+  const annotation = asRecord(value);
+  if (!annotation) return null;
+  const title = typeof annotation.title === 'string' ? annotation.title.slice(0, 120) : '';
+  const displayUrl =
+    typeof annotation.displayUrl === 'string' ? annotation.displayUrl.slice(0, 300) : '';
+  const markedRegionCount =
+    typeof annotation.markedRegionCount === 'number' &&
+    Number.isFinite(annotation.markedRegionCount)
+      ? Math.max(0, Math.min(8, Math.floor(annotation.markedRegionCount)))
+      : 0;
+  const elementRecord = asRecord(annotation.element);
+  const rectRecord = asRecord(elementRecord?.rect);
+  const hasRect =
+    rectRecord &&
+    [rectRecord.x, rectRecord.y, rectRecord.width, rectRecord.height].every(
+      item => typeof item === 'number' && Number.isFinite(item),
+    );
+  const element =
+    elementRecord && hasRect && typeof elementRecord.tag === 'string' && elementRecord.tag
+      ? {
+          tag: elementRecord.tag.slice(0, 40),
+          id: typeof elementRecord.id === 'string' ? elementRecord.id.slice(0, 80) : '',
+          classes: Array.isArray(elementRecord.classes)
+            ? elementRecord.classes
+                .slice(0, 3)
+                .filter((item): item is string => typeof item === 'string')
+                .map(item => item.slice(0, 60))
+            : [],
+          role: typeof elementRecord.role === 'string' ? elementRecord.role.slice(0, 40) : '',
+          name: typeof elementRecord.name === 'string' ? elementRecord.name.slice(0, 160) : '',
+          cssPath:
+            typeof elementRecord.cssPath === 'string' ? elementRecord.cssPath.slice(0, 400) : '',
+          rect: {
+            x: rectRecord.x as number,
+            y: rectRecord.y as number,
+            width: Math.max(0, rectRecord.width as number),
+            height: Math.max(0, rectRecord.height as number),
+          },
+        }
+      : undefined;
+  return {
+    id: typeof annotation.id === 'string' ? annotation.id.slice(0, 80) : '',
+    title,
+    displayUrl,
+    markedRegionCount,
+    ...(element ? { element } : {}),
+  };
 }
 
 function resolveMessageModelName(message: Record<string, unknown>): string | null {
@@ -545,6 +596,21 @@ function expandUserTextMediaContent(
   return content;
 }
 
+function expandUserDisplayContent(
+  text: string,
+  includeLegacyTextFields = false,
+): MessageContentItem[] {
+  const browserPrompt = parseBrowserAnnotationPrompt(text);
+  if (!browserPrompt) return expandUserTextMediaContent(text, includeLegacyTextFields);
+  return [
+    ...expandUserTextMediaContent(browserPrompt.userText, includeLegacyTextFields),
+    ...browserPrompt.annotations.map(annotation => ({
+      type: 'browser_annotation' as const,
+      annotation,
+    })),
+  ];
+}
+
 /**
  * Normalize a raw message object into a consistent structure.
  */
@@ -583,10 +649,14 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
       audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
     } else {
-      content = expandUserTextMediaContent(m.content);
+      content = expandUserDisplayContent(m.content);
     }
   } else if (Array.isArray(m.content)) {
     content = m.content.flatMap((item: Record<string, unknown>) => {
+      if (item.type === 'browser_annotation') {
+        const annotation = coerceBrowserAnnotation(item.annotation);
+        return annotation ? [{ type: 'browser_annotation' as const, annotation }] : [];
+      }
       const imageAttachment = coerceImageContentBlock(item);
       if (imageAttachment) {
         return [imageAttachment];
@@ -675,7 +745,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
         return expanded.content;
       }
       if (item.type === 'text' && typeof item.text === 'string') {
-        return expandUserTextMediaContent(item.text, true);
+        return expandUserDisplayContent(item.text, true);
       }
       return [
         {
@@ -697,7 +767,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
       audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
     } else {
-      content = expandUserTextMediaContent(m.text);
+      content = expandUserDisplayContent(m.text);
     }
   }
 

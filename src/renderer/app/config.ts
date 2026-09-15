@@ -1,4 +1,9 @@
-import { BrowserMode, type BrowserMode as BrowserModeValue } from '@shared/browser';
+import {
+  BrowserMode,
+  type BrowserMode as BrowserModeValue,
+  BrowserSearchEngine,
+  type BrowserSearchEngine as BrowserSearchEngineValue,
+} from '@shared/browser';
 import { defaultLocalSpeechSettings, type LocalSpeechSettings } from '@shared/localSpeechSettings';
 import {
   getDefaultCustomProviderDisplayName,
@@ -26,6 +31,9 @@ export interface OnlineModelConfig {
 // 配置类型定义
 export interface AppConfig {
   browserMode: BrowserModeValue;
+  browserSearchEngine: BrowserSearchEngineValue;
+  browserDownloadDirectory: string;
+  browserAskDownloadLocation: boolean;
   // API 配置
   api: {
     key: string;
@@ -156,6 +164,9 @@ const buildDefaultProviders = (): AppConfig['providers'] => {
 // 默认配置
 export const defaultConfig: AppConfig = {
   browserMode: BrowserMode.Isolated,
+  browserSearchEngine: BrowserSearchEngine.Baidu,
+  browserDownloadDirectory: '',
+  browserAskDownloadLocation: true,
   api: {
     key: '',
     baseUrl: '',

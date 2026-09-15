@@ -14,7 +14,7 @@ import path from 'path';
 
 import packageJson from '../../package.json';
 import appUpdateConfig from '../shared/appUpdateConfig.json';
-import { normalizeBrowserMode } from '../shared/browser';
+import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser';
 import { BuiltinModelIpc } from '../shared/builtinModels';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { DeveloperConfig } from '../shared/developerConfig';
@@ -304,11 +304,6 @@ const TITLEBAR_COLORS = {
 } as const;
 
 // 配置应用
-// Linux/Windows 禁用 Chromium 沙箱：桌面应用渲染自有代码，风险可控；
-// Windows 下以管理员运行时沙箱无法降权会导致 GPU 进程启动失败 (error_code=18)
-if (isLinux || isWindows) {
-  app.commandLine.appendSwitch('no-sandbox');
-}
 if (isLinux) {
   app.commandLine.appendSwitch('disable-dev-shm-usage');
 }
@@ -724,6 +719,9 @@ const PRELOAD_PATH = app.isPackaged
 const IMAGE_PREVIEW_PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'imagePreviewPreload.js')
   : path.join(__dirname, '../dist-electron/imagePreviewPreload.js');
+const BROWSER_GUEST_PRELOAD_PATH = app.isPackaged
+  ? path.join(__dirname, 'browserGuestPreload.js')
+  : path.join(__dirname, '../dist-electron/browserGuestPreload.js');
 
 // 获取应用图标路径（Windows 使用 .ico，其他平台使用 .png）
 const getAppIconPath = (): string | undefined => {
@@ -746,6 +744,8 @@ const APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY = 'app_update_last_automatic_check_
 type AppConfigSettings = {
   api?: unknown;
   browserMode?: unknown;
+  browserDownloadDirectory?: unknown;
+  browserAskDownloadLocation?: unknown;
   model?: unknown;
   theme?: string;
   language?: string;
@@ -1181,6 +1181,35 @@ if (!gotTheLock) {
       getBackgroundColor: () =>
         getInitialTheme() === 'dark' ? TITLEBAR_COLORS.dark.color : '#F8F9FB',
       getIconPath: getAppIconPath,
+      browserGuestPreloadPath: BROWSER_GUEST_PRELOAD_PATH,
+      getBrowserDownloadSettings: () => {
+        const config = getStore().get<AppConfigSettings>('app_config');
+        return normalizeBrowserDownloadSettings({
+          directory: config?.browserDownloadDirectory,
+          askWhereToSave: config?.browserAskDownloadLocation,
+        });
+      },
+      getProxyCredentials: () => {
+        const proxy = getStore().get<AppConfigSettings>('app_config')?.proxy;
+        const custom = proxy?.custom;
+        const port = Number(custom?.port);
+        if (
+          proxy?.mode !== 'custom' ||
+          !custom?.host?.trim() ||
+          !custom.username?.trim() ||
+          !Number.isInteger(port) ||
+          port < 1 ||
+          port > 65_535
+        ) {
+          return null;
+        }
+        return {
+          host: custom.host.trim(),
+          port,
+          username: custom.username.trim(),
+          password: custom.password ?? '',
+        };
+      },
       getTitleBarOverlay: getTitleBarOverlayOptions,
       isDev,
       isMac,

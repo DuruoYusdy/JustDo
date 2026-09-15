@@ -56,11 +56,21 @@ type OpenClawSessionMigrationResult =
 type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
 type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
 type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
+type BrowserImportRequest = import('../../shared/browser').BrowserImportRequest;
+type BrowserImportResult = import('../../shared/browser').BrowserImportResult;
+type BrowserImportSourcesResult = import('../../shared/browser').BrowserImportSourcesResult;
+type BrowserHistoryListResult = import('../../shared/browser').BrowserHistoryListResult;
+type BrowserDownloadListResult = import('../../shared/browser').BrowserDownloadListResult;
 type BrowserConnectionTestResult = import('../../shared/browser').BrowserConnectionTestResult;
+type BrowserClearDataRange = import('../../shared/browser').BrowserClearDataRange;
+type BrowserClearDataRequest = import('../../shared/browser').BrowserClearDataRequest;
+type BrowserClearDataResult = import('../../shared/browser').BrowserClearDataResult;
+type BrowserClearDataSummaryResult = import('../../shared/browser').BrowserClearDataSummaryResult;
 type BrowserMode = import('../../shared/browser').BrowserMode;
 type BrowserModeSwitchAvailabilityResult =
   import('../../shared/browser').BrowserModeSwitchAvailabilityResult;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
+type BrowserPanelOpenTabEvent = import('../../shared/browser').BrowserPanelOpenTabEvent;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
 type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
 type FilePreviewReadResult = import('../../shared/filePreview').FilePreviewReadResult;
@@ -377,6 +387,19 @@ interface IElectronAPI {
     revealExtension: () => Promise<BrowserActionResult>;
     copyExtensionPairing: () => Promise<BrowserActionResult>;
     testExtensionConnection: () => Promise<BrowserConnectionTestResult>;
+    onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => () => void;
+    listImportSources: () => Promise<BrowserImportSourcesResult>;
+    importData: (request: BrowserImportRequest) => Promise<BrowserImportResult>;
+    listHistory: (query?: string) => Promise<BrowserHistoryListResult>;
+    deleteHistory: (urls: string[]) => Promise<BrowserActionResult>;
+    clearHistory: () => Promise<BrowserActionResult>;
+    listDownloads: (query?: string) => Promise<BrowserDownloadListResult>;
+    deleteDownloads: (ids: string[]) => Promise<BrowserActionResult>;
+    clearDownloads: () => Promise<BrowserActionResult>;
+    openDownload: (id: string) => Promise<BrowserActionResult>;
+    revealDownload: (id: string) => Promise<BrowserActionResult>;
+    getClearDataSummary: (range: BrowserClearDataRange) => Promise<BrowserClearDataSummaryResult>;
+    clearBrowsingData: (request: BrowserClearDataRequest) => Promise<BrowserClearDataResult>;
   };
   platform: string;
   arch: string;
@@ -387,9 +410,7 @@ interface IElectronAPI {
   };
   marketplace: {
     listSources: (kind?: MarketplacePluginKind) => Promise<MarketplaceSourcesResponse>;
-    listCategories: (
-      request: MarketplaceCategoryRequest,
-    ) => Promise<MarketplaceCategoriesResponse>;
+    listCategories: (request: MarketplaceCategoryRequest) => Promise<MarketplaceCategoriesResponse>;
     search: (query: MarketplaceQuery) => Promise<MarketplaceSearchResponse>;
     checkUpdates: (
       request: MarketplaceUpdateCheckRequest,
@@ -641,6 +662,7 @@ interface IElectronAPI {
   cowork: {
     startSession: (options: {
       prompt: string;
+      gatewayPrompt?: string;
       cwd?: string;
       title?: string;
       activeSkillIds?: string[];

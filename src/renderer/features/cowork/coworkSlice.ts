@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { BrowserAnnotationDraft } from '@shared/browser';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/sessionGoal';
@@ -33,6 +34,8 @@ interface CoworkState {
   draftPrompts: Record<string, string>;
   /** Keyed by draftKey (sessionId or '__home__'), stores pending attachments */
   draftAttachments: Record<string, DraftAttachment[]>;
+  /** Browser annotations are generated context and remain scoped to one composer draft. */
+  draftBrowserAnnotations: Record<string, BrowserAnnotationDraft[]>;
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
@@ -62,6 +65,7 @@ const initialState: CoworkState = {
   currentSession: null,
   draftPrompts: {},
   draftAttachments: {},
+  draftBrowserAnnotations: {},
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
@@ -271,6 +275,7 @@ const coworkSlice = createSlice({
       state.pendingInteractions = state.pendingInteractions.filter(
         interaction => interaction.sessionId !== action.payload,
       );
+      delete state.draftBrowserAnnotations[action.payload];
     },
 
     deleteSessions(state, action: PayloadAction<string[]>) {
@@ -278,6 +283,7 @@ const coworkSlice = createSlice({
       for (const sessionId of action.payload) {
         clearSessionModelSelectionState(state, sessionId);
         delete state.planModeBySession[sessionId];
+        delete state.draftBrowserAnnotations[sessionId];
       }
       const deletedSessionIds = new Set(action.payload);
       state.pendingInteractions = state.pendingInteractions.filter(
@@ -543,6 +549,45 @@ const coworkSlice = createSlice({
       delete state.draftAttachments[action.payload];
     },
 
+    addDraftBrowserAnnotation(
+      state,
+      action: PayloadAction<{ draftKey: string; annotation: BrowserAnnotationDraft }>,
+    ) {
+      const { draftKey, annotation } = action.payload;
+      const existing = state.draftBrowserAnnotations[draftKey] ?? [];
+      if (existing.some(item => item.id === annotation.id)) return;
+      state.draftBrowserAnnotations[draftKey] = [...existing, annotation];
+    },
+
+    removeDraftBrowserAnnotation(
+      state,
+      action: PayloadAction<{ draftKey: string; annotationId: string }>,
+    ) {
+      const { draftKey, annotationId } = action.payload;
+      const remaining = (state.draftBrowserAnnotations[draftKey] ?? []).filter(
+        item => item.id !== annotationId,
+      );
+      if (remaining.length) state.draftBrowserAnnotations[draftKey] = remaining;
+      else delete state.draftBrowserAnnotations[draftKey];
+    },
+
+    clearDraftBrowserAnnotations(
+      state,
+      action: PayloadAction<{ draftKey: string; annotationIds?: string[] }>,
+    ) {
+      const { draftKey, annotationIds } = action.payload;
+      if (!annotationIds) {
+        delete state.draftBrowserAnnotations[draftKey];
+        return;
+      }
+      const submittedIds = new Set(annotationIds);
+      const remaining = (state.draftBrowserAnnotations[draftKey] ?? []).filter(
+        annotation => !submittedIds.has(annotation.id),
+      );
+      if (remaining.length) state.draftBrowserAnnotations[draftKey] = remaining;
+      else delete state.draftBrowserAnnotations[draftKey];
+    },
+
     toggleThinkingExpanded(state) {
       state.thinkingExpanded = !state.thinkingExpanded;
     },
@@ -624,6 +669,9 @@ export const {
   addDraftAttachment,
   hydrateDraftImageAttachment,
   clearDraftAttachments,
+  addDraftBrowserAnnotation,
+  removeDraftBrowserAnnotation,
+  clearDraftBrowserAnnotations,
   addSession,
   updateSessionStatus,
   deleteSession,

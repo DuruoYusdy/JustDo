@@ -1,8 +1,35 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, nativeImage, shell } from 'electron';
+import { randomUUID } from 'crypto';
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  nativeImage,
+  session,
+  shell,
+} from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import {
+  BROWSER_GUEST_COMMAND_CHANNEL,
+  BROWSER_PANEL_PARTITION,
+  type BrowserDownloadSettings,
+  BrowserIpc,
+  resolveBrowserGuestShortcut,
+} from '../../shared/browser';
 import { MediaCaptureIpc } from '../../shared/mediaCapture';
+import {
+  recordBrowserDownload,
+  recordBrowserHistory,
+  updateBrowserDownload,
+} from '../browser/browserDataImportService';
+import {
+  resolveAvailableBrowserDownloadPath,
+  resolveBrowserDownloadDirectory,
+} from '../browser/browserDownloadPath';
+import { isAllowedBrowserPanelUrl, isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import {
   shouldAllowAudioMediaCheck,
   shouldAllowAudioMediaRequest,
@@ -11,9 +38,17 @@ import {
 
 type MainWindowFactoryOptions = {
   appName: string;
+  browserGuestPreloadPath: string;
   devServerUrl: string;
   getBackgroundColor: () => string;
   getIconPath: () => string | undefined;
+  getBrowserDownloadSettings: () => BrowserDownloadSettings;
+  getProxyCredentials: () => {
+    host: string;
+    password: string;
+    port: number;
+    username: string;
+  } | null;
   getTitleBarOverlay: () => Electron.TitleBarOverlay;
   isDev: boolean;
   isMac: boolean;
@@ -58,6 +93,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
+      webviewTag: true,
       preload: options.preloadPath,
       backgroundThrottling: false,
       devTools: options.isDev,
@@ -98,20 +134,27 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     systemAudioCaptureAuthorizedUntil = 0;
   });
   const windowSession = mainWindow.webContents.session;
+  const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  browserPanelSession.setPermissionCheckHandler(() => false);
+  browserPanelSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
   windowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
+    if (webContents !== mainWindow.webContents) return false;
     if (permission !== 'media') return true;
-    return shouldAllowAudioMediaCheck(webContents === mainWindow.webContents, details);
+    return shouldAllowAudioMediaCheck(true, details);
   });
   windowSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (webContents !== mainWindow.webContents) {
+      callback(false);
+      return;
+    }
     if (permission !== 'media') {
       callback(true);
       return;
     }
     const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined;
-    const allowed = shouldAllowAudioMediaRequest(
-      webContents === mainWindow.webContents,
-      mediaTypes,
-    );
+    const allowed = shouldAllowAudioMediaRequest(true, mediaTypes);
     callback(allowed);
   });
   windowSession.setDisplayMediaRequestHandler((request, callback) => {
@@ -149,8 +192,242 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       });
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedBrowserPanelUrl(url) && url !== 'about:blank') void shell.openExternal(url);
     return { action: 'deny' };
+  });
+  const mainNavigationOptions = {
+    appRoot: path.resolve(__dirname, '..'),
+    devServerUrl: options.devServerUrl,
+    isDev: options.isDev,
+  };
+  mainWindow.webContents.on('will-navigate', event => {
+    if (!isAllowedMainWindowNavigation(event.url, mainNavigationOptions)) event.preventDefault();
+  });
+  mainWindow.webContents.on('will-frame-navigate', event => {
+    if (event.isMainFrame && !isAllowedMainWindowNavigation(event.url, mainNavigationOptions)) {
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    webPreferences.preload = options.browserGuestPreloadPath;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+    webPreferences.webviewTag = false;
+    webPreferences.spellcheck = true;
+    webPreferences.disableDialogs = true;
+    webPreferences.navigateOnDragDrop = false;
+
+    if (params.partition !== BROWSER_PANEL_PARTITION || !isAllowedBrowserPanelUrl(params.src)) {
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+    guestContents.setWindowOpenHandler(details => {
+      const { url } = details;
+      if (details.postBody) {
+        mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
+          url,
+          errorCode: 'post-navigation-blocked',
+        });
+        return { action: 'deny' };
+      }
+      if (isAllowedBrowserPanelUrl(url)) {
+        mainWindow.webContents.send(BrowserIpc.PanelOpenTab, { url: url || 'about:blank' });
+      }
+      return { action: 'deny' };
+    });
+    guestContents.on('before-input-event', (event, input) => {
+      const command = resolveBrowserGuestShortcut(input);
+      if (!command) return;
+      event.preventDefault();
+      guestContents.send(BROWSER_GUEST_COMMAND_CHANNEL, command);
+    });
+    guestContents.on('will-navigate', (event, url) => {
+      if (!isAllowedBrowserPanelUrl(url)) event.preventDefault();
+    });
+    guestContents.on('will-frame-navigate', event => {
+      if (!isAllowedBrowserPanelUrl(event.url)) event.preventDefault();
+    });
+    guestContents.on('will-redirect', (event, url) => {
+      if (!isAllowedBrowserPanelUrl(url)) event.preventDefault();
+    });
+    guestContents.on('did-stop-loading', () => {
+      recordBrowserHistory(guestContents.getURL(), guestContents.getTitle());
+    });
+    guestContents.on('login', (event, _details, authInfo, callback) => {
+      const credentials = options.getProxyCredentials();
+      const matchesConfiguredProxy =
+        authInfo.isProxy &&
+        credentials &&
+        authInfo.host.toLowerCase() === credentials.host.toLowerCase() &&
+        authInfo.port === credentials.port;
+      if (!matchesConfiguredProxy) {
+        callback();
+        return;
+      }
+      event.preventDefault();
+      callback(credentials.username, credentials.password);
+    });
+  });
+  browserPanelSession.webRequest.onBeforeRequest((details, callback) => {
+    const blockGuestMainFrame =
+      details.resourceType === 'mainFrame' && !isAllowedBrowserPanelUrl(details.url);
+    callback(blockGuestMainFrame ? { cancel: true } : {});
+  });
+  const pendingDownloads = new Set<Electron.DownloadItem>();
+  const reservedDownloadPaths = new Set<string>();
+  const downloadDefaultDirectories = new WeakMap<Electron.DownloadItem, string>();
+  const downloadIds = new WeakMap<Electron.DownloadItem, string>();
+  const downloadUpdateTimers = new Map<Electron.DownloadItem, NodeJS.Timeout>();
+  const pendingDownloadStates = new WeakMap<Electron.DownloadItem, 'progressing' | 'interrupted'>();
+  const persistDownloadUpdate = (
+    item: Electron.DownloadItem,
+    state: 'queued' | 'progressing' | 'completed' | 'cancelled' | 'interrupted',
+    savePath?: string,
+  ): void => {
+    const id = downloadIds.get(item);
+    if (!id) return;
+    try {
+      updateBrowserDownload(id, {
+        state,
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+        savePath,
+      });
+    } catch (error) {
+      console.warn(
+        '[BrowserPanel] Failed to persist download state:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
+  const scheduleDownloadUpdate = (
+    item: Electron.DownloadItem,
+    state: 'progressing' | 'interrupted',
+  ): void => {
+    pendingDownloadStates.set(item, state);
+    if (downloadUpdateTimers.has(item)) return;
+    const timer = setTimeout(() => {
+      downloadUpdateTimers.delete(item);
+      persistDownloadUpdate(item, pendingDownloadStates.get(item) ?? 'progressing');
+    }, 300);
+    timer.unref();
+    downloadUpdateTimers.set(item, timer);
+  };
+  let downloadConfirmationQueue = Promise.resolve();
+  const confirmBrowserDownload = async (item: Electron.DownloadItem): Promise<void> => {
+    if (!pendingDownloads.has(item) || mainWindow.isDestroyed()) return;
+    const suggestedName = path.basename(item.getFilename()) || 'download';
+    const defaultDirectory = downloadDefaultDirectories.get(item) ?? app.getPath('downloads');
+    try {
+      const result = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: path.join(defaultDirectory, suggestedName),
+      });
+      if (
+        result.canceled ||
+        !result.filePath ||
+        mainWindow.isDestroyed() ||
+        item.getState() !== 'progressing'
+      ) {
+        item.cancel();
+        return;
+      }
+      item.setSavePath(result.filePath);
+      persistDownloadUpdate(item, 'progressing', result.filePath);
+      item.resume();
+    } catch (error) {
+      item.cancel();
+      console.warn(
+        '[BrowserPanel] Failed to choose a download destination:',
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      pendingDownloads.delete(item);
+    }
+  };
+  const handleBrowserDownload = (_event: Electron.Event, item: Electron.DownloadItem): void => {
+    const id = randomUUID();
+    const now = Date.now();
+    const settings = options.getBrowserDownloadSettings();
+    const downloadDirectory = resolveBrowserDownloadDirectory(
+      settings.directory,
+      app.getPath('downloads'),
+    );
+    const askWhereToSave = settings.askWhereToSave;
+    const automaticSavePath = askWhereToSave
+      ? undefined
+      : resolveAvailableBrowserDownloadPath(
+          downloadDirectory,
+          item.getFilename(),
+          candidate => reservedDownloadPaths.has(candidate) || fs.existsSync(candidate),
+        );
+    downloadIds.set(item, id);
+    downloadDefaultDirectories.set(item, downloadDirectory);
+    if (automaticSavePath) reservedDownloadPaths.add(automaticSavePath);
+    try {
+      recordBrowserDownload(
+        {
+          id,
+          fileName: path.basename(item.getFilename()) || 'download',
+          sourceUrl: item.getURL(),
+          state: askWhereToSave ? 'queued' : 'progressing',
+          receivedBytes: item.getReceivedBytes(),
+          totalBytes: item.getTotalBytes(),
+          startedAt: now,
+          updatedAt: now,
+        },
+        automaticSavePath,
+      );
+    } catch (error) {
+      console.warn(
+        '[BrowserPanel] Failed to record download:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    item.on('updated', (_downloadEvent, state) => {
+      scheduleDownloadUpdate(item, state === 'interrupted' ? 'interrupted' : 'progressing');
+    });
+    item.once('done', (_downloadEvent, state) => {
+      const timer = downloadUpdateTimers.get(item);
+      if (timer) clearTimeout(timer);
+      downloadUpdateTimers.delete(item);
+      persistDownloadUpdate(item, state);
+      pendingDownloads.delete(item);
+      if (automaticSavePath) reservedDownloadPaths.delete(automaticSavePath);
+    });
+    if (askWhereToSave) {
+      item.pause();
+      pendingDownloads.add(item);
+      downloadConfirmationQueue = downloadConfirmationQueue.then(
+        () => confirmBrowserDownload(item),
+        () => confirmBrowserDownload(item),
+      );
+    } else if (automaticSavePath) {
+      try {
+        item.setSavePath(automaticSavePath);
+      } catch (error) {
+        reservedDownloadPaths.delete(automaticSavePath);
+        item.cancel();
+        persistDownloadUpdate(item, 'cancelled');
+        console.warn(
+          '[BrowserPanel] Failed to apply the automatic download destination:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  };
+  browserPanelSession.on('will-download', handleBrowserDownload);
+  mainWindow.once('closed', () => {
+    browserPanelSession.off('will-download', handleBrowserDownload);
+    downloadUpdateTimers.forEach(timer => clearTimeout(timer));
+    downloadUpdateTimers.clear();
+    pendingDownloads.forEach(item => item.cancel());
+    pendingDownloads.clear();
+    reservedDownloadPaths.clear();
   });
   if (options.isDev && process.env.JUSTDO_DEBUG_CHAT_TIMELINE === 'true') {
     mainWindow.webContents.on('console-message', details => {

@@ -108,6 +108,19 @@ export default defineConfig({
         },
         onstart() {},
       },
+      {
+        // 外部网页 guest 的固定检查桥；不向页面暴露 Node 或 Electron API。
+        entry: 'src/main/browserGuestPreload.ts',
+        vite: {
+          build: {
+            sourcemap: !isProductionBuild,
+            outDir: 'dist-electron',
+            minify: isProductionBuild ? 'esbuild' : false,
+            rollupOptions: { checks: { pluginTimings: false } },
+          },
+        },
+        onstart() {},
+      },
     ]),
     renderer(),
   ],

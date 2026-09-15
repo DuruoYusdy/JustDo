@@ -5,12 +5,30 @@ interface ContentSecurityPolicyOptions {
   devServerPort: number;
 }
 
+export const shouldApplyApplicationCsp = (
+  requestUrl: string,
+  applicationUrl: string,
+  isDev: boolean,
+): boolean => {
+  if (!isDev) return requestUrl.startsWith('file:');
+  try {
+    return new URL(requestUrl).origin === new URL(applicationUrl).origin;
+  } catch {
+    return false;
+  }
+};
+
 export const registerContentSecurityPolicy = ({
   isDev,
   devServerPort,
 }: ContentSecurityPolicyOptions): void => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const devPort = process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] || String(devServerPort);
+    const applicationUrl = process.env.ELECTRON_START_URL || `http://localhost:${devPort}`;
+    if (!shouldApplyApplicationCsp(details.url, applicationUrl, isDev)) {
+      callback({ responseHeaders: details.responseHeaders });
+      return;
+    }
     const cspDirectives = [
       "default-src 'self'",
       isDev
@@ -23,7 +41,7 @@ export const registerContentSecurityPolicy = ({
       "font-src 'self' data:",
       "media-src 'self' blob:",
       "worker-src 'self' blob:",
-      "frame-src 'self'",
+      "frame-src 'self' https: http:",
     ];
 
     callback({

@@ -1,3 +1,4 @@
+import { composeBrowserGatewayPrompt } from '@shared/browser';
 import { readModelRef } from '@shared/openclaw/modelRef';
 import { ProgressCardStepStatus } from '@shared/openclaw/progressCard';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
@@ -5773,6 +5774,162 @@ test('sends and optimistically renders image attachments in an existing session'
       ],
     }),
   ]);
+});
+
+test('optimistically renders browser element metadata without exposing gateway context', async () => {
+  const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  const gatewayMessage = composeBrowserGatewayPrompt('Update this control.', [
+    {
+      id: 'annotation-1',
+      modelContext: 'Untrusted element details for the model',
+      title: 'Settings',
+      displayUrl: 'example.com',
+      markedRegionCount: 0,
+      inspectedElement: true,
+      display: {
+        id: 'annotation-1',
+        title: 'Settings',
+        displayUrl: 'example.com',
+        markedRegionCount: 0,
+        element: {
+          tag: 'button',
+          id: 'save',
+          classes: ['primary'],
+          role: 'button',
+          name: 'Save changes',
+          cssPath: 'main > button#save',
+          rect: { x: 10, y: 20, width: 100, height: 40 },
+        },
+      },
+      dataUrl: 'data:image/png;base64,YWJj',
+      fileName: 'browser-annotation.png',
+      addedAt: 1,
+    },
+  ]);
+
+  await controller.sendMessage('Update this control.', [], gatewayMessage);
+
+  expect(request).toHaveBeenCalledWith(
+    'chat.send',
+    expect.objectContaining({ message: gatewayMessage }),
+  );
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Update this control.' },
+        {
+          type: 'browser_annotation',
+          annotation: expect.objectContaining({
+            id: 'annotation-1',
+            element: expect.objectContaining({ tag: 'button', id: 'save' }),
+          }),
+        },
+      ],
+    }),
+  ]);
+  expect(JSON.stringify(controller.state.chatMessages)).not.toContain(
+    'Untrusted element details for the model',
+  );
+});
+
+test('starts a continued Goal cleanly when browser annotations remain in the draft', async () => {
+  const request = vi.fn((method: string, params?: Record<string, unknown>) =>
+    Promise.resolve(
+      method === 'sessions.create'
+        ? { sessionId: 'gateway-session-1' }
+        : {
+            operationId: params?.idempotencyKey,
+            action: 'start',
+            sessionId: 'gateway-session-1',
+            goalId: 'goal-2',
+            runId: params?.idempotencyKey,
+            status: 'started',
+          },
+    ),
+  );
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'gateway-session-1';
+  const goalPrompt = buildGoalFollowUpPrompt('Ship the release', 'Add release notes');
+  const gatewayMessage = composeBrowserGatewayPrompt(goalPrompt, [
+    {
+      id: 'annotation-1',
+      modelContext: 'Untrusted browser context',
+      title: 'Release',
+      displayUrl: 'example.com',
+      markedRegionCount: 1,
+      inspectedElement: false,
+      dataUrl: 'data:image/png;base64,YWJj',
+      fileName: 'browser-annotation.png',
+      addedAt: 1,
+    },
+  ]);
+
+  await controller.sendMessage('Add release notes', [], gatewayMessage);
+
+  const sendParams = request.mock.calls.find(([method]) => method === 'chat.send')?.[1];
+  expect(sendParams?.intent).toMatchObject({ kind: 'session-goal-start', version: 1 });
+  expect(sendParams?.message).toBe('Add release notes');
+  expect(JSON.stringify(controller.state.chatMessages)).not.toContain('/goal start');
+  expect(controller.state.chatMessages[controller.state.chatMessages.length - 1]).toMatchObject({
+    role: 'user',
+    content: 'Add release notes',
+  });
+});
+
+test('renders browser element metadata in a pending first-session message', () => {
+  const controller = new ChatController();
+  const gatewayMessage = composeBrowserGatewayPrompt('Update this control.', [
+    {
+      id: 'annotation-1',
+      modelContext: 'Hidden model context',
+      title: 'Settings',
+      displayUrl: 'example.com',
+      markedRegionCount: 0,
+      inspectedElement: true,
+      display: {
+        id: 'annotation-1',
+        title: 'Settings',
+        displayUrl: 'example.com',
+        markedRegionCount: 0,
+        element: {
+          tag: 'button',
+          id: 'save',
+          classes: [],
+          role: 'button',
+          name: 'Save changes',
+          cssPath: 'button#save',
+          rect: { x: 10, y: 20, width: 100, height: 40 },
+        },
+      },
+      dataUrl: 'data:image/png;base64,YWJj',
+      fileName: 'browser-annotation.png',
+      addedAt: 1,
+    },
+  ]);
+
+  controller.setPendingUserMessage('Update this control.', [], gatewayMessage);
+
+  expect(controller.state.pendingUserMessage).toEqual(
+    expect.objectContaining({
+      content: [
+        { type: 'text', text: 'Update this control.' },
+        {
+          type: 'browser_annotation',
+          annotation: expect.objectContaining({
+            element: expect.objectContaining({ tag: 'button', id: 'save' }),
+          }),
+        },
+      ],
+    }),
+  );
 });
 
 test('compacts while intentionally ignoring unsupported /compact arguments', async () => {

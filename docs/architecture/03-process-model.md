@@ -7,12 +7,13 @@
 | 参与者        | 权限                        | 主要职责                                                     |
 | ------------- | --------------------------- | ------------------------------------------------------------ |
 | Renderer      | Chromium 页面权限           | UI、交互、Redux、聊天显示；不访问系统资源                    |
+| Browser guest | 沙箱化的外部 Chromium 页面  | 右侧工作区中的真实网页导航与原生输入                         |
 | Image preview | 独立沙箱化 Chromium 页面    | 在原生独立窗口中显示图片并处理缩放/拖动                      |
 | Preload       | 隔离上下文中的 Electron IPC | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
 | Main          | Node/Electron 完整权限      | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
 | Gateway       | 独立受管子进程              | Agent、tool、session/history、cron、plugin runtime           |
 
-BrowserWindow 必须维持 context isolation；即使某平台通过启动 switch 降低 Chromium sandbox，也不能因此扩大 Renderer API。
+BrowserWindow 与外部网页 guest 必须维持 Chromium sandbox 和 context isolation；生产路径不得使用全局 `--no-sandbox`。
 
 Main 按 OpenClaw embedding contract 监管 Gateway 子进程：设置
 `OPENCLAW_DISABLE_BONJOUR=1`、`OPENCLAW_EXEC_SHELL_SNAPSHOT=0`、
@@ -65,7 +66,7 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | `slashCommands`               | 合并 Gateway 命令与本地 policy 后列出                                    |
 | `mcp`                         | CRUD、enable、sync、probe、resource read、extension servers 与 sync 事件 |
 | `permissions`                 | macOS Calendar check/request                                             |
-| `browser`                     | mode/status、连接测试、remote debugging、扩展安装/配对诊断               |
+| `browser`                     | OpenClaw browser mode/status、连接诊断与设置动作                         |
 | `api`                         | Main 受控 fetch 与 request cancellation                                  |
 | `window`                      | 最小化/最大化/关闭/系统菜单与状态订阅                                    |
 | 顶层 config                   | provider config read/check/save、title generation、recent cwd            |
@@ -89,6 +90,10 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | `networkStatus`               | online/offline 事件                                                      |
 
 `ipcRenderer` 兼容分组只允许白名单 channel，不能演化为任意 `send/invoke` 后门。
+
+浏览器工作区是主窗口 Renderer 内的 Electron `<webview>` guest。它固定使用独立的持久化 browser partition，与应用壳的 Cookie、storage、service worker 和认证状态隔离；Main 将系统、自定义或直连代理同时应用到该 partition。交互模式不经过 IPC：Chromium 直接处理页面点击、键盘、滚动、焦点与导航。Main 在 `will-attach-webview` 中覆盖页面请求的 preload 为应用内固定 guest bridge，并强制沙箱、context isolation、无 Node、无嵌套 webview，仅允许 HTTP(S)/`about:blank`；browser-partition request guard 同时阻止程序化顶层导航绕过，主窗口自身也只能停留在应用 origin/file root。guest 权限默认拒绝，下载必须经过系统保存位置确认，弹出链接进入受管理的新 Tab。
+
+检查模式的透明 Canvas 才拦截鼠标，并执行应用内固定的 `elementsFromPoint` 脚本；坐标有限化，结果经长度和字段白名单清洗。完成标注后显示评论条，元素详情可按需展开，语音入口仅在语音输入已启用且可用时出现。平时不生成图片，只有用户提交评论时对当前 guest 调用一次 `capturePage()` 并合成标注。嵌入式 target id 是 UI 本地身份，不能传给 OpenClaw 冒充可操作 browser target；Gateway token、relay key、CDP 信息和页面秘密都不进入 guest。
 
 ## 4. Cowork IPC
 

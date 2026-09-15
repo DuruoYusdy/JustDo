@@ -93,7 +93,11 @@ export interface JustDoChatWrapperRef {
     isLoading: boolean;
   };
   /** Set an optimistic user message shown until gateway history loads */
-  setPendingUserMessage: (text: string, attachments?: CoworkAttachmentPayload[]) => void;
+  setPendingUserMessage: (
+    text: string,
+    attachments?: CoworkAttachmentPayload[],
+    gatewayMessage?: string,
+  ) => void;
   /** Register the exact temporary/canonical pair created for a new session. */
   registerSessionPromotion: (sourceSessionKey: string, targetSessionKey: string) => void;
   /** Clear sending state (e.g. when session start fails) */
@@ -193,6 +197,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const pendingUserMessageRef = useRef<{
       text: string;
       attachments: CoworkAttachmentPayload[];
+      gatewayMessage?: string;
     } | null>(null);
     const promotionSourceByTargetRef = useRef(new Map<string, string>());
     const lastReportedSessionKeyRef = useRef('');
@@ -442,14 +447,14 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           }
           await controller.sendMessage(text, attachments, gatewayMessage, options);
         },
-        setPendingUserMessage: (text: string, attachments = []) => {
+        setPendingUserMessage: (text: string, attachments = [], gatewayMessage) => {
           const controller = controllerRef.current;
           // Always buffer the prompt — survives StrictMode remounts where the
           // controller is destroyed and recreated.
-          pendingUserMessageRef.current = { text, attachments };
+          pendingUserMessageRef.current = { text, attachments, gatewayMessage };
           if (controller) {
             debugLog('[JustDoChatWrapper] setPendingUserMessage (immediate):', text.slice(0, 60));
-            controller.setPendingUserMessage(text, attachments);
+            controller.setPendingUserMessage(text, attachments, gatewayMessage);
           } else {
             debugLog(
               '[JustDoChatWrapper] setPendingUserMessage (buffered, no controller):',
@@ -538,6 +543,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         controller.setPendingUserMessage(
           pendingUserMessageRef.current.text,
           pendingUserMessageRef.current.attachments,
+          pendingUserMessageRef.current.gatewayMessage,
         );
         pendingUserMessageRef.current = null;
       }

@@ -2,8 +2,10 @@ import { describe, expect, test } from 'vitest';
 
 import coworkReducer, {
   addDraftAttachment,
+  addDraftBrowserAnnotation,
   beginManualModelSelection,
   clearCurrentSession,
+  clearDraftBrowserAnnotations,
   completeManualModelSelection,
   confirmCurrentSessionModelSelection,
   confirmDefaultModelSelection,
@@ -12,6 +14,7 @@ import coworkReducer, {
   deleteSessions,
   enqueuePendingInteraction,
   hydrateDraftImageAttachment,
+  removeDraftBrowserAnnotation,
   rollbackManualModelSelection,
   setConfig,
   setCurrentSession,
@@ -264,6 +267,74 @@ describe('cowork draft attachments', () => {
     );
 
     expect(state.draftAttachments.__home__).toBeUndefined();
+  });
+});
+
+describe('cowork draft browser annotations', () => {
+  const annotation = {
+    id: 'annotation-1',
+    modelContext: 'Untrusted browser context',
+    title: 'Example',
+    displayUrl: 'example.com',
+    markedRegionCount: 1,
+    inspectedElement: false,
+    dataUrl: 'data:image/png;base64,YWJj',
+    fileName: 'browser-annotation.png',
+    addedAt: 1,
+  };
+
+  test('isolates annotations by draft key and removes only the submitted id', () => {
+    const home = coworkReducer(
+      undefined,
+      addDraftBrowserAnnotation({ draftKey: '__home__', annotation }),
+    );
+    const sessions = coworkReducer(
+      home,
+      addDraftBrowserAnnotation({
+        draftKey: 'session-1',
+        annotation: { ...annotation, id: 'annotation-2' },
+      }),
+    );
+    const removed = coworkReducer(
+      sessions,
+      removeDraftBrowserAnnotation({ draftKey: '__home__', annotationId: annotation.id }),
+    );
+
+    expect(removed.draftBrowserAnnotations.__home__).toBeUndefined();
+    expect(removed.draftBrowserAnnotations['session-1']).toHaveLength(1);
+  });
+
+  test('clears only the requested annotation ids', () => {
+    const first = coworkReducer(
+      undefined,
+      addDraftBrowserAnnotation({ draftKey: '__home__', annotation }),
+    );
+    const second = coworkReducer(
+      first,
+      addDraftBrowserAnnotation({
+        draftKey: '__home__',
+        annotation: { ...annotation, id: 'annotation-new' },
+      }),
+    );
+    const cleared = coworkReducer(
+      second,
+      clearDraftBrowserAnnotations({ draftKey: '__home__', annotationIds: [annotation.id] }),
+    );
+
+    expect(cleared.draftBrowserAnnotations.__home__?.map(item => item.id)).toEqual([
+      'annotation-new',
+    ]);
+  });
+
+  test('releases annotation images when their session is deleted', () => {
+    const withAnnotation = coworkReducer(
+      undefined,
+      addDraftBrowserAnnotation({ draftKey: 'session-1', annotation }),
+    );
+
+    const deleted = coworkReducer(withAnnotation, deleteSession('session-1'));
+
+    expect(deleted.draftBrowserAnnotations['session-1']).toBeUndefined();
   });
 });
 

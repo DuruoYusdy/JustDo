@@ -10,6 +10,7 @@ interface TooltipProps {
   maxWidth?: string;
   disabled?: boolean;
   renderInPortal?: boolean;
+  dismissOnClick?: boolean;
 }
 
 const Tooltip: React.FC<TooltipProps> = ({
@@ -21,6 +22,7 @@ const Tooltip: React.FC<TooltipProps> = ({
   maxWidth = '280px',
   disabled = false,
   renderInPortal = false,
+  dismissOnClick = false,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties | null>(null);
@@ -56,6 +58,15 @@ const Tooltip: React.FC<TooltipProps> = ({
     isHoveredRef.current = false;
     hideTooltipIfInactive();
   }, [hideTooltipIfInactive]);
+
+  const handleClickCapture = useCallback(() => {
+    if (!dismissOnClick) return;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setIsVisible(false);
+  }, [dismissOnClick]);
 
   const handleFocusCapture = useCallback(() => {
     isFocusedWithinRef.current = true;
@@ -185,6 +196,7 @@ const Tooltip: React.FC<TooltipProps> = ({
       onMouseLeave={handleMouseLeave}
       onFocusCapture={handleFocusCapture}
       onBlurCapture={handleBlurCapture}
+      onClickCapture={handleClickCapture}
     >
       {children}
       {tooltipElement &&

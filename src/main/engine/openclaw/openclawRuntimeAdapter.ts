@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
+import { parseBrowserAnnotationPrompt } from '../../../shared/browser';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
 import {
   type CoworkPlanArtifactReference,
@@ -493,6 +494,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
       planMode: options.planMode,
+      onAccepted: options.onAccepted,
     });
   }
 
@@ -1321,6 +1323,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot?: string;
       clientTurnId?: string;
       planMode?: boolean;
+      onAccepted?: () => void;
     },
   ): Promise<void> {
     if (!prompt.trim()) {
@@ -1332,7 +1335,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (this.unknownSessionRuns.has(sessionId)) {
       throw new Error('The previous submission is still awaiting confirmation.');
     }
-    const goalStartObjective = parseGoalStartObjective(prompt);
+    const browserPrompt = parseBrowserAnnotationPrompt(prompt);
+    const commandPrompt = browserPrompt?.userText ?? prompt;
+    const goalStartObjective = parseGoalStartObjective(commandPrompt);
 
     const previousStart = this.pendingTurnStarts.get(sessionId);
     if (previousStart) previousStart.cancelled = true;
@@ -1450,7 +1455,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           : undefined;
         const commandSessionId =
           goalStartObjective !== null ||
-          hasSlashCommandBeforeSendHook(prompt, SlashCommandBeforeSendHook.EnsureSessionEntry)
+          hasSlashCommandBeforeSendHook(commandPrompt, SlashCommandBeforeSendHook.EnsureSessionEntry)
             ? preparedSession.gatewaySessionId
             : undefined;
         if (isStartCancelled()) return;
@@ -1495,6 +1500,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             throw new Error('Gateway returned a mismatched Goal start receipt');
           }
         }
+        options.onAccepted?.();
         if ('replayed' in result && result.replayed) {
           const described = await client.request<{
             session?: { goal?: unknown } | null;

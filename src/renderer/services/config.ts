@@ -1,3 +1,4 @@
+import { normalizeBrowserDownloadSettings, normalizeBrowserSearchEngine } from '@shared/browser';
 import { normalizeLocalSpeechSettings } from '@shared/localSpeechSettings';
 import { isLegacyCustomProviderKey } from '@shared/providers';
 import { ProxyMode, ProxyProtocol } from '@shared/proxy';
@@ -138,10 +139,17 @@ export class ConfigService {
           { ...defaultConfig.model, ...storedConfig.model },
           mergedProviders as AppConfig['providers'],
         );
+        const browserDownloadSettings = normalizeBrowserDownloadSettings({
+          directory: storedConfig.browserDownloadDirectory,
+          askWhereToSave: storedConfig.browserAskDownloadLocation,
+        });
 
         const mergedConfig = {
           ...defaultConfig,
           ...storedConfig,
+          browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
+          browserDownloadDirectory: browserDownloadSettings.directory,
+          browserAskDownloadLocation: browserDownloadSettings.askWhereToSave,
           api: {
             ...(normalizedModel.reset
               ? defaultConfig.api
@@ -190,9 +198,16 @@ export class ConfigService {
       { ...this.config.model, ...storedConfig.model },
       effectiveProviders,
     );
+    const browserDownloadSettings = normalizeBrowserDownloadSettings({
+      directory: storedConfig.browserDownloadDirectory,
+      askWhereToSave: storedConfig.browserAskDownloadLocation,
+    });
     const mergedConfig = {
       ...this.config,
       ...storedConfig,
+      browserSearchEngine: normalizeBrowserSearchEngine(storedConfig.browserSearchEngine),
+      browserDownloadDirectory: browserDownloadSettings.directory,
+      browserAskDownloadLocation: browserDownloadSettings.askWhereToSave,
       api: {
         ...(normalizedModel.reset
           ? defaultConfig.api
@@ -231,6 +246,24 @@ export class ConfigService {
       const nextConfig = {
         ...this.config,
         ...newConfig,
+        ...(newConfig.browserSearchEngine !== undefined
+          ? { browserSearchEngine: normalizeBrowserSearchEngine(newConfig.browserSearchEngine) }
+          : {}),
+        ...(newConfig.browserDownloadDirectory !== undefined ||
+        newConfig.browserAskDownloadLocation !== undefined
+          ? (() => {
+              const settings = normalizeBrowserDownloadSettings({
+                directory:
+                  newConfig.browserDownloadDirectory ?? this.config.browserDownloadDirectory,
+                askWhereToSave:
+                  newConfig.browserAskDownloadLocation ?? this.config.browserAskDownloadLocation,
+              });
+              return {
+                browserDownloadDirectory: settings.directory,
+                browserAskDownloadLocation: settings.askWhereToSave,
+              };
+            })()
+          : {}),
         ...(newConfig.proxy ? { proxy: normalizeProxyConfig(newConfig.proxy) } : {}),
         ...(newConfig.appearance
           ? { appearance: normalizeAppearanceConfig(newConfig.appearance) }

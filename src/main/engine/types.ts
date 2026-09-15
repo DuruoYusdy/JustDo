@@ -107,6 +107,8 @@ export type CoworkStartOptions = {
   agentId?: string;
   clientTurnId?: string;
   planMode?: boolean;
+  /** Main-process admission receipt; never supplied across IPC. */
+  onAccepted?: () => void;
 };
 
 export type CoworkStopOptions = {
