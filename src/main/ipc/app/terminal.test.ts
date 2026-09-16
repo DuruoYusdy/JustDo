@@ -47,6 +47,8 @@ describe('terminal IPC', () => {
   const event = { sender };
   const buildEnvironment = vi.fn(async () => ({
     PATH: process.env.PATH,
+    NO_COLOR: '1',
+    Force_Color: '0',
     OPENCLAW_STATE_DIR: 'C:\\state',
     JUSTDO_OPENCLAW_ENTRY: 'C:/runtime/gateway.asar/openclaw.mjs',
   }));
@@ -78,8 +80,16 @@ describe('terminal IPC', () => {
         env: expect.objectContaining({
           OPENCLAW_STATE_DIR: 'C:\\state',
           JUSTDO_OPENCLAW_ENTRY: 'C:/runtime/gateway.asar/openclaw.mjs',
+          COLORTERM: 'truecolor',
+          TERM: 'xterm-256color',
+          TERM_PROGRAM: 'xterm.js',
         }),
       }),
+    );
+    const spawnedEnvironment = mocks.spawn.mock.calls[0]?.[2]?.env as Record<string, string>;
+    expect(Object.keys(spawnedEnvironment).map(key => key.toUpperCase())).not.toContain('NO_COLOR');
+    expect(Object.keys(spawnedEnvironment).map(key => key.toUpperCase())).not.toContain(
+      'FORCE_COLOR',
     );
     expect(buildEnvironment).toHaveBeenCalledOnce();
     if (process.platform === 'win32') {

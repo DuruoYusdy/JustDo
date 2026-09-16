@@ -77,9 +77,14 @@ const resolveTerminalCwd = (cwd: string): string => {
   return resolved;
 };
 
+const TERMINAL_COLOR_CONTROL_VARIABLES = new Set(['NO_COLOR', 'FORCE_COLOR']);
+
 const getTerminalEnvironment = (env: NodeJS.ProcessEnv): Record<string, string> =>
   Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    Object.entries(env).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && !TERMINAL_COLOR_CONTROL_VARIABLES.has(entry[0].toUpperCase()),
+    ),
   );
 
 const findExecutableOnPath = (executable: string): string | undefined => {
@@ -217,6 +222,7 @@ export const registerTerminalHandlers = ({
               ...getTerminalEnvironment(environment),
               COLORTERM: 'truecolor',
               TERM: 'xterm-256color',
+              TERM_PROGRAM: 'xterm.js',
             },
           });
         } finally {

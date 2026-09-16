@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,25 +8,45 @@ import { i18nService } from '@/services/i18n';
 
 const mocks = vi.hoisted(() => {
   const disposeInput = vi.fn();
+  let terminalDataListener: ((data: string) => void) | undefined;
   const terminal = {
     cols: 100,
     rows: 30,
     options: {},
+    textarea: undefined as HTMLTextAreaElement | undefined,
+    attachCustomKeyEventHandler: vi.fn(),
+    clear: vi.fn(),
     dispose: vi.fn(),
     focus: vi.fn(),
+    getSelection: vi.fn(() => ''),
+    hasSelection: vi.fn(() => false),
     loadAddon: vi.fn(),
-    onData: vi.fn(() => ({ dispose: disposeInput })),
+    onData: vi.fn((listener: (data: string) => void) => {
+      terminalDataListener = listener;
+      return { dispose: disposeInput };
+    }),
     onResize: vi.fn(() => ({ dispose: vi.fn() })),
     open: vi.fn(),
+    paste: vi.fn(),
+    selectAll: vi.fn(),
     write: vi.fn(),
+  };
+  const search = {
+    clearDecorations: vi.fn(),
+    findNext: vi.fn(),
+    findPrevious: vi.fn(),
+    onDidChangeResults: vi.fn(() => ({ dispose: vi.fn() })),
   };
   return {
     disposeInput,
+    emitTerminalData: (data: string) => terminalDataListener?.(data),
     fit: vi.fn(),
+    search,
     terminal,
     Terminal: vi.fn(function TerminalMock() {
       return terminal;
     }),
+    webglContextLoss: vi.fn(),
   };
 });
 
@@ -34,6 +54,21 @@ vi.mock('@xterm/xterm', () => ({ Terminal: mocks.Terminal }));
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: vi.fn(function FitAddonMock() {
     return { fit: mocks.fit };
+  }),
+}));
+vi.mock('@xterm/addon-search', () => ({
+  SearchAddon: vi.fn(function SearchAddonMock() {
+    return mocks.search;
+  }),
+}));
+vi.mock('@xterm/addon-web-links', () => ({
+  WebLinksAddon: vi.fn(function WebLinksAddonMock() {
+    return { dispose: vi.fn() };
+  }),
+}));
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: vi.fn(function WebglAddonMock() {
+    return { dispose: vi.fn(), onContextLoss: mocks.webglContextLoss };
   }),
 }));
 
@@ -47,7 +82,18 @@ describe('TerminalPanel', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    i18nService.setLanguage('en', { persist: false });
+    mocks.terminal.textarea = document.createElement('textarea');
+    mocks.terminal.getSelection.mockReturnValue('');
+    mocks.terminal.hasSelection.mockReturnValue(false);
     vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000001');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        readText: vi.fn().mockResolvedValue('clipboard text'),
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
     vi.stubGlobal(
       'ResizeObserver',
       class ResizeObserver {
@@ -58,6 +104,8 @@ describe('TerminalPanel', () => {
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
+        platform: 'win32',
+        shell: { openExternal: vi.fn().mockResolvedValue({ success: true }) },
         terminal: {
           create,
           close,
@@ -92,6 +140,8 @@ describe('TerminalPanel', () => {
     expect(mocks.Terminal).toHaveBeenCalledWith(
       expect.objectContaining({
         allowTransparency: false,
+        convertEol: false,
+        customGlyphs: true,
         drawBoldTextInBrightColors: true,
         fontFamily: expect.stringMatching(
           /^'MesloLGM Nerd Font'.*'MesloLGM Nerd Font Mono'.*'Microsoft YaHei'.*monospace$/,
@@ -102,8 +152,10 @@ describe('TerminalPanel', () => {
           brightBlue: '#3b78ff',
           brightCyan: '#61d6d6',
         }),
+        windowsPty: { backend: 'conpty' },
       }),
     );
+    expect(mocks.webglContextLoss).toHaveBeenCalledOnce();
     view.unmount();
     await waitFor(() =>
       expect(close).toHaveBeenCalledWith('terminal:test:00000000-0000-4000-8000-000000000001'),
@@ -160,6 +212,46 @@ describe('TerminalPanel', () => {
     );
     expect(mocks.terminal.write).not.toHaveBeenCalledWith(
       expect.stringContaining('IPC unavailable'),
+    );
+  });
+
+  it('commits Windows IME composition text exactly once', async () => {
+    render(
+      <TerminalPanel terminalId="terminal:ime" cwd={'E:\\workspace\\JustDo'} isObscured={false} />,
+    );
+
+    await waitFor(() => expect(mocks.terminal.focus).toHaveBeenCalled());
+    const textarea = mocks.terminal.textarea;
+    expect(textarea).toBeDefined();
+
+    fireEvent.compositionStart(textarea!);
+    fireEvent.compositionUpdate(textarea!, { data: '你好' });
+    fireEvent.compositionEnd(textarea!, { data: '你好' });
+    mocks.emitTerminalData('你好');
+
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith({
+        id: 'terminal:ime:00000000-0000-4000-8000-000000000001',
+        data: '你好',
+      }),
+    );
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(textarea?.value).toBe('');
+  });
+
+  it('copies selected terminal output from the context menu', async () => {
+    mocks.terminal.hasSelection.mockReturnValue(true);
+    mocks.terminal.getSelection.mockReturnValue('selected output');
+    const view = render(
+      <TerminalPanel terminalId="terminal:menu" cwd={'E:\\workspace\\JustDo'} isObscured={false} />,
+    );
+    await waitFor(() => expect(mocks.terminal.focus).toHaveBeenCalled());
+
+    fireEvent.contextMenu(view.getByLabelText('Terminal'), { clientX: 40, clientY: 60 });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' }));
+
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('selected output'),
     );
   });
 });
