@@ -587,7 +587,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || pendingApprovals.length > 0 || isShortcutInputActive()) return;
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        pendingApprovals.length > 0 ||
+        isShortcutInputActive()
+      )
+        return;
 
       const { shortcuts } = configService.getConfig();
       const activeShortcuts = {
@@ -610,12 +616,48 @@ const App: React.FC = () => {
       if (matchesShortcut(event, activeShortcuts.settings)) {
         event.preventDefault();
         handleShowSettings();
+        return;
+      }
+
+      if (matchesShortcut(event, activeShortcuts.terminal)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('cowork:shortcut:terminal'));
+        return;
+      }
+
+      if (matchesShortcut(event, activeShortcuts.browser)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('cowork:shortcut:browser'));
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleShowSettings, handleNewChat, pendingApprovals.length]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    const syncPanelShortcuts = () => {
+      const shortcuts = {
+        ...defaultConfig.shortcuts!,
+        ...(configService.getConfig().shortcuts ?? {}),
+      };
+      window.electron.browser.setPanelShortcuts({
+        terminal: shortcuts.terminal,
+        browser: shortcuts.browser,
+      });
+    };
+    syncPanelShortcuts();
+    window.addEventListener('config-updated', syncPanelShortcuts);
+    const unsubscribe = window.electron.browser.onPanelShortcutAction(action => {
+      if (pendingApprovals.length > 0 || isShortcutInputActive()) return;
+      window.dispatchEvent(new CustomEvent(`cowork:shortcut:${action}`));
+    });
+    return () => {
+      window.removeEventListener('config-updated', syncPanelShortcuts);
+      unsubscribe();
+    };
+  }, [isInitialized, pendingApprovals.length]);
 
   useEffect(() => {
     return () => {

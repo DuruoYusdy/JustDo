@@ -25,6 +25,8 @@ import {
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
   type BrowserPanelOpenTabEvent,
+  type BrowserPanelShortcutAction,
+  type BrowserPanelShortcutSettings,
   type BrowserStatusResult,
   normalizeBrowserPanelOpenTabEvent,
 } from '../shared/browser';
@@ -287,6 +289,15 @@ contextBridge.exposeInMainWorld('electron', {
       };
       ipcRenderer.on(BrowserIpc.PanelOpenTab, handler);
       return () => ipcRenderer.removeListener(BrowserIpc.PanelOpenTab, handler);
+    },
+    setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) =>
+      ipcRenderer.send(BrowserIpc.PanelSetShortcuts, shortcuts),
+    onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, action: unknown) => {
+        if (action === 'terminal' || action === 'browser') callback(action);
+      };
+      ipcRenderer.on(BrowserIpc.PanelShortcutAction, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelShortcutAction, handler);
     },
     listImportSources: (): Promise<BrowserImportSourcesResult> =>
       ipcRenderer.invoke(BrowserIpc.ListImportSources),

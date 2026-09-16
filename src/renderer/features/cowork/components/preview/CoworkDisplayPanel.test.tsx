@@ -35,6 +35,11 @@ describe('CoworkDisplayPanel', () => {
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(screen.getByTestId('persistent-panel-content')).toBeTruthy();
     const panel = screen.getByRole('complementary', { name: 'Content preview' });
+    expect(panel.classList.contains('bg-background')).toBe(true);
+    expect(panel.classList.contains('bg-surface')).toBe(false);
+    expect(
+      panel.querySelector('.cowork-workspace-header')?.classList.contains('bg-background'),
+    ).toBe(true);
     const fullscreenButton = screen.getByRole('button', { name: 'Fill workspace' });
     fireEvent.click(fullscreenButton);
     expect(panel.getAttribute('data-workspace-fullscreen')).toBe('true');

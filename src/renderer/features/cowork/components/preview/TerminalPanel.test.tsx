@@ -4,6 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { defaultConfig } from '@/app/config';
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
 const mocks = vi.hoisted(() => {
@@ -161,6 +163,45 @@ describe('TerminalPanel', () => {
       expect(close).toHaveBeenCalledWith('terminal:test:00000000-0000-4000-8000-000000000001'),
     );
     expect(mocks.terminal.dispose).toHaveBeenCalled();
+  });
+
+  it('handles a configured panel shortcut before xterm consumes it', async () => {
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...defaultConfig,
+      shortcuts: {
+        ...defaultConfig.shortcuts!,
+        terminal: 'Ctrl+K',
+      },
+    });
+    const shortcutListener = vi.fn();
+    window.addEventListener('cowork:shortcut:terminal', shortcutListener);
+
+    const view = render(
+      <TerminalPanel
+        terminalId="terminal:shortcut"
+        cwd={'E:\\workspace\\JustDo'}
+        isObscured={false}
+      />,
+    );
+
+    await waitFor(() => expect(mocks.terminal.attachCustomKeyEventHandler).toHaveBeenCalled());
+    const handlerCalls = mocks.terminal.attachCustomKeyEventHandler.mock.calls;
+    const handler = handlerCalls[handlerCalls.length - 1]?.[0] as (event: KeyboardEvent) => boolean;
+    const event = new KeyboardEvent('keydown', {
+      key: 'k',
+      ctrlKey: true,
+      cancelable: true,
+    });
+    const stopPropagation = vi.spyOn(event, 'stopPropagation');
+
+    expect(handler(event)).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(shortcutListener).toHaveBeenCalledOnce();
+
+    window.removeEventListener('cowork:shortcut:terminal', shortcutListener);
+    view.unmount();
+    await waitFor(() => expect(close).toHaveBeenCalled());
   });
 
   it('reuses the backend PTY across the React StrictMode effect check', async () => {

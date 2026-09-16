@@ -123,6 +123,8 @@ export interface AppConfig {
     search: string;
     settings: string;
     sendMessage: string;
+    terminal: string;
+    browser: string;
     [key: string]: string | undefined;
   };
 }
@@ -195,6 +197,8 @@ export const defaultConfig: AppConfig = {
     search: 'Ctrl+F',
     settings: 'Ctrl+,',
     sendMessage: 'Enter',
+    terminal: 'Ctrl+`',
+    browser: 'Ctrl+T',
   },
 };
 

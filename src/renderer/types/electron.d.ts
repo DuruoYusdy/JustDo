@@ -79,6 +79,8 @@ type BrowserModeSwitchAvailabilityResult =
   import('../../shared/browser').BrowserModeSwitchAvailabilityResult;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
 type BrowserPanelOpenTabEvent = import('../../shared/browser').BrowserPanelOpenTabEvent;
+type BrowserPanelShortcutAction = import('../../shared/browser').BrowserPanelShortcutAction;
+type BrowserPanelShortcutSettings = import('../../shared/browser').BrowserPanelShortcutSettings;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
 type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
 type FilePreviewReadResult = import('../../shared/filePreview').FilePreviewReadResult;
@@ -400,6 +402,8 @@ interface IElectronAPI {
     copyExtensionPairing: () => Promise<BrowserActionResult>;
     testExtensionConnection: () => Promise<BrowserConnectionTestResult>;
     onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => () => void;
+    setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) => void;
+    onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => () => void;
     listImportSources: () => Promise<BrowserImportSourcesResult>;
     importData: (request: BrowserImportRequest) => Promise<BrowserImportResult>;
     listHistory: (query?: string) => Promise<BrowserHistoryListResult>;

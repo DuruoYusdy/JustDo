@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveBrowserGuestShortcut } from '../../shared/browser';
+import {
+  resolveBrowserGuestShortcut,
+  resolveBrowserPanelShortcutAction,
+} from '../../shared/browser';
 import { isAllowedBrowserPanelUrl, isAllowedMainWindowNavigation } from './browserPanelSecurity';
 
 describe('isAllowedBrowserPanelUrl', () => {
@@ -40,7 +43,7 @@ describe('resolveBrowserGuestShortcut', () => {
 
   it('maps standard browser navigation and tab shortcuts', () => {
     expect(resolveBrowserGuestShortcut(input({ key: 'l', control: true }))).toBe('focus-address');
-    expect(resolveBrowserGuestShortcut(input({ key: 't', meta: true }))).toBe('new-tab');
+    expect(resolveBrowserGuestShortcut(input({ key: 't', meta: true }))).toBeNull();
     expect(resolveBrowserGuestShortcut(input({ key: 't', control: true, shift: true }))).toBe(
       'reopen-tab',
     );
@@ -51,6 +54,28 @@ describe('resolveBrowserGuestShortcut', () => {
     expect(resolveBrowserGuestShortcut(input({ key: 'Tab', control: true, shift: true }))).toBe(
       'previous-tab',
     );
+  });
+
+  it('resolves configured app shortcuts before browser-local commands', () => {
+    const shortcutInput = {
+      key: 'k',
+      altKey: false,
+      ctrlKey: true,
+      shiftKey: false,
+      metaKey: false,
+    };
+    expect(
+      resolveBrowserPanelShortcutAction(shortcutInput, {
+        terminal: 'Ctrl+K',
+        browser: 'Ctrl+B',
+      }),
+    ).toBe('terminal');
+    expect(
+      resolveBrowserPanelShortcutAction(
+        { ...shortcutInput, key: 'b' },
+        { terminal: 'Ctrl+K', browser: 'Ctrl+B' },
+      ),
+    ).toBe('browser');
   });
 
   it('does not intercept page typing or modified application shortcuts', () => {

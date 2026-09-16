@@ -278,6 +278,39 @@ describe('BrowserPanel embedded webview', () => {
     expect(document.activeElement).toBe(screen.getByLabelText('Browser address'));
   });
 
+  it('focuses the address bar when a shortcut opens a blank embedded tab', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    render(
+      <BrowserPanelHarness
+        embedded
+        onTabsChange={onTabsChange}
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+      />,
+    );
+
+    act(() => panelHandle?.openTab());
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText('Browser address')),
+    );
+    const tabs = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0] as BrowserPanelTab[];
+    act(() => panelHandle?.closeTab(tabs[tabs.length - 1]!.targetId));
+  });
+
+  it('forwards the configured browser shortcut from panel controls', () => {
+    const handleShortcut = vi.fn();
+    window.addEventListener('cowork:shortcut:browser', handleShortcut);
+    render(<BrowserPanelHarness />);
+
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 't', ctrlKey: true });
+
+    expect(handleShortcut).toHaveBeenCalledOnce();
+    window.removeEventListener('cowork:shortcut:browser', handleShortcut);
+  });
+
   it('does not read guest zoom until the current webview emits dom-ready', async () => {
     const getZoomFactor = vi.fn(() => 1.25);
     defineWebviewMethod('getZoomFactor', getZoomFactor);

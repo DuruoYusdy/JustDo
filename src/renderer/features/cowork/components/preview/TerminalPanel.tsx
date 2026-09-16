@@ -1,5 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 
+import { resolveBrowserPanelShortcutAction } from '@shared/browser';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -7,6 +8,8 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { defaultConfig } from '@/app/config';
+import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
 import TerminalContextMenu from './TerminalContextMenu';
@@ -273,6 +276,22 @@ const TerminalPanel = ({ cwd, isObscured, terminalId }: TerminalPanelProps) => {
 
     terminal.attachCustomKeyEventHandler(event => {
       if (event.type !== 'keydown') return true;
+      const shortcuts = {
+        ...defaultConfig.shortcuts!,
+        ...(configService.getConfig().shortcuts ?? {}),
+      };
+      const shortcutAction = event.repeat
+        ? null
+        : resolveBrowserPanelShortcutAction(event, {
+            terminal: shortcuts.terminal,
+            browser: shortcuts.browser,
+          });
+      if (shortcutAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.dispatchEvent(new CustomEvent(`cowork:shortcut:${shortcutAction}`));
+        return false;
+      }
       const key = event.key.toLowerCase();
       const isMac = window.electron.platform === 'darwin';
       const primaryModifier = isMac ? event.metaKey : event.ctrlKey;

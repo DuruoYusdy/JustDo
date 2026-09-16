@@ -170,6 +170,8 @@ const FILE_DISPLAY_TAB_PREFIX = 'file:';
 const TERMINAL_DISPLAY_TAB_PREFIX = 'terminal:';
 const PLAN_DISPLAY_TAB_ID = 'plan';
 const SUBAGENT_DISPLAY_TAB_ID = 'subagent';
+const MAX_BROWSER_TABS = 8;
+const MAX_TERMINAL_TABS = 16;
 
 const browserDisplayTabId = (targetId: string): string =>
   `${BROWSER_DISPLAY_TAB_PREFIX}${targetId}`;
@@ -1266,12 +1268,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const terminalWorkingDirectory = currentSessionFolderPath || config.workingDirectory.trim();
 
   const handleCreateBrowserTab = useCallback(() => {
+    if (
+      currentSessionId?.startsWith('temp-') ||
+      browserTabs.length + pendingBrowserTabsRef.current.length >= MAX_BROWSER_TABS
+    )
+      return;
     pendingBrowserTabsRef.current.push({});
     setIsDisplayPanelOpen(true);
     setHasBrowserPanelOpened(true);
     setIsBrowserPanelOpen(true);
     setBrowserTabCreationSequence(sequence => sequence + 1);
-  }, []);
+  }, [browserTabs.length, currentSessionId]);
 
   useEffect(() => {
     if (browserTabCreationSequence === 0) return;
@@ -1331,6 +1338,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }, []);
 
   const handleCreateTerminalTab = useCallback(() => {
+    if (terminalTabs.length >= MAX_TERMINAL_TABS) return;
     if (!terminalWorkingDirectory) {
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
@@ -1352,7 +1360,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     ]);
     setPreferredDisplayTabId(id);
     setIsDisplayPanelOpen(true);
-  }, [terminalWorkingDirectory]);
+  }, [terminalTabs.length, terminalWorkingDirectory]);
+
+  useEffect(() => {
+    const handleTerminalShortcut = () => handleCreateTerminalTab();
+    const handleBrowserShortcut = () => handleCreateBrowserTab();
+    window.addEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
+    window.addEventListener('cowork:shortcut:browser', handleBrowserShortcut);
+    return () => {
+      window.removeEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
+      window.removeEventListener('cowork:shortcut:browser', handleBrowserShortcut);
+    };
+  }, [handleCreateBrowserTab, handleCreateTerminalTab]);
 
   const closeTerminalTab = useCallback(
     (id: string) => {
@@ -2248,18 +2267,26 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               tabs={displayTabs}
               emptyState={
                 <DisplayPanelLauncher
-                  browserDisabled={currentSession.id.startsWith('temp-') || browserTabs.length >= 8}
+                  browserDisabled={
+                    currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
+                  }
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateTerminal={handleCreateTerminalTab}
-                  terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+                  terminalDisabled={
+                    !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+                  }
                 />
               }
               actions={
                 <NewDisplayTabMenu
-                  browserDisabled={currentSession.id.startsWith('temp-') || browserTabs.length >= 8}
+                  browserDisabled={
+                    currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
+                  }
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateTerminal={handleCreateTerminalTab}
-                  terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+                  terminalDisabled={
+                    !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+                  }
                 />
               }
             >
@@ -2477,18 +2504,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             tabs={homeDisplayTabs}
             emptyState={
               <DisplayPanelLauncher
-                browserDisabled={browserTabs.length >= 8}
+                browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
                 onCreateBrowser={handleCreateBrowserTab}
                 onCreateTerminal={handleCreateTerminalTab}
-                terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+                terminalDisabled={
+                  !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+                }
               />
             }
             actions={
               <NewDisplayTabMenu
-                browserDisabled={browserTabs.length >= 8}
+                browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
                 onCreateBrowser={handleCreateBrowserTab}
                 onCreateTerminal={handleCreateTerminalTab}
-                terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+                terminalDisabled={
+                  !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+                }
               />
             }
           >

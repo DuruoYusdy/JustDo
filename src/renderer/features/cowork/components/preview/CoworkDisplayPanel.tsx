@@ -127,7 +127,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     <aside
       id="cowork-display-panel"
       ref={panelRef}
-      className={`${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-surface shadow-xl`}
+      className={`${isOpen ? 'flex' : 'hidden'} cowork-display-panel absolute inset-y-0 right-0 z-50 max-w-[calc(100%-2rem)] flex-col border-l border-border bg-background shadow-xl`}
       style={
         isWorkspaceFullscreen
           ? { width: '100%', maxWidth: 'none', position: 'absolute', inset: 0, zIndex: 50 }
@@ -154,7 +154,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         aria-valuenow={Math.round(width)}
       />
 
-      <div className="cowork-workspace-header relative z-20 flex shrink-0 items-stretch border-b border-border bg-surface px-2">
+      <div className="cowork-workspace-header relative z-20 flex shrink-0 items-stretch border-b border-border bg-background px-2">
         <div className="flex h-full min-w-0 flex-1 items-stretch" data-testid="display-tab-cluster">
           <div
             className={`${tabs.length > 0 ? 'flex' : 'hidden'} h-full min-w-0 items-stretch overflow-x-auto overflow-y-hidden`}
@@ -168,7 +168,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
                   <div
                     className={`group flex h-full min-w-0 max-w-48 shrink-0 items-center rounded-t-lg border px-2 transition-colors ${
                       isActive
-                        ? 'border-border border-b-surface bg-surface text-foreground'
+                        ? 'border-border border-b-background bg-background text-foreground'
                         : 'border-transparent text-secondary hover:bg-surface-raised hover:text-foreground'
                     }`}
                     onContextMenu={

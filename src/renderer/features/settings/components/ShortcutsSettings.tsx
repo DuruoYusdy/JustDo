@@ -7,6 +7,8 @@ export type ShortcutSettingsValue = {
   search: string;
   settings: string;
   sendMessage: string;
+  terminal: string;
+  browser: string;
 };
 
 export const shortcutLabelMap: Record<keyof ShortcutSettingsValue, string> = {
@@ -14,6 +16,19 @@ export const shortcutLabelMap: Record<keyof ShortcutSettingsValue, string> = {
   search: 'search',
   settings: 'openSettings',
   sendMessage: 'sendMessageShortcut',
+  terminal: 'shortcutTerminal',
+  browser: 'shortcutBrowser',
+};
+
+export const findShortcutConflict = (
+  shortcuts: ShortcutSettingsValue,
+  key: keyof ShortcutSettingsValue,
+  value: string,
+): keyof ShortcutSettingsValue | undefined => {
+  if (!value) return undefined;
+  return (Object.keys(shortcuts) as (keyof ShortcutSettingsValue)[]).find(
+    candidate => candidate !== key && shortcuts[candidate] === value,
+  );
 };
 
 const isSystemShortcut = (e: KeyboardEvent): boolean => {
@@ -59,12 +74,17 @@ const SEND_SHORTCUT_OPTIONS = [
 
 const isMacPlatform = navigator.platform.includes('Mac');
 
-const ShortcutRecorder: React.FC<{ value: string; onChange: (v: string) => void }> = ({
+const ShortcutRecorder: React.FC<{
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}> = ({
+  label,
   value,
   onChange,
 }) => {
   const [recording, setRecording] = useState(false);
-  const divRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!recording) return;
@@ -89,17 +109,19 @@ const ShortcutRecorder: React.FC<{ value: string; onChange: (v: string) => void 
   useEffect(() => {
     if (!recording) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (divRef.current && !divRef.current.contains(e.target as Node)) setRecording(false);
+      if (buttonRef.current && !buttonRef.current.contains(e.target as Node)) setRecording(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [recording]);
 
   return (
-    <div
-      ref={divRef}
-      tabIndex={0}
+    <button
+      ref={buttonRef}
+      type="button"
       data-shortcut-input="true"
+      aria-label={`${label}: ${value || i18nService.t('shortcutNotSet')}`}
+      aria-pressed={recording}
       onKeyDown={handleKeyDown}
       onClick={() => setRecording(true)}
       onBlur={() => setRecording(false)}
@@ -108,11 +130,11 @@ const ShortcutRecorder: React.FC<{ value: string; onChange: (v: string) => void 
         ${
           recording
             ? 'border-primary ring-1 ring-primary/30 text-secondary'
-            : 'border-border hover:border-primary/50'
+            : 'border-border hover:border-primary/50 focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/30'
         }`}
     >
       {value || i18nService.t('shortcutNotSet')}
-    </div>
+    </button>
   );
 };
 
@@ -140,20 +162,35 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
 
   return (
     <div ref={containerRef} className="relative">
-      <div
+      <button
+        type="button"
+        data-shortcut-input="true"
+        aria-label={`${i18nService.t('sendMessageShortcut')}: ${currentLabel}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
+        onKeyDown={event => {
+          if (event.key === 'Escape') setOpen(false);
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
         className={`w-36 rounded-xl border px-3 py-1.5 text-sm cursor-pointer select-none text-center outline-none transition-colors
           bg-surface-raised text-foreground
           ${
             open
               ? 'border-primary ring-1 ring-primary/30'
-              : 'border-border hover:border-primary/50'
+              : 'border-border hover:border-primary/50 focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/30'
           }`}
       >
         {currentLabel}
-      </div>
+      </button>
       {open && (
-        <div className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border border-border bg-surface-raised shadow-elevated py-1">
+        <div
+          role="menu"
+          className="absolute right-0 mt-1 z-50 min-w-[160px] rounded-xl border border-border bg-surface-raised shadow-elevated py-1"
+        >
           {SEND_SHORTCUT_OPTIONS.map(option => {
             const label = isMacPlatform ? option.labelMac : option.label;
             const isActive = value === option.value;
@@ -161,6 +198,8 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
               <button
                 key={option.value}
                 type="button"
+                role="menuitemradio"
+                aria-checked={isActive}
                 onClick={() => {
                   onChange(option.value);
                   setOpen(false);
@@ -201,6 +240,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
         <div className="flex items-center justify-between">
           <span className="text-sm text-foreground">{i18nService.t('newChat')}</span>
           <ShortcutRecorder
+            label={i18nService.t('newChat')}
             value={shortcuts.newChat}
             onChange={v => onShortcutChange('newChat', v)}
           />
@@ -208,6 +248,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
         <div className="flex items-center justify-between">
           <span className="text-sm text-foreground">{i18nService.t('search')}</span>
           <ShortcutRecorder
+            label={i18nService.t('search')}
             value={shortcuts.search}
             onChange={v => onShortcutChange('search', v)}
           />
@@ -215,6 +256,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
         <div className="flex items-center justify-between">
           <span className="text-sm text-foreground">{i18nService.t('openSettings')}</span>
           <ShortcutRecorder
+            label={i18nService.t('openSettings')}
             value={shortcuts.settings}
             onChange={v => onShortcutChange('settings', v)}
           />
@@ -226,6 +268,22 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
           <SendShortcutSelect
             value={shortcuts.sendMessage}
             onChange={v => onShortcutChange('sendMessage', v)}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-foreground">{i18nService.t('shortcutTerminal')}</span>
+          <ShortcutRecorder
+            label={i18nService.t('shortcutTerminal')}
+            value={shortcuts.terminal}
+            onChange={value => onShortcutChange('terminal', value)}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-foreground">{i18nService.t('shortcutBrowser')}</span>
+          <ShortcutRecorder
+            label={i18nService.t('shortcutBrowser')}
+            value={shortcuts.browser}
+            onChange={value => onShortcutChange('browser', value)}
           />
         </div>
       </div>

@@ -17,7 +17,10 @@ import {
   BROWSER_PANEL_PARTITION,
   type BrowserDownloadSettings,
   BrowserIpc,
+  DEFAULT_BROWSER_PANEL_SHORTCUTS,
+  normalizeBrowserPanelShortcutSettings,
   resolveBrowserGuestShortcut,
+  resolveBrowserPanelShortcutAction,
 } from '../../shared/browser';
 import { MediaCaptureIpc } from '../../shared/mediaCapture';
 import {
@@ -140,6 +143,20 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   const windowSession = mainWindow.webContents.session;
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
   const localPreviewScopesByGuestId = new Map<number, string>();
+  let browserPanelShortcuts = DEFAULT_BROWSER_PANEL_SHORTCUTS;
+  const handleBrowserPanelShortcuts = (event: Electron.IpcMainEvent, value: unknown) => {
+    if (
+      event.sender !== mainWindow.webContents ||
+      event.senderFrame !== mainWindow.webContents.mainFrame
+    )
+      return;
+    const normalized = normalizeBrowserPanelShortcutSettings(value);
+    if (normalized) browserPanelShortcuts = normalized;
+  };
+  ipcMain.on(BrowserIpc.PanelSetShortcuts, handleBrowserPanelShortcuts);
+  mainWindow.once('closed', () => {
+    ipcMain.off(BrowserIpc.PanelSetShortcuts, handleBrowserPanelShortcuts);
+  });
   browserPanelSession.setPermissionCheckHandler(() => false);
   browserPanelSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
@@ -261,6 +278,24 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       return { action: 'deny' };
     });
     guestContents.on('before-input-event', (event, input) => {
+      const shortcutAction =
+        input.type === 'keyDown' && !input.isAutoRepeat
+          ? resolveBrowserPanelShortcutAction(
+              {
+                key: input.key,
+                altKey: input.alt,
+                ctrlKey: input.control,
+                shiftKey: input.shift,
+                metaKey: input.meta,
+              },
+              browserPanelShortcuts,
+            )
+          : null;
+      if (shortcutAction) {
+        event.preventDefault();
+        mainWindow.webContents.send(BrowserIpc.PanelShortcutAction, shortcutAction);
+        return;
+      }
       const command = resolveBrowserGuestShortcut(input);
       if (!command) return;
       event.preventDefault();

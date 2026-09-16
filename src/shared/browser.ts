@@ -1,3 +1,5 @@
+import { matchesShortcut, type ShortcutInput } from './shortcuts';
+
 export const BrowserIpc = {
   GetStatus: 'browser:getStatus',
   CanSetMode: 'browser:canSetMode',
@@ -10,6 +12,8 @@ export const BrowserIpc = {
   TestExtensionConnection: 'browser:testExtensionConnection',
   CreateLocalHtmlPreview: 'browser:createLocalHtmlPreview',
   PanelOpenTab: 'browser:panelOpenTab',
+  PanelSetShortcuts: 'browser:panelSetShortcuts',
+  PanelShortcutAction: 'browser:panelShortcutAction',
   ListImportSources: 'browser:listImportSources',
   ImportData: 'browser:importData',
   ListHistory: 'browser:listHistory',
@@ -23,6 +27,36 @@ export const BrowserIpc = {
   GetClearDataSummary: 'browser:getClearDataSummary',
   ClearBrowsingData: 'browser:clearBrowsingData',
 } as const;
+
+export type BrowserPanelShortcutAction = 'terminal' | 'browser';
+
+export type BrowserPanelShortcutSettings = Record<BrowserPanelShortcutAction, string>;
+
+export const DEFAULT_BROWSER_PANEL_SHORTCUTS: BrowserPanelShortcutSettings = {
+  terminal: 'Ctrl+`',
+  browser: 'Ctrl+T',
+};
+
+export const normalizeBrowserPanelShortcutSettings = (
+  value: unknown,
+): BrowserPanelShortcutSettings | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.terminal !== 'string' || typeof record.browser !== 'string') return null;
+  return {
+    terminal: record.terminal.slice(0, 80),
+    browser: record.browser.slice(0, 80),
+  };
+};
+
+export const resolveBrowserPanelShortcutAction = (
+  input: ShortcutInput,
+  shortcuts: BrowserPanelShortcutSettings,
+): BrowserPanelShortcutAction | null => {
+  if (matchesShortcut(input, shortcuts.terminal)) return 'terminal';
+  if (matchesShortcut(input, shortcuts.browser)) return 'browser';
+  return null;
+};
 
 export type BrowserLocalHtmlPreviewResult =
   | {
@@ -97,7 +131,7 @@ export const resolveBrowserGuestShortcut = (
   const primary = input.control || input.meta;
   if (primary && !input.alt) {
     if (key === 'l') return 'focus-address';
-    if (key === 't') return input.shift ? 'reopen-tab' : 'new-tab';
+    if (key === 't' && input.shift) return 'reopen-tab';
     if (key === 'w') return 'close-tab';
     if (key === 'r') return 'reload';
     if (key === 'tab') return input.shift ? 'previous-tab' : 'next-tab';

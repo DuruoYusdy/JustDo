@@ -90,6 +90,7 @@ import {
 } from '@/features/settings/components/nonLanguageModelConfig';
 import type { NonLanguageModelKind } from '@/features/settings/components/NonLanguageModelSettings';
 import ShortcutsSettings, {
+  findShortcutConflict,
   shortcutLabelMap,
   type ShortcutSettingsValue,
 } from '@/features/settings/components/ShortcutsSettings';
@@ -580,6 +581,8 @@ const Settings: React.FC<SettingsProps> = ({
     search: 'Ctrl+F',
     settings: 'Ctrl+,',
     sendMessage: defaultConfig.shortcuts!.sendMessage,
+    terminal: defaultConfig.shortcuts!.terminal,
+    browser: defaultConfig.shortcuts!.browser,
   });
 
   // State for model editing
@@ -1488,9 +1491,7 @@ const Settings: React.FC<SettingsProps> = ({
   // 快捷键更新处理
   const handleShortcutChange = (key: keyof ShortcutSettingsValue, value: string) => {
     // Check for conflicts with other shortcuts
-    const conflictKey = Object.keys(shortcuts).find(
-      k => k !== key && shortcuts[k as keyof typeof shortcuts] === value,
-    );
+    const conflictKey = findShortcutConflict(shortcuts, key, value);
     if (conflictKey) {
       const conflictLabel = i18nService.t(
         shortcutLabelMap[conflictKey as keyof ShortcutSettingsValue] ?? conflictKey,

@@ -19,8 +19,14 @@ describe('DisplayPanelLauncher', () => {
       <DisplayPanelLauncher onCreateBrowser={createBrowser} onCreateTerminal={createTerminal} />,
     );
 
+    expect(screen.getByRole('button', { name: 'Browser' }).parentElement?.classList).toContain(
+      'bg-background',
+    );
+
     expect(screen.queryByRole('button', { name: 'File' })).toBeNull();
     const browserButton = screen.getByRole('button', { name: 'Browser' });
+    expect(browserButton.classList.contains('max-w-72')).toBe(true);
+    expect(browserButton.classList.contains('mx-auto')).toBe(true);
     expect(browserButton.parentElement?.classList.contains('justify-center')).toBe(true);
     fireEvent.click(browserButton);
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }));

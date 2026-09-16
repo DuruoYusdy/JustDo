@@ -32,6 +32,7 @@ import {
   normalizeBrowserSearchEngine,
   resolveBrowserAddressInput,
   resolveBrowserGuestShortcut,
+  resolveBrowserPanelShortcutAction,
 } from '@shared/browser';
 import React, {
   forwardRef,
@@ -42,6 +43,7 @@ import React, {
   useState,
 } from 'react';
 
+import { defaultConfig } from '@/app/config';
 import {
   browserAnnotationDataBytes,
   buildBrowserAnnotationDraft,
@@ -502,6 +504,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       onActiveTargetChange(tab.targetId);
       setUrlDraft(getBrowserTabAddress(tab));
       clearAnnotations();
+      if (tab.url === 'about:blank') {
+        requestAnimationFrame(() => {
+          addressInputRef.current?.focus();
+          addressInputRef.current?.select();
+        });
+      }
     },
     [clearAnnotations, onActiveTargetChange],
   );
@@ -1448,6 +1456,22 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       aria-label={i18nService.t('browserPanelTitle')}
       aria-hidden={!isOpen}
       onKeyDownCapture={event => {
+        const shortcuts = {
+          ...defaultConfig.shortcuts!,
+          ...(configService.getConfig().shortcuts ?? {}),
+        };
+        const shortcutAction = event.repeat
+          ? null
+          : resolveBrowserPanelShortcutAction(event.nativeEvent, {
+              terminal: shortcuts.terminal,
+              browser: shortcuts.browser,
+            });
+        if (shortcutAction) {
+          event.preventDefault();
+          event.stopPropagation();
+          window.dispatchEvent(new CustomEvent(`cowork:shortcut:${shortcutAction}`));
+          return;
+        }
         const command = resolveBrowserGuestShortcut({
           type: 'keyDown',
           key: event.key,

@@ -17,6 +17,13 @@ test('defaultConfig: uses the isolated browser for first launch', () => {
   expect(defaultConfig.browserMode).toBe(BrowserMode.Isolated);
 });
 
+test('defaultConfig: matches the Codex terminal and browser shortcuts', () => {
+  expect(defaultConfig.shortcuts).toMatchObject({
+    terminal: 'Ctrl+`',
+    browser: 'Ctrl+T',
+  });
+});
+
 test('isCustomProvider: custom_0 is custom', () => {
   expect(isCustomProvider('custom_0')).toBe(true);
 });
