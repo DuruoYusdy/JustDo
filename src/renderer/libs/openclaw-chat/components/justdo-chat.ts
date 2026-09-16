@@ -109,6 +109,7 @@ type PacedTerminalProjection = {
 @customElement('justdo-chat')
 export class JustDoChatElement extends LitElement {
   private readonly streamingThinkingScrollHeights = new WeakMap<HTMLElement, number>();
+  private readonly codeCopyFeedbackTimers = new WeakMap<HTMLButtonElement, number>();
 
   // ─── Properties ─────────────────────────────────────────────────────────
 
@@ -1076,9 +1077,10 @@ export class JustDoChatElement extends LitElement {
       }
 
       .markdown-content {
-        --code-block-bg: var(--justdo-chat-code-light-bg, #f0f2f5);
-        --code-block-header-bg: var(--justdo-chat-code-light-bg, #f0f2f5);
-        --code-block-text: var(--justdo-chat-code-text, #24292e);
+        --code-block-bg: var(--justdo-chat-code-light-bg, #f6f8fa);
+        --code-block-border: #d0d7de;
+        --code-block-text: var(--justdo-chat-code-text, #1f2328);
+        --code-block-muted: #656d76;
         min-width: 0;
         max-width: 100%;
         overflow-wrap: anywhere;
@@ -1210,8 +1212,8 @@ export class JustDoChatElement extends LitElement {
         min-width: 0;
         background: var(--code-block-bg);
         color: var(--code-block-text);
-        padding: 12px;
-        border-radius: 8px;
+        padding: 16px;
+        border-radius: 6px;
         max-width: 100%;
         box-sizing: border-box;
         overflow-x: auto;
@@ -1219,20 +1221,23 @@ export class JustDoChatElement extends LitElement {
         white-space: var(--justdo-code-white-space, pre);
         overflow-wrap: var(--justdo-code-overflow-wrap, normal);
         word-break: normal;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.5;
-        margin: 4px 0;
+        margin: 8px 0;
+        tab-size: 4;
       }
 
       .markdown-content code {
-        font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+        font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', Consolas, monospace;
         font-size: 0.9em;
       }
 
       .markdown-content :not(pre) > code {
-        background: var(--justdo-chat-inline-code-bg, rgba(0, 0, 0, 0.06));
-        padding: 2px 6px;
-        border-radius: 4px;
+        padding: 0.2em 0.4em;
+        color: var(--code-block-text);
+        background: var(--justdo-chat-inline-code-bg, rgba(175, 184, 193, 0.2));
+        border: 0;
+        border-radius: 6px;
       }
 
       .code-block-wrapper {
@@ -1240,24 +1245,37 @@ export class JustDoChatElement extends LitElement {
         width: 100%;
         min-width: 0;
         max-width: 100%;
-        margin: 4px 0;
-        overflow: hidden;
+        margin: 8px 0;
+        overflow: visible;
         background: var(--code-block-bg);
-        border-radius: 8px;
+        border: 0;
+        border-radius: 6px;
+        box-shadow: none;
         box-sizing: border-box;
       }
 
       .code-block-header {
-        position: relative;
-        z-index: 3;
+        position: absolute;
+        z-index: 4;
+        top: 7px;
+        right: 7px;
         display: flex;
         align-items: center;
+        padding: 0;
+        background: transparent;
+        border: 0;
+      }
+
+      .code-block-wrapper:not(.mermaid-block):has(.code-block-lang) .code-block-header {
+        inset: 0 0 auto;
         justify-content: space-between;
-        padding: 6px 12px;
-        min-width: 0;
-        background: var(--code-block-header-bg);
-        border-radius: 8px 8px 0 0;
-        font-size: 12px;
+        min-height: 36px;
+        padding: 0 8px 0 16px;
+        border-bottom: 1px solid var(--code-block-border);
+      }
+
+      .code-block-wrapper:not(.mermaid-block):has(.code-block-lang) pre {
+        padding-top: 52px;
       }
 
       .code-block-wrapper pre {
@@ -1265,7 +1283,7 @@ export class JustDoChatElement extends LitElement {
         margin-top: 0;
         margin-bottom: 0;
         border: 0;
-        border-radius: 0 0 8px 8px;
+        border-radius: 6px;
       }
 
       .code-block-wrapper pre > code {
@@ -1273,6 +1291,7 @@ export class JustDoChatElement extends LitElement {
         width: var(--justdo-code-width, max-content);
         min-width: 100%;
         box-sizing: border-box;
+        font-size: inherit;
       }
 
       .markdown-content pre.markdown-box-drawing-code,
@@ -1283,29 +1302,72 @@ export class JustDoChatElement extends LitElement {
       }
 
       .code-block-lang {
-        color: var(--justdo-chat-text-secondary, #9ca3af);
-        font-size: 11px;
-        text-transform: uppercase;
+        overflow: hidden;
+        color: var(--code-block-muted);
+        font-family: 'SFMono-Regular', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .code-block-copy {
         position: relative;
         z-index: 4;
-        background: none;
-        border: 1px solid var(--justdo-chat-border, rgba(255, 255, 255, 0.15));
-        color: var(--justdo-chat-text-secondary, #9ca3af);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        background: var(--code-block-bg);
+        border: 1px solid var(--code-block-border);
+        color: var(--code-block-muted);
         cursor: pointer;
         flex: 0 0 auto;
         margin-left: auto;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 11px;
-        transition: all 0.15s;
+        padding: 0;
+        border-radius: 6px;
+        font-size: 0;
+        opacity: 0;
+        transition:
+          color 140ms ease,
+          background 140ms ease,
+          border-color 140ms ease,
+          opacity 140ms ease;
+      }
+
+      .code-block-copy::before {
+        width: 16px;
+        height: 16px;
+        content: '';
+        background: currentColor;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 6.75C0 5.784.784 5 1.75 5h6.5C9.216 5 10 5.784 10 6.75v7.5A1.75 1.75 0 0 1 8.25 16h-6.5A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h6.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z'/%3E%3Cpath d='M6 1.75C6 .784 6.784 0 7.75 0h6.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11H12.5V9.5h1.75a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25h-6.5a.25.25 0 0 0-.25.25V3H6Z'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
+
+      .code-block-wrapper:hover .code-block-copy,
+      .code-block-copy:focus-visible,
+      .code-block-copy.copied {
+        opacity: 1;
       }
 
       .code-block-copy:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: #fff;
+        color: var(--code-block-text);
+        background: #f3f4f6;
+        border-color: #8c959f;
+      }
+
+      .code-block-copy:focus-visible {
+        outline: 2px solid #0969da;
+        outline-offset: 2px;
+      }
+
+      .code-block-copy.copied {
+        color: #1a7f37;
+      }
+
+      .code-block-copy.copied::before {
+        mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M13.78 4.22a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0l-3.25-3.25a.75.75 0 0 1 1.06-1.06L7 9.94l5.72-5.72a.75.75 0 0 1 1.06 0Z'/%3E%3C/svg%3E");
       }
 
       .assistant-canvas {
@@ -1710,6 +1772,9 @@ export class JustDoChatElement extends LitElement {
       }
 
       .mermaid-block .code-block-header {
+        position: relative;
+        inset: auto;
+        justify-content: space-between;
         min-height: 20px;
         padding: 2px 8px;
         color: var(--justdo-chat-text-secondary, #6b7280);
@@ -1869,12 +1934,19 @@ export class JustDoChatElement extends LitElement {
       :host(.dark) .markdown-content,
       :host([data-theme='dark']) .markdown-content {
         --code-block-bg: #161b22;
-        --code-block-header-bg: #161b22;
-        --code-block-text: #d4d4d4;
+        --code-block-border: #30363d;
+        --code-block-text: #e6edf3;
+        --code-block-muted: #8b949e;
+      }
+
+      :host(.dark) .code-block-copy:hover,
+      :host([data-theme='dark']) .code-block-copy:hover {
+        background: #21262d;
+        border-color: #8b949e;
       }
       :host(.dark) .hljs-comment,
       :host([data-theme='dark']) .hljs-comment {
-        color: #6a737d;
+        color: #7d8998;
       }
       :host(.dark) .hljs-keyword,
       :host([data-theme='dark']) .hljs-keyword {
@@ -1968,6 +2040,18 @@ export class JustDoChatElement extends LitElement {
       :host(.dark) .markdown-content pre {
         background: var(--code-block-bg);
         color: var(--code-block-text);
+      }
+
+      :host(.dark) .markdown-content :not(pre) > code,
+      :host([data-theme='dark']) .markdown-content :not(pre) > code {
+        background: rgba(110, 118, 129, 0.4);
+      }
+
+      :host(.dark) .hljs-comment,
+      :host(.dark) .hljs-quote,
+      :host([data-theme='dark']) .hljs-comment,
+      :host([data-theme='dark']) .hljs-quote {
+        color: #8b949e;
       }
 
       /* ── Thinking Block ─────────────────────────────────────────────── */
@@ -3492,10 +3576,20 @@ export class JustDoChatElement extends LitElement {
   private async copyCodeBlock(button: HTMLButtonElement, code: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(code);
+      const activeTimer = this.codeCopyFeedbackTimers.get(button);
+      if (activeTimer !== undefined) window.clearTimeout(activeTimer);
+      const copiedLabel = i18nService.t('copied');
+      const copyLabel = i18nService.t('copyToClipboard');
       button.classList.add('copied');
-      window.setTimeout(() => {
+      button.setAttribute('aria-label', copiedLabel);
+      button.title = copiedLabel;
+      const timer = window.setTimeout(() => {
         button.classList.remove('copied');
+        button.setAttribute('aria-label', copyLabel);
+        button.title = copyLabel;
+        this.codeCopyFeedbackTimers.delete(button);
       }, 1500);
+      this.codeCopyFeedbackTimers.set(button, timer);
     } catch (error) {
       console.error('[JustDoChat] Failed to copy code block', error);
     }

@@ -55,7 +55,10 @@ describe('PreviewMarkdown', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'copyToClipboard' }));
+    const copyButton = screen.getByRole('button', { name: 'copyToClipboard' });
+    fireEvent.click(copyButton);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('const value = 1'));
+    expect(copyButton.classList.contains('copied')).toBe(true);
+    expect(copyButton.getAttribute('aria-label')).toBe('copied');
   });
 });

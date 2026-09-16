@@ -373,8 +373,22 @@ describe('Code fence syntax highlighting', () => {
   ])('highlights an explicitly labelled %s fence', (language, source, highlightClass) => {
     const html = md.render(`\`\`\`${language}\n${source}\n\`\`\``);
 
+    expect(html).toContain(`<span class="code-block-lang">${language}</span>`);
     expect(html).toContain(`class="hljs language-${language === 'c++' ? 'cpp' : language}`);
     expect(html).toContain(highlightClass);
+  });
+
+  test('does not show a language label for an unlabelled fence', () => {
+    const html = md.render('```\nplain text\n```');
+
+    expect(html).not.toContain('code-block-lang');
+  });
+
+  test('renders an explicitly labelled language name in lowercase', () => {
+    const html = md.render('```TypeScript\nconst answer = 42;\n```');
+
+    expect(html).toContain('<span class="code-block-lang">typescript</span>');
+    expect(html).not.toContain('<span class="code-block-lang">TypeScript</span>');
   });
 
   test('keeps unknown languages escaped and unhighlighted', () => {

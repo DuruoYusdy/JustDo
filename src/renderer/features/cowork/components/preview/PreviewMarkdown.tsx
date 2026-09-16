@@ -17,6 +17,7 @@ const COPY_DONE_ICON =
 
 const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
   const rootRef = useRef<HTMLElement>(null);
+  const copyFeedbackTimersRef = useRef(new WeakMap<HTMLButtonElement, number>());
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
 
   useEffect(() => {
@@ -85,12 +86,24 @@ const PreviewMarkdown = ({ html, mermaidIdPrefix }: PreviewMarkdownProps) => {
       await navigator.clipboard.writeText(code);
       const idleIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__idle');
       const doneIcon = copyButton.querySelector<HTMLElement>('.code-block-copy__done');
+      const activeTimer = copyFeedbackTimersRef.current.get(copyButton);
+      if (activeTimer !== undefined) window.clearTimeout(activeTimer);
+      const copiedLabel = i18nService.t('copied');
+      const copyLabel = i18nService.t('copyToClipboard');
       if (idleIcon) idleIcon.style.display = 'none';
       if (doneIcon) doneIcon.style.display = 'inline-flex';
-      window.setTimeout(() => {
+      copyButton.classList.add('copied');
+      copyButton.setAttribute('aria-label', copiedLabel);
+      copyButton.title = copiedLabel;
+      const timer = window.setTimeout(() => {
         if (idleIcon) idleIcon.style.display = 'inline-flex';
         if (doneIcon) doneIcon.style.display = 'none';
+        copyButton.classList.remove('copied');
+        copyButton.setAttribute('aria-label', copyLabel);
+        copyButton.title = copyLabel;
+        copyFeedbackTimersRef.current.delete(copyButton);
       }, COPY_FEEDBACK_DURATION_MS);
+      copyFeedbackTimersRef.current.set(copyButton, timer);
       return;
     }
 

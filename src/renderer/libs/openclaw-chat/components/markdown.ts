@@ -41,7 +41,6 @@ import { i18nService } from '@/services/i18n';
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const MARKDOWN_RENDER_CACHE_VERSION = 'markdown-render-v13';
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
 const CJK_SCRIPT_START_RE =
   /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
@@ -698,17 +697,22 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
     return `<div class="code-block-wrapper mermaid-block">${header}<div class="mermaid-preview" aria-live="polite"></div><div class="mermaid-source" hidden>${codeBlock}</div></div>`;
   }
 
-  const langLabel = lang ? `<span class="code-block-lang">${escapeHtml(lang)}</span>` : '';
   const attrSafe = escapeHtml(text);
   const copyLabel = escapeHtml(i18nService.t('copy'));
   const copiedLabel = escapeHtml(i18nService.t('copied'));
   const copyAriaLabel = escapeHtml(i18nService.t('copyToClipboard'));
   const copyBtn = `<button type="button" class="code-block-copy" data-code="${attrSafe}" aria-label="${copyAriaLabel}"><span class="code-block-copy__idle">${copyLabel}</span><span class="code-block-copy__done">${copiedLabel}</span></button>`;
+  const langLabel = lang
+    ? `<span class="code-block-lang">${escapeHtml(lang.toLowerCase())}</span>`
+    : '';
   const header = `<div class="code-block-header">${langLabel}${copyBtn}</div>`;
 
-  const wrapperClass = isMarkdownCodeBlock
-    ? 'code-block-wrapper code-block-wrapper--markdown'
-    : 'code-block-wrapper';
+  const wrapperClass = [
+    'code-block-wrapper',
+    isMarkdownCodeBlock ? 'code-block-wrapper--markdown' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return `<div class="${wrapperClass}">${header}${codeBlock}</div>`;
 };
 
@@ -802,7 +806,7 @@ export function toSanitizedMarkdownHtml(text: string, options: MarkdownRenderOpt
   const activeSanitizeOptions = options.allowProgressElement
     ? progressCardSanitizeOptions
     : sanitizeOptions;
-  const cacheKey = `${MARKDOWN_RENDER_CACHE_VERSION}:${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${i18nService.getLanguage()}:${normalizedInput}`;
+  const cacheKey = `${parseLimit}:${frontmatterMode}:${sanitizeMode}:${htmlCommentMode}:${i18nService.getLanguage()}:${normalizedInput}`;
   if (input.length <= MARKDOWN_CACHE_MAX_CHARS) {
     const cached = getCachedMarkdown(cacheKey);
     if (cached !== null) return cached;
