@@ -603,6 +603,9 @@ interface IElectronAPI {
         error?: string;
       }>;
       getToken: () => Promise<{ success: boolean; token?: string; error?: string }>;
+      readAssistantMediaDataUrl: (
+        request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaRequest,
+      ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaResult>;
       setPort: (port: number) => Promise<{
         success: boolean;
         error?: string;

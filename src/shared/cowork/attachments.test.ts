@@ -1,16 +1,17 @@
 import { describe, expect, test } from 'vitest';
 
-import {
-  parseCoworkAttachments,
-  toAttachmentDataUrl,
-  toGatewayAttachment,
-} from './attachments';
+import { parseCoworkAttachments, toAttachmentDataUrl, toGatewayAttachment } from './attachments';
 
 describe('cowork attachment helpers', () => {
   test('maps images and files to their gateway attachment shapes', () => {
     expect(
       toGatewayAttachment({ name: 'photo.png', mimeType: 'image/png', base64Data: 'abc' }),
-    ).toEqual({ type: 'image', mimeType: 'image/png', content: 'abc' });
+    ).toEqual({
+      type: 'image',
+      mimeType: 'image/png',
+      content: 'abc',
+      fileName: 'photo.png',
+    });
     expect(
       toGatewayAttachment({ name: 'notes.txt', mimeType: 'text/plain', base64Data: 'xyz' }),
     ).toEqual({
@@ -43,5 +44,4 @@ describe('cowork attachment helpers', () => {
       toAttachmentDataUrl({ name: 'photo.png', mimeType: 'image/png', base64Data: 'abc' }),
     ).toBe('data:image/png;base64,abc');
   });
-
 });

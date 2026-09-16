@@ -902,12 +902,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             const attachmentIsImage = isImageAttachment(attachment);
             let dataUrl = attachment.dataUrl;
 
-            if (
-              attachmentIsImage &&
-              modelSupportsImage &&
-              !dataUrl &&
-              !attachment.path.startsWith('inline:')
-            ) {
+            if (attachmentIsImage && !dataUrl && !attachment.path.startsWith('inline:')) {
               try {
                 const result = await window.electron.dialog.readFileAsDataUrl(attachment.path);
                 dataUrl = result.success ? result.dataUrl : undefined;
@@ -927,7 +922,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             }
 
             const extracted = extractBase64FromDataUrl(dataUrl);
-            if (extracted && (!attachmentIsImage || modelSupportsImage)) {
+            if (extracted) {
               attachmentPayloads.push({
                 name: attachment.name,
                 mimeType: extracted.mimeType,
@@ -935,20 +930,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               });
             } else if (!attachment.path.startsWith('inline:')) {
               mediaDirectivePaths.push(attachment.path);
-            } else if (extracted && attachmentIsImage) {
-              const staged = await window.electron.dialog.saveInlineFile({
-                dataBase64: extracted.base64Data,
-                fileName: attachment.name,
-                mimeType: extracted.mimeType,
-                cwd: workingDirectory,
-              });
-              if (staged.success && staged.path) {
-                mediaDirectivePaths.push(staged.path);
-              } else {
-                attachmentPreparationFailed = true;
-                imagePreparationFailed = true;
-                console.error('Failed to stage image for non-vision model:', staged.error);
-              }
             } else if (!extracted) {
               attachmentPreparationFailed = true;
               imagePreparationFailed ||= attachmentIsImage;
@@ -958,7 +939,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           const rawSlashCommand = trimmedValue.startsWith('/');
           const submittedBrowserAnnotations = rawSlashCommand ? [] : browserAnnotations;
           const userAttachmentPayloadCount = attachmentPayloads.length;
-          if (modelSupportsImage && !resumeWithInput) {
+          if (!resumeWithInput) {
             for (const annotation of submittedBrowserAnnotations) {
               const extracted = extractBase64FromDataUrl(annotation.dataUrl);
               if (!extracted) {
@@ -1452,8 +1433,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }, [draftKey, hasImageAttachment, modelSupportsImage]);
 
     useEffect(() => {
-      if (!modelSupportsImage) return;
-
       const imagesToHydrate = attachments.filter(
         attachment =>
           !attachment.dataUrl &&
@@ -1492,7 +1471,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return () => {
         cancelled = true;
       };
-    }, [attachments, dispatch, draftKey, modelSupportsImage]);
+    }, [attachments, dispatch, draftKey]);
 
     const contextUsageDisplay = useMemo(() => {
       if (!contextUsage || !sessionId) return null;
@@ -1646,60 +1625,35 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           const fileIsImage = nativePath ? isImagePath(nativePath) : isImageMimeType(file.type);
 
           if (fileIsImage) {
-            if (modelSupportsImage) {
-              // For images on vision-capable models, read as data URL
-              if (nativePath) {
-                try {
-                  const result = await window.electron.dialog.readFileAsDataUrl(nativePath);
-                  if (result.success && result.dataUrl) {
-                    addAttachment(nativePath, { isImage: true, dataUrl: result.dataUrl });
-                    continue;
-                  }
-                } catch (error) {
-                  console.error('Failed to read image as data URL:', error);
+            hasImageWithoutVision ||= !modelSupportsImage;
+            if (nativePath) {
+              try {
+                const result = await window.electron.dialog.readFileAsDataUrl(nativePath);
+                if (result.success && result.dataUrl) {
+                  addAttachment(nativePath, { isImage: true, dataUrl: result.dataUrl });
+                  continue;
                 }
-                // Fallback: add as regular file attachment
-                addAttachment(nativePath);
-              } else {
-                // No native path (clipboard/drag from browser):
-                // 1. Read as dataUrl for preview + base64 vision
-                // 2. Save to disk so the agent can access the file in later turns
-                let dataUrl: string | null = null;
-                try {
-                  dataUrl = await fileToDataUrl(file);
-                  console.log('[CoworkPromptInput] handleIncomingFiles: clipboard image dataUrl', {
-                    success: !!dataUrl,
-                    length: dataUrl?.length ?? 0,
-                    mimeType: file.type,
-                  });
-                } catch (error) {
-                  console.error('Failed to read clipboard image as data URL:', error);
-                }
-
-                const stagedPath = await saveInlineFile(file);
-                console.log('[CoworkPromptInput] handleIncomingFiles: saveInlineFile result', {
-                  stagedPath,
-                  hasDataUrl: !!dataUrl,
-                });
-
-                if (stagedPath) {
-                  addAttachment(stagedPath, {
-                    isImage: true,
-                    dataUrl: dataUrl ?? undefined,
-                  });
-                } else if (dataUrl) {
-                  console.warn('Clipboard image saved only in memory (disk save failed)');
-                  addImageAttachmentFromDataUrl(file.name, dataUrl);
-                } else {
-                  console.error(
-                    'Failed to process clipboard image: both dataUrl and disk save failed',
-                  );
-                }
+              } catch (error) {
+                console.error('Failed to read image as data URL:', error);
               }
+              addAttachment(nativePath, { isImage: true });
               continue;
             }
-            // Model doesn't support image input — add as file path and show hint
-            hasImageWithoutVision = true;
+            let dataUrl: string | null = null;
+            try {
+              dataUrl = await fileToDataUrl(file);
+            } catch (error) {
+              console.error('Failed to read clipboard image as data URL:', error);
+            }
+            const stagedPath = await saveInlineFile(file);
+            if (stagedPath) {
+              addAttachment(stagedPath, { isImage: true, dataUrl: dataUrl ?? undefined });
+            } else if (dataUrl) {
+              addImageAttachmentFromDataUrl(file.name, dataUrl);
+            } else {
+              console.error('Failed to process clipboard image');
+            }
+            continue;
           }
 
           // Non-image file or model doesn't support images: use original flow
@@ -1740,19 +1694,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         let hasImageWithoutVision = false;
         for (const filePath of result.paths) {
           if (isImagePath(filePath)) {
-            if (modelSupportsImage) {
-              try {
-                const readResult = await window.electron.dialog.readFileAsDataUrl(filePath);
-                if (readResult.success && readResult.dataUrl) {
-                  addAttachment(filePath, { isImage: true, dataUrl: readResult.dataUrl });
-                  continue;
-                }
-              } catch (error) {
-                console.error('Failed to read image as data URL:', error);
+            hasImageWithoutVision ||= !modelSupportsImage;
+            try {
+              const readResult = await window.electron.dialog.readFileAsDataUrl(filePath);
+              if (readResult.success && readResult.dataUrl) {
+                addAttachment(filePath, { isImage: true, dataUrl: readResult.dataUrl });
+                continue;
               }
-            } else {
-              hasImageWithoutVision = true;
+            } catch (error) {
+              console.error('Failed to read image as data URL:', error);
             }
+            addAttachment(filePath, { isImage: true });
+            continue;
           }
           addAttachment(filePath);
         }
@@ -2447,16 +2400,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 key={annotation.id}
                 annotation={annotation}
                 includesImage={
-                  modelSupportsImage &&
-                  !browserAnnotationsUseGoalTextChannel &&
-                  !browserAnnotationsDeferredForGoal
+                  !browserAnnotationsUseGoalTextChannel && !browserAnnotationsDeferredForGoal
                 }
                 textOnlyMessage={
                   browserAnnotationsDeferredForGoal
                     ? i18nService.t('browserAnnotationGoalDeferred')
                     : browserAnnotationsUseGoalTextChannel
-                    ? i18nService.t('browserAnnotationGoalTextOnly')
-                    : undefined
+                      ? i18nService.t('browserAnnotationGoalTextOnly')
+                      : undefined
                 }
                 onRemove={() =>
                   dispatch(removeDraftBrowserAnnotation({ draftKey, annotationId: annotation.id }))

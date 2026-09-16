@@ -89,6 +89,10 @@ import {
   OpenClawApprovalIpc,
 } from '../shared/openclaw/approvals';
 import {
+  OpenClawAssistantMediaIpc,
+  type OpenClawAssistantMediaRequest,
+} from '../shared/openclaw/assistantMedia';
+import {
   CoworkInteractionIpc,
   type ExtensionChangedEvent,
   type ExtensionDeleteRequest,
@@ -403,6 +407,8 @@ contextBridge.exposeInMainWorld('electron', {
       restartGateway: () => ipcRenderer.invoke('openclaw:engine:restartGateway'),
       getPort: () => ipcRenderer.invoke('openclaw:engine:getPort'),
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
+      readAssistantMediaDataUrl: (request: OpenClawAssistantMediaRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.ReadDataUrl, request),
       setPort: (port: number) => ipcRenderer.invoke('openclaw:engine:setPort', port),
       getSystemPromptReplacementRules: () =>
         ipcRenderer.invoke(SystemPromptReplacementIpc.GetRules),

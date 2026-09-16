@@ -40,6 +40,7 @@ export function toGatewayAttachment(attachment: CoworkAttachmentPayload): Gatewa
         type: 'image',
         mimeType: attachment.mimeType,
         content: attachment.base64Data,
+        fileName: attachment.name,
       }
     : {
         type: 'file',

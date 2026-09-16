@@ -5754,6 +5754,7 @@ test('sends and optimistically renders image attachments in an existing session'
         type: 'image',
         mimeType: 'image/png',
         content: 'YWJj',
+        fileName: 'second.png',
       },
     ],
   });
@@ -6955,6 +6956,14 @@ test('preserves the just-finished terminal message when refreshed history has no
 });
 
 test('lets authoritative media history retire the completed active turn', async () => {
+  const readAssistantMediaDataUrl = vi.fn().mockResolvedValue({
+    success: true,
+    dataUrl: 'data:image/png;base64,YWJj',
+    mimeType: 'image/png',
+  });
+  vi.stubGlobal('window', {
+    electron: { openclaw: { engine: { readAssistantMediaDataUrl } } },
+  });
   const userMessage = {
     role: 'user',
     content: '使用 MEDIA: 方式汇总一下文件',
@@ -6974,7 +6983,7 @@ test('lets authoritative media history retire the completed active turn', async 
       { type: 'text', text: '工作区文件汇总' },
       {
         type: 'image',
-        url: '/api/chat/media/outgoing/session/image/full',
+        url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession-1/11111111-1111-4111-8111-111111111111/full',
         mimeType: 'image/png',
       },
     ],
@@ -6997,7 +7006,27 @@ test('lets authoritative media history retire the completed active turn', async 
 
   await controller.loadHistory();
 
-  expect(controller.state.chatMessages).toEqual([userMessage, persistedMediaMessage]);
+  expect(readAssistantMediaDataUrl).toHaveBeenCalledWith({
+    source:
+      '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession-1/11111111-1111-4111-8111-111111111111/full',
+    sessionKey: 'agent:main:justdo:session-1',
+  });
+  await vi.waitFor(() => {
+    expect(controller.state.chatMessages).toEqual([
+      userMessage,
+      {
+        ...persistedMediaMessage,
+        content: [
+          { type: 'text', text: '工作区文件汇总' },
+          {
+            type: 'image',
+            url: 'data:image/png;base64,YWJj',
+            mimeType: 'image/png',
+          },
+        ],
+      },
+    ]);
+  });
   expect(controller.state.transcript.activeTurn).toBeNull();
 });
 
@@ -9070,10 +9099,10 @@ test('notifies listeners when an active run makes a history load stop early', as
   expect(controller.state.chatLoading).toBe(false);
 });
 
-test('preserves optimistic attachment blocks after managed image resolution', async () => {
+test('dedupes optimistic attachment bytes after managed image MIME normalization', async () => {
   const readFileAsDataUrl = vi.fn().mockResolvedValue({
     success: true,
-    dataUrl: 'data:image/png;base64,YWJj',
+    dataUrl: 'data:image/jpeg;base64,YWJj',
   });
   vi.stubGlobal('window', {
     electron: {
@@ -9126,7 +9155,201 @@ test('preserves optimistic attachment blocks after managed image resolution', as
       ],
     }),
   ]);
+  expect((controller.state.chatMessages[0] as { content: unknown[] }).content).toHaveLength(2);
   expect(readFileAsDataUrl).toHaveBeenCalledTimes(1);
+});
+
+test('hydrates canonical managed inbound images from a full history refresh', async () => {
+  const readAssistantMediaDataUrl = vi.fn().mockResolvedValue({
+    success: true,
+    dataUrl: 'data:image/png;base64,YWJj',
+    mimeType: 'image/png',
+  });
+  vi.stubGlobal('window', {
+    electron: { openclaw: { engine: { readAssistantMediaDataUrl } } },
+  });
+  const request = vi.fn().mockResolvedValue({
+    messages: [
+      {
+        role: 'user',
+        content: 'image prompt',
+        timestamp: 1000,
+        __openclaw: {
+          media: [
+            {
+              path: 'media://inbound/photo---managed-id.png',
+              contentType: 'image/png',
+              kind: 'image',
+              fileName: 'photo.png',
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const controller = new ChatController();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+
+  await controller.loadHistory();
+
+  await vi.waitFor(() => {
+    expect(readAssistantMediaDataUrl).toHaveBeenCalledWith({
+      source: 'media://inbound/photo---managed-id.png',
+      sessionKey: 'agent:main:justdo:session-1',
+    });
+    expect(controller.state.chatMessages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'image prompt' },
+          {
+            type: 'image',
+            url: 'data:image/png;base64,YWJj',
+            alt: 'photo.png',
+            mimeType: 'image/png',
+          },
+        ],
+      }),
+    ]);
+  });
+});
+
+test('hydrates the canonical image when the first session message replaces the optimistic row', async () => {
+  let finishMediaRead!: (value: { success: true; dataUrl: string; mimeType: string }) => void;
+  const readAssistantMediaDataUrl = vi.fn().mockReturnValue(
+    new Promise(resolve => {
+      finishMediaRead = resolve;
+    }),
+  );
+  vi.stubGlobal('window', {
+    electron: { openclaw: { engine: { readAssistantMediaDataUrl } } },
+  });
+  const controller = new ChatController();
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatRunId = 'run-1';
+  controller.state.chatSending = true;
+  Object.assign(controller, {
+    expectInitialHistory: true,
+    expectInitialUserMessage: true,
+  });
+  controller.setPendingUserMessage('first image', [
+    { name: 'first.png', mimeType: 'image/png', base64Data: 'YWJj' },
+  ]);
+  controller.state.chatRunId = 'run-1';
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey: 'agent:main:justdo:session-1',
+      runId: 'run-1',
+      hasActiveRun: true,
+      messageSeq: 1,
+      message: {
+        role: 'user',
+        content: 'first image',
+        __openclaw: {
+          id: 'user-1',
+          seq: 1,
+          runId: 'run-1',
+          idempotencyKey: 'run-1:user',
+          media: [
+            {
+              path: 'media://inbound/first---managed-id.png',
+              contentType: 'image/png',
+              kind: 'image',
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  expect(controller.state.chatMessages[0]).toMatchObject({
+    content: [
+      { type: 'text', text: 'first image' },
+      {
+        type: 'attachment',
+        attachment: { kind: 'image', url: 'data:image/png;base64,YWJj' },
+      },
+    ],
+  });
+  finishMediaRead({
+    success: true,
+    dataUrl: 'data:image/png;base64,YWJj',
+    mimeType: 'image/png',
+  });
+
+  await vi.waitFor(() => {
+    expect(readAssistantMediaDataUrl).toHaveBeenCalledWith({
+      source: 'media://inbound/first---managed-id.png',
+      sessionKey: 'agent:main:justdo:session-1',
+    });
+    expect(controller.state.chatMessages[0]).toMatchObject({
+      content: [
+        { type: 'text', text: 'first image' },
+        {
+          type: 'attachment',
+          attachment: { kind: 'image', url: 'data:image/png;base64,YWJj' },
+        },
+      ],
+    });
+  });
+});
+
+test('does not apply a completed image hydration after switching sessions', async () => {
+  let finishMediaRead!: (value: { success: true; dataUrl: string; mimeType: string }) => void;
+  const readAssistantMediaDataUrl = vi.fn().mockReturnValue(
+    new Promise(resolve => {
+      finishMediaRead = resolve;
+    }),
+  );
+  vi.stubGlobal('window', {
+    electron: { openclaw: { engine: { readAssistantMediaDataUrl } } },
+  });
+  const controller = new ChatController();
+  const firstSessionMessages = [
+    {
+      role: 'user',
+      content: 'first session image',
+      __openclaw: {
+        media: [
+          {
+            url: 'media://inbound/first-session.png',
+            contentType: 'image/png',
+            kind: 'image',
+          },
+        ],
+      },
+    },
+  ];
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.chatMessages = firstSessionMessages;
+
+  (
+    controller as unknown as {
+      hydrateCurrentSessionImages(messages: unknown[], sessionKey: string): void;
+    }
+  ).hydrateCurrentSessionImages(firstSessionMessages, 'agent:main:justdo:session-1');
+
+  const secondSessionMessages = [{ role: 'assistant', content: 'second session' }];
+  controller.state.sessionKey = 'agent:main:justdo:session-2';
+  controller.state.chatMessages = secondSessionMessages;
+  finishMediaRead({
+    success: true,
+    dataUrl: 'data:image/png;base64,YWJj',
+    mimeType: 'image/png',
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(controller.state.chatMessages).toBe(secondSessionMessages);
+  expect(controller.state.chatMessages).toEqual([{ role: 'assistant', content: 'second session' }]);
 });
 
 test('does not apply a shorter post-run history snapshot over a newer visible final tail', async () => {

@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   getOpenClawTerminalEnvKeys,
+  readOpenClawAssistantMedia,
   registerOpenClawEngineHandlers,
   restartOpenClawGatewayForUser,
 } from './engine';
@@ -81,8 +82,261 @@ const createRestartHarness = (options: {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   ipcHandle.mockReset();
+});
+
+describe('OpenClaw assistant media bridge', () => {
+  test('loads managed inbound images in Main without exposing the Gateway token', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(new Blob(['abc'], { type: 'image/png' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => ({ port: 6126, token: 'gateway-token' }),
+    } as unknown as OpenClawEngineManager;
+
+    await expect(
+      readOpenClawAssistantMedia(manager, {
+        source: 'media://inbound/photo.png',
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({
+      success: true,
+      dataUrl: 'data:image/png;base64,YWJj',
+      mimeType: 'image/png',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:6126/__openclaw__/assistant-media?source=media%3A%2F%2Finbound%2Fphoto.png&sessionKey=agent%3Amain%3Ajustdo%3Asession-1&agentId=main',
+      expect.objectContaining({
+        headers: {
+          Accept: 'image/*',
+          Authorization: 'Bearer gateway-token',
+        },
+        redirect: 'error',
+      }),
+    );
+  });
+
+  test('rejects non-managed sources before making a network request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = {} as OpenClawEngineManager;
+
+    await expect(
+      readOpenClawAssistantMedia(manager, {
+        source: 'https://example.test/private.png',
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'Invalid Gateway image request' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    'media://outbound/photo.png',
+    'media://inbound/',
+    'media://inbound/nested%2Fphoto.png',
+    'media://inbound/%00.png',
+    'media://inbound/nested/../photo.png',
+    'media://inbound/%2e%2e',
+    'media://inbound/photo.png?raw=1',
+    'media://inbound/photo.png#preview',
+    'media://inbound/%',
+  ])('rejects non-canonical managed source %s', async source => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      readOpenClawAssistantMedia({} as OpenClawEngineManager, {
+        source,
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'Invalid Gateway image request' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('bounds session keys to the Gateway protocol limit', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      readOpenClawAssistantMedia({} as OpenClawEngineManager, {
+        source: 'media://inbound/photo.png',
+        sessionKey: 's'.repeat(513),
+      }),
+    ).resolves.toEqual({ success: false, error: 'Invalid Gateway image request' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('bounds managed source length before constructing the Gateway URL', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      readOpenClawAssistantMedia({} as OpenClawEngineManager, {
+        source: `media://inbound/${'a'.repeat(2_048)}.png`,
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'Invalid Gateway image request' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('does not derive an agent parameter from an unqualified session key', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(new Blob(['abc'], { type: 'image/png' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => ({ port: 6126, token: 'gateway-token' }),
+    } as unknown as OpenClawEngineManager;
+
+    await readOpenClawAssistantMedia(manager, {
+      source: 'media://inbound/photo.png',
+      sessionKey: 'justdo:legacy-session',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.not.stringContaining('agentId='),
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+
+  test('loads a session-bound managed outgoing image through Main', async () => {
+    const attachmentId = '11111111-1111-4111-8111-111111111111';
+    const sessionKey = 'agent:main:justdo:session-1';
+    const source = `/api/chat/media/outgoing/${encodeURIComponent(sessionKey)}/${attachmentId}/full`;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(new Blob(['abc'], { type: 'image/png' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => ({ port: 6126, token: 'gateway-token' }),
+    } as unknown as OpenClawEngineManager;
+
+    await expect(
+      readOpenClawAssistantMedia(manager, { source, sessionKey }),
+    ).resolves.toMatchObject({ success: true, mimeType: 'image/png' });
+    expect(fetchMock).toHaveBeenCalledWith(`http://127.0.0.1:6126${source}`, {
+      headers: {
+        Accept: 'image/*',
+        Authorization: 'Bearer gateway-token',
+        'x-openclaw-requester-session-key': sessionKey,
+      },
+      redirect: 'error',
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  test.each([
+    '/api/chat/media/outgoing/agent%3Aother%3Ajustdo%3Asession-1/11111111-1111-4111-8111-111111111111/full',
+    '/api/chat/media/outgoing/agent%253Amain%253Ajustdo%253Asession-1/11111111-1111-4111-8111-111111111111/full',
+    '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession-1/not-a-uuid/full',
+    '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession-1/11111111-1111-4111-8111-111111111111/thumbnail',
+    '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession-1/11111111-1111-4111-8111-111111111111/full?mediaTicket=untrusted',
+    '//example.test/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession-1/11111111-1111-4111-8111-111111111111/full',
+  ])('rejects invalid or differently scoped outgoing source %s', async source => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      readOpenClawAssistantMedia({} as OpenClawEngineManager, {
+        source,
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'Invalid Gateway image request' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('returns a structured failure when connection metadata cannot be read', async () => {
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => {
+        throw new Error('metadata unavailable');
+      },
+    } as unknown as OpenClawEngineManager;
+
+    await expect(
+      readOpenClawAssistantMedia(manager, {
+        source: 'media://inbound/photo.png',
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'metadata unavailable' });
+  });
+
+  test('cancels rejected response bodies without buffering them', async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 404 })));
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => ({ port: 6126, token: 'gateway-token' }),
+    } as unknown as OpenClawEngineManager;
+
+    await expect(
+      readOpenClawAssistantMedia(manager, {
+        source: 'media://inbound/photo.png',
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'Gateway image is unavailable (404)' });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  test('rejects declared oversized images and cancels the response body', async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const response = new Response(body, {
+      status: 200,
+      headers: {
+        'content-type': 'image/png',
+        'content-length': String(20 * 1024 * 1024 + 1),
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => ({ port: 6126, token: 'gateway-token' }),
+    } as unknown as OpenClawEngineManager;
+
+    await expect(
+      readOpenClawAssistantMedia(manager, {
+        source: 'media://inbound/photo.png',
+        sessionKey: 'agent:main:justdo:session-1',
+      }),
+    ).resolves.toEqual({ success: false, error: 'Gateway image is too large' });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  test('aborts stalled Gateway requests after the media timeout', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = {
+      getStatus: () => ({ phase: 'running' }),
+      getGatewayConnectionInfo: () => ({ port: 6126, token: 'gateway-token' }),
+    } as unknown as OpenClawEngineManager;
+
+    const result = readOpenClawAssistantMedia(manager, {
+      source: 'media://inbound/photo.png',
+      sessionKey: 'agent:main:justdo:session-1',
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(result).resolves.toEqual({
+      success: false,
+      error: 'Gateway image request timed out',
+    });
+  });
 });
 
 describe('OpenClaw terminal environment', () => {
@@ -253,6 +507,23 @@ describe('manual OpenClaw Gateway restart', () => {
 });
 
 describe('OpenClaw Gateway restart IPC', () => {
+  test('registers the assistant media bridge on its shared channel', () => {
+    const harness = createRestartHarness();
+    registerOpenClawEngineHandlers({
+      getManager: () => harness.manager as unknown as OpenClawEngineManager,
+      requestGateway: harness.requestGateway as unknown as <T>(
+        method: string,
+        params?: unknown,
+      ) => Promise<T>,
+      reconnectGatewayClient: harness.reconnectGatewayClient,
+    });
+
+    expect(ipcHandle).toHaveBeenCalledWith(
+      'openclaw:assistantMedia:readDataUrl',
+      expect.any(Function),
+    );
+  });
+
   test('returns structured failures to concurrent callers sharing one restart', async () => {
     const harness = createRestartHarness({ phase: 'error' });
     const restartError = new Error('restart failed');

@@ -900,7 +900,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     outputShort: '输出',
     modelSuffixSecure: '（安全）',
     imageVisionHint:
-      '当前模型未启用图片输入，图片将以文件路径形式发送。若该模型本身支持图片理解，可在模型配置中开启图片输入选项。',
+      '当前模型未启用图片输入。图片仍会安全上传并保留在对话中，运行时会将其作为文件提供给模型；若模型本身支持图片理解，可在模型配置中开启图片输入。',
     noModelsAvailable: '暂无可用模型',
     addFirstModel: '添加第一个模型',
     testConnection: '测试连接',
@@ -3245,7 +3245,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     outputShort: 'Output',
     modelSuffixSecure: '(Secure)',
     imageVisionHint:
-      'Image input is not enabled for the current model. Images will be sent as file paths. If the model supports vision, you can enable image input in the model configuration.',
+      'Image input is not enabled for the current model. The image will still be uploaded and retained in the conversation, and the runtime will provide it to the model as a file. Enable image input in the model configuration if the model supports vision.',
     noModelsAvailable: 'No models available',
     addFirstModel: 'Add First Model',
     testConnection: 'Test Connection',

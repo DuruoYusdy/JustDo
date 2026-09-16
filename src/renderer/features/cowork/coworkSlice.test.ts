@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import coworkReducer, {
   addDraftAttachment,
   addDraftBrowserAnnotation,
+  addSession,
   beginManualModelSelection,
   clearCurrentSession,
   clearDraftBrowserAnnotations,
@@ -40,6 +41,39 @@ const createSession = (id: string, modelRef?: string) => ({
   createdAt: 1,
   updatedAt: 2,
   modelRef,
+});
+
+describe('cowork session admission', () => {
+  test('upserts a session already discovered by a racing sessions.changed refresh', () => {
+    const discovered = {
+      id: 'session-1',
+      title: 'Initial title',
+      status: 'idle' as const,
+      pinned: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const loaded = coworkReducer(undefined, setSessions([discovered]));
+    const canonical = {
+      ...createSession('session-1'),
+      title: 'Submitted title',
+      status: 'running' as const,
+      updatedAt: 2,
+    };
+
+    const admitted = coworkReducer(loaded, addSession({ session: canonical, select: true }));
+
+    expect(admitted.sessions).toEqual([
+      expect.objectContaining({
+        id: 'session-1',
+        title: 'Submitted title',
+        status: 'running',
+        updatedAt: 2,
+      }),
+    ]);
+    expect(admitted.currentSession).toEqual(canonical);
+    expect(admitted.currentSessionId).toBe('session-1');
+  });
 });
 
 describe('cowork session permissions', () => {

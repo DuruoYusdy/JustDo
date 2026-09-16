@@ -5,6 +5,11 @@ import os from 'os';
 import path from 'path';
 
 import {
+  OpenClawAssistantMediaIpc,
+  type OpenClawAssistantMediaRequest,
+  type OpenClawAssistantMediaResult,
+} from '../../../shared/openclaw/assistantMedia';
+import {
   type OpenClawSessionMigrationConfirmRequest,
   OpenClawSessionMigrationIpc,
 } from '../../../shared/openclaw/sessionMigration';
@@ -25,6 +30,14 @@ interface OpenClawEngineHandlerDependencies {
 const GATEWAY_RESTART_REQUEST_METHOD = 'gateway.restart.request';
 const GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS = 30_000;
 const GATEWAY_IN_PROCESS_RESTART_MAX_DELAY_MS = 1_000;
+const ASSISTANT_MEDIA_TIMEOUT_MS = 15_000;
+const MAX_ASSISTANT_MEDIA_BYTES = 20 * 1024 * 1024;
+const MAX_ASSISTANT_MEDIA_SOURCE_LENGTH = 2_048;
+const MAX_ASSISTANT_MEDIA_SESSION_KEY_LENGTH = 512;
+const MANAGED_INBOUND_MEDIA_PATTERN = /^media:\/\/inbound\/([^/?#]+)$/i;
+const MANAGED_OUTGOING_MEDIA_PATTERN =
+  /^\/api\/chat\/media\/outgoing\/([^/?#]+)\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/full$/i;
+const QUALIFIED_SESSION_AGENT_PATTERN = /^agent:([a-z0-9][a-z0-9_-]{0,63}):/i;
 
 const GatewayRestartRequestStatus = {
   Scheduled: 'scheduled',
@@ -45,6 +58,159 @@ const isAcceptedGatewayRestartRequest = (result: GatewayRestartRequestResult): b
   (result.status === GatewayRestartRequestStatus.Scheduled ||
     result.status === GatewayRestartRequestStatus.Deferred ||
     result.status === GatewayRestartRequestStatus.Coalesced);
+
+async function readResponseBodyWithLimit(response: Response): Promise<Buffer> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ASSISTANT_MEDIA_BYTES) {
+    await response.body?.cancel().catch((): undefined => undefined);
+    throw new Error('Gateway image is too large');
+  }
+  if (!response.body) throw new Error('Gateway image response is empty');
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_ASSISTANT_MEDIA_BYTES) {
+        await reader.cancel().catch((): undefined => undefined);
+        throw new Error('Gateway image is too large');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+const isCanonicalManagedInboundMediaSource = (source: string): boolean => {
+  const match = MANAGED_INBOUND_MEDIA_PATTERN.exec(source);
+  if (!match?.[1]) return false;
+  try {
+    const id = decodeURIComponent(match[1]);
+    return (
+      id !== '.' &&
+      id !== '..' &&
+      !id.includes('/') &&
+      !id.includes('\\') &&
+      !id.includes('\0')
+    );
+  } catch {
+    return false;
+  }
+};
+
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  await response.body?.cancel().catch((): undefined => undefined);
+};
+
+const resolveQualifiedSessionAgentId = (sessionKey: string): string | undefined =>
+  QUALIFIED_SESSION_AGENT_PATTERN.exec(sessionKey)?.[1]?.toLowerCase();
+
+const isCanonicalManagedOutgoingMediaSource = (
+  source: string,
+  sessionKey: string,
+): boolean => {
+  const match = MANAGED_OUTGOING_MEDIA_PATTERN.exec(source);
+  if (!match?.[1]) return false;
+  try {
+    return decodeURIComponent(match[1]) === sessionKey && match[1] === encodeURIComponent(sessionKey);
+  } catch {
+    return false;
+  }
+};
+
+export async function readOpenClawAssistantMedia(
+  manager: OpenClawEngineManager,
+  request: OpenClawAssistantMediaRequest,
+): Promise<OpenClawAssistantMediaResult> {
+  const source = typeof request?.source === 'string' ? request.source.trim() : '';
+  const sessionKey = typeof request?.sessionKey === 'string' ? request.sessionKey.trim() : '';
+  if (
+    !source ||
+    source.length > MAX_ASSISTANT_MEDIA_SOURCE_LENGTH ||
+    !sessionKey ||
+    sessionKey.length > MAX_ASSISTANT_MEDIA_SESSION_KEY_LENGTH
+  ) {
+    return { success: false, error: 'Invalid Gateway image request' };
+  }
+  const isManagedInbound = isCanonicalManagedInboundMediaSource(source);
+  const isManagedOutgoing = isCanonicalManagedOutgoingMediaSource(source, sessionKey);
+  if (!isManagedInbound && !isManagedOutgoing) {
+    return { success: false, error: 'Invalid Gateway image request' };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ASSISTANT_MEDIA_TIMEOUT_MS);
+  try {
+    if (manager.getStatus().phase !== 'running') {
+      return { success: false, error: 'Gateway is not running' };
+    }
+    const { port, token } = manager.getGatewayConnectionInfo();
+    if (
+      typeof port !== 'number' ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65_535 ||
+      typeof token !== 'string' ||
+      !token
+    ) {
+      return { success: false, error: 'Gateway connection is unavailable' };
+    }
+    let gatewayPath: string;
+    const headers: Record<string, string> = {
+      Accept: 'image/*',
+      Authorization: `Bearer ${token}`,
+    };
+    if (isManagedOutgoing) {
+      gatewayPath = source;
+      headers['x-openclaw-requester-session-key'] = sessionKey;
+    } else {
+      const query = new URLSearchParams({ source, sessionKey });
+      const agentId = resolveQualifiedSessionAgentId(sessionKey);
+      if (agentId) query.set('agentId', agentId);
+      gatewayPath = `/__openclaw__/assistant-media?${query.toString()}`;
+    }
+    const response = await fetch(
+      `http://127.0.0.1:${port}${gatewayPath}`,
+      {
+        headers,
+        redirect: 'error',
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      return { success: false, error: `Gateway image is unavailable (${response.status})` };
+    }
+    const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+    if (!mimeType.startsWith('image/')) {
+      await cancelResponseBody(response);
+      return { success: false, error: 'Gateway response is not an image' };
+    }
+    const buffer = await readResponseBodyWithLimit(response);
+    return {
+      success: true,
+      dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`,
+      mimeType,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error && error.name === 'AbortError'
+          ? 'Gateway image request timed out'
+          : error instanceof Error
+            ? error.message
+            : 'Failed to read Gateway image',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const reconnectGatewayClientAfterRestart = (
   reconnectGatewayClient: () => Promise<void>,
@@ -513,6 +679,12 @@ export const registerOpenClawEngineHandlers = ({
       };
     }
   });
+
+  ipcMain.handle(
+    OpenClawAssistantMediaIpc.ReadDataUrl,
+    async (_event, request: OpenClawAssistantMediaRequest) =>
+      readOpenClawAssistantMedia(getManager(), request),
+  );
 
   ipcMain.handle('openclaw:engine:setPort', async (_event, port: number) => {
     try {

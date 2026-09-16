@@ -242,7 +242,10 @@ const coworkSlice = createSlice({
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       };
-      state.sessions.unshift(summary);
+      // sessions.changed can refresh the authoritative list before the
+      // startSession IPC resolves. Treat admission as an upsert so that race
+      // cannot insert the same canonical session a second time.
+      state.sessions = [summary, ...state.sessions.filter(item => item.id !== session.id)];
       if (select) {
         state.currentSession = session;
         state.currentSessionId = session.id;

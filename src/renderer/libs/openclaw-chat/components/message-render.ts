@@ -2,13 +2,16 @@
  * Ordinary message rendering for persisted Content and streaming text.
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
-import { isImageMimeType } from '@shared/cowork/attachments';
 import { getPreviewableFileExtension } from '@shared/filePreview';
 import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import { getTranscriptMedia, type RenderableAttachment } from '@/libs/openclaw-chat/attachments';
+import {
+  getTranscriptMedia,
+  isTranscriptImage,
+  type RenderableAttachment,
+} from '@/libs/openclaw-chat/attachments';
 import { renderChatAvatar } from '@/libs/openclaw-chat/components/chat-avatar';
 import {
   toSanitizedMarkdownHtml,
@@ -236,11 +239,11 @@ function labelForMediaPath(mediaPath: string): string {
 function extractTranscriptAttachments(message: unknown): RenderableAttachment[] {
   return getTranscriptMedia(message)
     .map(media => {
-      if (media.mimeType && isImageMimeType(media.mimeType)) return null;
+      if (isTranscriptImage(media)) return null;
       return {
         url: media.path,
         kind: media.mimeType?.startsWith('audio/') ? ('audio' as const) : ('document' as const),
-        label: labelForMediaPath(media.path),
+        label: media.fileName || labelForMediaPath(media.path),
         ...(media.mimeType ? { mimeType: media.mimeType } : {}),
       };
     })

@@ -14,11 +14,7 @@
  */
 
 import { parseBrowserAnnotationPrompt } from '@shared/browser';
-import {
-  type CoworkAttachmentPayload,
-  isImageMimeType,
-  toGatewayAttachment,
-} from '@shared/cowork/attachments';
+import { type CoworkAttachmentPayload, toGatewayAttachment } from '@shared/cowork/attachments';
 import type { LocalTtsSpeakResult } from '@shared/localTts';
 import {
   normalizeAgentEvent,
@@ -54,7 +50,11 @@ import {
   SlashCommandExecution,
 } from '@shared/slashCommands';
 
-import { getTranscriptMedia, toAttachmentContentBlocks } from '@/libs/openclaw-chat/attachments';
+import {
+  getTranscriptMedia,
+  isTranscriptImage,
+  toAttachmentContentBlocks,
+} from '@/libs/openclaw-chat/attachments';
 import {
   CHAT_HISTORY_INITIAL_LIMIT,
   CHAT_HISTORY_MAX_CHARS,
@@ -351,6 +351,21 @@ function getContentImageUrl(value: unknown): string | null {
   return null;
 }
 
+function getImageUrlIdentity(url: string): string {
+  const commaIndex = url.indexOf(',');
+  if (
+    commaIndex > 0 &&
+    url.slice(0, commaIndex).toLowerCase().startsWith('data:image/') &&
+    url.slice(0, commaIndex).toLowerCase().includes(';base64')
+  ) {
+    // The Gateway may normalize an image MIME (for example image/jpg to
+    // image/jpeg) while preserving the exact bytes. Compare the payload so
+    // the optimistic preview and durable media fact still occupy one slot.
+    return `data:image;base64,${url.slice(commaIndex + 1)}`;
+  }
+  return url;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
@@ -557,8 +572,6 @@ export class ChatController {
     ],
   ]);
 
-  private gatewayHttpBase = '';
-  private gatewayToken = '';
   private chatMessagesBySession = new Map<string, ChunkedMessageHistory>();
   private historySourceBySession = new Map<string, HistorySource>();
   private liveStateBySession = new Map<string, SessionLiveState>();
@@ -2077,18 +2090,30 @@ export class ChatController {
     }
     const projected = projectGatewayHistoryForDisplay([message]);
     if (projected.length !== 1 || !this.isExpectedInitialHistoryMessage(projected[0])) return false;
+    const authoritativeMessage = projected[0] as GatewayMessage;
+    const pendingMessage = this.state.pendingUserMessage;
+    const admittedMessage =
+      pendingMessage &&
+      Array.isArray(pendingMessage.content) &&
+      isPendingUserMessageMatch(authoritativeMessage, pendingMessage as unknown as GatewayMessage)
+        ? { ...authoritativeMessage, content: pendingMessage.content }
+        : authoritativeMessage;
+    const admittedMessages = [admittedMessage];
 
     // session.message is emitted after OpenClaw appends the transcript row and
     // carries that authoritative row. Admit the task immediately instead of
     // waiting for a second history read, which can still observe an older
-    // paged snapshot. Forked parent context and assistant-only in-flight tails
-    // are intentionally excluded from the subagent's own visible timeline.
+    // paged snapshot. Keep the optimistic attachment blocks until canonical
+    // media hydration finishes, so the first durable row cannot flash the
+    // image away. Forked parent context and assistant-only in-flight tails are
+    // intentionally excluded from the subagent's own visible timeline.
     this.state.transcript.historySource = 'gateway';
     this.pendingHistoryReload = true;
-    this.setCurrentSessionMessages(projected, { resetLoadedHistory: true });
+    this.setCurrentSessionMessages(admittedMessages, { resetLoadedHistory: true });
     this.state.lastError = null;
     this.state.initialHistoryReady = true;
     this.notify();
+    this.hydrateCurrentSessionImages(admittedMessages, this.state.sessionKey);
     return true;
   }
 
@@ -2797,8 +2822,6 @@ export class ChatController {
     }
     this.manualCompactionRequestIdsBySession.clear();
     this.rememberHistoryPagination(this.state.sessionKey);
-    this.gatewayHttpBase = url.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
-    this.gatewayToken = token;
     // Stop existing client
     this.state.client?.stop();
     this.messageSubscriptionSeq += 1;
@@ -3715,6 +3738,7 @@ export class ChatController {
           this.state.pendingUserMessage = null;
         }
         this.notify();
+        this.hydrateCurrentSessionImages(directApply.messages, this.state.sessionKey);
       }
       const messageSeq =
         readPositiveSafeInteger(payload?.messageSeq) ?? readOpenClawMessageSeq(payload?.message);
@@ -3973,8 +3997,16 @@ export class ChatController {
   private historyReloadRequested = new Set<string>();
   private immediateHistoryReloadRequested = new Set<string>();
 
-  private async readTranscriptImageDataUrl(mediaPath: string): Promise<string | null> {
-    const cached = this.transcriptImageCache.get(mediaPath);
+  private async resolveTranscriptImageUrl(
+    mediaPath: string,
+    sessionKey: string,
+  ): Promise<string | null> {
+    const trimmedPath = mediaPath.trim();
+    if (/^(?:data|blob|https?):/iu.test(trimmedPath)) return trimmedPath;
+
+    const managedInbound = /^media:\/\/inbound\/[^/?#]+$/iu.test(trimmedPath);
+    const cacheKey = managedInbound ? `${sessionKey}\0${trimmedPath}` : trimmedPath;
+    const cached = this.transcriptImageCache.get(cacheKey);
     if (cached) return cached;
 
     const pending = (async () => {
@@ -3983,6 +4015,13 @@ export class ChatController {
       }
       this.transcriptImageReadsActive += 1;
       try {
+        if (managedInbound) {
+          const result = await window.electron.openclaw.engine.readAssistantMediaDataUrl({
+            source: trimmedPath,
+            sessionKey,
+          });
+          return result.success ? result.dataUrl : null;
+        }
         const dialog = (
           window as unknown as {
             electron?: {
@@ -3994,7 +4033,7 @@ export class ChatController {
             };
           }
         ).electron?.dialog;
-        const result = await dialog?.readFileAsDataUrl?.(mediaPath);
+        const result = await dialog?.readFileAsDataUrl?.(trimmedPath);
         return result?.success && result.dataUrl ? result.dataUrl : null;
       } catch (error) {
         console.warn('[ChatCtrl] Failed to load transcript image', error);
@@ -4005,10 +4044,10 @@ export class ChatController {
       }
     })();
 
-    this.transcriptImageCache.set(mediaPath, pending);
+    this.transcriptImageCache.set(cacheKey, pending);
     void pending.then(value => {
-      if (value === null && this.transcriptImageCache.get(mediaPath) === pending) {
-        this.transcriptImageCache.delete(mediaPath);
+      if (value === null && this.transcriptImageCache.get(cacheKey) === pending) {
+        this.transcriptImageCache.delete(cacheKey);
       }
     });
     if (this.transcriptImageCache.size > 64) {
@@ -4018,10 +4057,14 @@ export class ChatController {
     return pending;
   }
 
-  private async resolveManagedHistoryImages(messages: unknown[]): Promise<unknown[]> {
+  private async resolveManagedHistoryImages(
+    messages: unknown[],
+    sessionKey: string,
+  ): Promise<unknown[]> {
     return Promise.all(
       messages.map(async message => {
-        const record = message as Record<string, unknown>;
+        const record = asRecord(message);
+        if (!record) return message;
         const originalContent = Array.isArray(record.content)
           ? record.content
           : typeof record.content === 'string'
@@ -4036,19 +4079,11 @@ export class ChatController {
               return value;
             }
             try {
-              const parts = source.split('/');
-              const requesterSessionKey = parts[5] ? decodeURIComponent(parts[5]) : '';
-              const headers = new Headers({ Accept: 'image/*' });
-              if (this.gatewayToken) headers.set('Authorization', `Bearer ${this.gatewayToken}`);
-              if (requesterSessionKey) {
-                headers.set('x-openclaw-requester-session-key', requesterSessionKey);
-              }
-              const response = await fetch(`${this.gatewayHttpBase}${source}`, { headers });
-              if (!response.ok) return value;
-              const blob = await response.blob();
-              if (!blob.type.startsWith('image/')) return value;
-              const dataUrl = await blobToDataUrl(blob);
-              return { ...block, url: dataUrl };
+              const result = await window.electron.openclaw.engine.readAssistantMediaDataUrl({
+                source,
+                sessionKey,
+              });
+              return result.success ? { ...block, url: result.dataUrl } : value;
             } catch (error) {
               console.warn('[ChatCtrl] Failed to load managed outgoing image', error);
               return value;
@@ -4057,15 +4092,15 @@ export class ChatController {
         );
         const transcriptImages = await Promise.all(
           getTranscriptMedia(record).map(async media => {
-            if (!media.mimeType || !isImageMimeType(media.mimeType)) return null;
+            if (!isTranscriptImage(media)) return null;
             try {
-              const dataUrl = await this.readTranscriptImageDataUrl(media.path);
-              if (!dataUrl) return null;
+              const imageUrl = await this.resolveTranscriptImageUrl(media.path, sessionKey);
+              if (!imageUrl) return null;
               return {
                 type: 'image',
-                url: dataUrl,
-                alt: media.path.split(/[\\/]/).pop() || 'Image',
-                mimeType: media.mimeType,
+                url: imageUrl,
+                alt: media.fileName || media.path.split(/[\\/]/).pop() || 'Image',
+                ...(media.mimeType ? { mimeType: media.mimeType } : {}),
               };
             } catch (error) {
               console.warn('[ChatCtrl] Failed to load transcript image', error);
@@ -4080,12 +4115,14 @@ export class ChatController {
         for (const url of content
           .map(getContentImageUrl)
           .filter((value): value is string => value !== null)) {
-          existingImageUrlCounts.set(url, (existingImageUrlCounts.get(url) ?? 0) + 1);
+          const identity = getImageUrlIdentity(url);
+          existingImageUrlCounts.set(identity, (existingImageUrlCounts.get(identity) ?? 0) + 1);
         }
         const uniqueImageBlocks = imageBlocks.filter(block => {
-          const existingCount = existingImageUrlCounts.get(block.url) ?? 0;
+          const identity = getImageUrlIdentity(block.url);
+          const existingCount = existingImageUrlCounts.get(identity) ?? 0;
           if (existingCount > 0) {
-            existingImageUrlCounts.set(block.url, existingCount - 1);
+            existingImageUrlCounts.set(identity, existingCount - 1);
             return false;
           }
           return true;
@@ -4094,6 +4131,14 @@ export class ChatController {
         return { ...record, content: [...content, ...uniqueImageBlocks] };
       }),
     );
+  }
+
+  private hydrateCurrentSessionImages(messages: unknown[], sessionKey: string): void {
+    void this.resolveManagedHistoryImages(messages, sessionKey).then(resolvedMessages => {
+      if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
+      this.setCurrentSessionMessages(resolvedMessages);
+      this.notify();
+    });
   }
 
   private async loadOlderHistoryPage(sessionKey: string, cursor: string): Promise<ChatHistoryPage> {
@@ -4124,7 +4169,7 @@ export class ChatController {
       enrichCompactionMarkers: (projectedMessages, key) =>
         this.enrichCompactionMarkers(projectedMessages, key),
     });
-    return this.resolveManagedHistoryImages(normalized);
+    return this.resolveManagedHistoryImages(normalized, sessionKey);
   }
 
   async loadOlderHistory(): Promise<boolean> {
@@ -4621,11 +4666,7 @@ export class ChatController {
       } else {
         this.deferredHistoryReloadAttempts.delete(sessionKey);
       }
-      void this.resolveManagedHistoryImages(messages).then(resolvedMessages => {
-        if (this.state.sessionKey !== sessionKey || this.state.chatMessages !== messages) return;
-        this.setCurrentSessionMessages(resolvedMessages);
-        this.notify();
-      });
+      this.hydrateCurrentSessionImages(messages, sessionKey);
       this.notify();
       return true;
     } catch (err) {
@@ -5292,9 +5333,8 @@ export class ChatController {
 
     // Optimistic: append user message immediately
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
-    const optimisticDisplayMessage = browserPrompt && goalStartObjective === null
-      ? gatewayOutboundMessage
-      : displayMessage;
+    const optimisticDisplayMessage =
+      browserPrompt && goalStartObjective === null ? gatewayOutboundMessage : displayMessage;
     const rawUserMessage = {
       role: 'user',
       content:
@@ -6388,15 +6428,4 @@ function isNonTerminalToolPhase(phase: string): boolean {
   return ['start', 'delta', 'partial', 'progress', 'update', 'streaming'].includes(
     phase.toLowerCase(),
   );
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => resolve(String(reader.result ?? '')));
-    reader.addEventListener('error', () =>
-      reject(reader.error ?? new Error('Failed to read image')),
-    );
-    reader.readAsDataURL(blob);
-  });
 }

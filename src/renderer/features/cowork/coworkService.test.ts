@@ -12,6 +12,7 @@ import {
   setCurrentSession,
   setPlanMode,
   setSessionRuntimeActivity,
+  setSessions,
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import { i18nService } from '@/services/i18n';
@@ -159,6 +160,7 @@ describe('cowork interaction responses', () => {
 describe('cowork session startup', () => {
   afterEach(() => {
     store.dispatch(clearCurrentSession());
+    store.dispatch(deleteSession('session-race'));
     vi.unstubAllGlobals();
   });
 
@@ -197,6 +199,67 @@ describe('cowork session startup', () => {
 
     expect(selectedSessionIdDuringHook).toBeNull();
     expect(store.getState().cowork.currentSessionId).toBe('session-1');
+  });
+
+  test('does not duplicate a canonical session discovered before startSession resolves', async () => {
+    const temporarySession: CoworkSession = {
+      id: 'temp-race',
+      title: 'Race title',
+      status: 'running',
+      pinned: false,
+      cwd: '',
+      executionMode: 'local',
+      permissionMode: 'ask',
+      activeSkillIds: [],
+      agentId: 'main',
+      createdAt: 1_000,
+      updatedAt: 1_000,
+    };
+    const canonicalSession: CoworkSession = {
+      ...temporarySession,
+      id: 'session-race',
+    };
+    let finishStart!: (value: { success: true; session: CoworkSession }) => void;
+    const startResult = new Promise<{ success: true; session: CoworkSession }>(resolve => {
+      finishStart = resolve;
+    });
+    vi.stubGlobal('window', {
+      electron: {
+        cowork: {
+          startSession: vi.fn(() => startResult),
+        },
+      },
+    });
+    store.dispatch(setCurrentSession(temporarySession));
+
+    const starting = coworkService.startSession({ prompt: 'start' });
+    const existingSessions = store
+      .getState()
+      .cowork.sessions.filter(session => session.id !== canonicalSession.id);
+    store.dispatch(
+      setSessions([
+        {
+          id: canonicalSession.id,
+          title: canonicalSession.title,
+          status: 'idle',
+          pinned: false,
+          createdAt: canonicalSession.createdAt,
+          updatedAt: canonicalSession.updatedAt,
+        },
+        ...existingSessions,
+      ]),
+    );
+    finishStart({ success: true, session: canonicalSession });
+
+    await expect(starting).resolves.toMatchObject({
+      session: expect.objectContaining({ id: canonicalSession.id }),
+    });
+    expect(
+      store.getState().cowork.sessions.filter(session => session.id === canonicalSession.id),
+    ).toEqual([
+      expect.objectContaining({ id: canonicalSession.id, status: 'running' }),
+    ]);
+    expect(store.getState().cowork.currentSessionId).toBe(canonicalSession.id);
   });
 });
 
