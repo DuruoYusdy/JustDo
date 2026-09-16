@@ -87,7 +87,13 @@ import {
   projectIncrementalTimelineView,
 } from '@/libs/openclaw-chat/model/timeline-render-cache';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
-import type { ChatItem, GatewayMessage, MessageGroup } from '@/libs/openclaw-chat/types';
+import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
+import type {
+  ChatItem,
+  GatewayMessage,
+  MessageGroup,
+  UserMessageHistoryAction,
+} from '@/libs/openclaw-chat/types';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -99,6 +105,22 @@ const MERMAID_BUBBLE_MAX_WIDTH = 820;
 const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 2;
 const MAX_SPEECH_AUDIO_BASE64_LENGTH = 64 * 1024 * 1024;
+
+function openClawEntryId(message: GatewayMessage | undefined): string | null {
+  const marker = message?.__openclaw;
+  if (marker?.kind === 'pending-send') return null;
+  const id = marker && typeof marker.id === 'string' ? marker.id.trim() : '';
+  return id || null;
+}
+
+function latestPersistedUserEntryId(messages: readonly GatewayMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role?.toLowerCase() !== 'user') continue;
+    return openClawEntryId(message);
+  }
+  return null;
+}
 
 type PacedTerminalProjection = {
   sessionIdentity: string;
@@ -147,6 +169,18 @@ export class JustDoChatElement extends LitElement {
 
   @property({ type: Array, attribute: false })
   declare runTimings: SessionRunTiming[];
+
+  @property({ attribute: false })
+  declare onLastUserMessageAction:
+    | ((
+        action: UserMessageHistoryAction,
+        entryId: string,
+        editedText?: string,
+      ) => boolean | Promise<boolean>)
+    | undefined;
+
+  @state()
+  declare private userMessageEditor: { entryId: string; value: string; submitting: boolean } | null;
 
   @state()
   declare private openProcessSummaryKey: string | null;
@@ -210,6 +244,7 @@ export class JustDoChatElement extends LitElement {
   private activeTurnClockTimer: ReturnType<typeof setInterval> | null = null;
   private assistantStreamSessionIdentity: string | null = null;
   private pacedTerminalProjection: PacedTerminalProjection | null = null;
+  private actionableUserEntryId: string | null = null;
 
   constructor() {
     super();
@@ -224,6 +259,8 @@ export class JustDoChatElement extends LitElement {
     this.searchCaseSensitive = false;
     this.processSummariesExpanded = false;
     this.runTimings = [];
+    this.onLastUserMessageAction = undefined;
+    this.userMessageEditor = null;
     this.openProcessSummaryKey = null;
     this.collapsedProcessSummaryKeys = new Set();
     this.currentMinimapKey = null;
@@ -791,6 +828,109 @@ export class JustDoChatElement extends LitElement {
         justify-content: flex-end;
       }
 
+      .user-message-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        margin-right: 2px;
+        position: relative;
+        z-index: 2;
+        opacity: 0.55;
+        pointer-events: auto;
+        transition: opacity 120ms ease;
+      }
+
+      .chat-group--user:hover .user-message-actions,
+      .user-message-actions:focus-within {
+        opacity: 1;
+      }
+
+      .user-message-action {
+        display: inline-grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border: 0;
+        border-radius: 5px;
+        padding: 0;
+        background: transparent;
+        color: var(--justdo-chat-text-secondary, #6b7280);
+        cursor: pointer;
+        -webkit-app-region: no-drag;
+      }
+
+      .user-message-action:hover,
+      .user-message-action:focus-visible {
+        outline: none;
+        background: color-mix(in srgb, currentColor 10%, transparent);
+        color: var(--justdo-chat-text, #1a1a1a);
+      }
+
+      .user-message-action--withdraw:hover,
+      .user-message-action--withdraw:focus-visible {
+        color: #dc2626;
+      }
+
+      .user-message-action svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .user-message-editor {
+        width: min(620px, 72vw);
+        border-radius: 16px;
+        background: var(--justdo-chat-user-bg, #f3f4f6);
+        padding: 12px;
+      }
+
+      .user-message-editor__input {
+        display: block;
+        width: 100%;
+        min-height: 96px;
+        max-height: 320px;
+        resize: vertical;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        line-height: 1.55;
+      }
+
+      .user-message-editor__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .user-message-editor__actions button {
+        border: 1px solid var(--justdo-chat-border, #d1d5db);
+        border-radius: 999px;
+        background: var(--justdo-chat-bg, #fff);
+        color: var(--justdo-chat-text, #1a1a1a);
+        padding: 6px 14px;
+        cursor: pointer;
+      }
+
+      .user-message-editor__actions button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+
+      .user-message-editor__actions .user-message-editor__submit {
+        border-color: transparent;
+        background: var(--justdo-chat-accent, #2563eb);
+        color: white;
+      }
+
+      @media (hover: none) {
+        .user-message-actions {
+          opacity: 1;
+          pointer-events: auto;
+        }
+      }
+
       .chat-group--assistant .chat-group__footer,
       .active-turn__footer {
         padding-left: var(--justdo-assistant-footer-padding-left, 0px);
@@ -1342,7 +1482,8 @@ export class JustDoChatElement extends LitElement {
         height: 16px;
         content: '';
         background: currentColor;
-        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 6.75C0 5.784.784 5 1.75 5h6.5C9.216 5 10 5.784 10 6.75v7.5A1.75 1.75 0 0 1 8.25 16h-6.5A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h6.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z'/%3E%3Cpath d='M6 1.75C6 .784 6.784 0 7.75 0h6.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11H12.5V9.5h1.75a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25h-6.5a.25.25 0 0 0-.25.25V3H6Z'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 6.75C0 5.784.784 5 1.75 5h6.5C9.216 5 10 5.784 10 6.75v7.5A1.75 1.75 0 0 1 8.25 16h-6.5A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h6.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z'/%3E%3Cpath d='M6 1.75C6 .784 6.784 0 7.75 0h6.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11H12.5V9.5h1.75a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25h-6.5a.25.25 0 0 0-.25.25V3H6Z'/%3E%3C/svg%3E")
+          center / contain no-repeat;
       }
 
       .code-block-wrapper:hover .code-block-copy,
@@ -2993,6 +3134,16 @@ export class JustDoChatElement extends LitElement {
     }
     const persistedMessages = messages;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
+    this.actionableUserEntryId =
+      ctrl &&
+      ctrl.state.connected &&
+      !isStreaming &&
+      !ctrl.state.chatLoading &&
+      !ctrl.state.historyLoadingOlder &&
+      !ctrl.state.compactionInFlight &&
+      ctrl.state.pendingUserMessage === null
+        ? latestPersistedUserEntryId(ctrl.getLoadedMessages() as GatewayMessage[])
+        : null;
 
     // Merge the optimistic prompt in turn order during session transitions.
     messages = mergePendingUserMessageForDisplay(messages, pendingMessage);
@@ -4010,9 +4161,63 @@ export class JustDoChatElement extends LitElement {
             }
           : historyItem,
       );
+      const entryId = openClawEntryId(item.message);
+      const userMessageActions =
+        entryId && entryId === this.actionableUserEntryId && this.onLastUserMessageAction
+          ? {
+              entryId,
+              onAction: (action: UserMessageHistoryAction, targetEntryId: string) => {
+                if (action === 'edit') {
+                  this.userMessageEditor = {
+                    entryId: targetEntryId,
+                    value: extractTextCached(item.message) ?? '',
+                    submitting: false,
+                  };
+                  void this.updateComplete.then(() => {
+                    this.renderRoot
+                      .querySelector<HTMLTextAreaElement>('.user-message-editor__input')
+                      ?.focus();
+                  });
+                  return;
+                }
+                this.onLastUserMessageAction?.(action, targetEntryId);
+              },
+              ...(this.userMessageEditor?.entryId === entryId
+                ? {
+                    editor: {
+                      value: this.userMessageEditor.value,
+                      submitting: this.userMessageEditor.submitting,
+                      onChange: (value: string) => {
+                        if (!this.userMessageEditor || this.userMessageEditor.entryId !== entryId)
+                          return;
+                        this.userMessageEditor = { ...this.userMessageEditor, value };
+                      },
+                      onCancel: () => {
+                        if (!this.userMessageEditor?.submitting) this.userMessageEditor = null;
+                      },
+                      onSubmit: async () => {
+                        if (!this.userMessageEditor || this.userMessageEditor.submitting) return;
+                        const value = this.userMessageEditor.value;
+                        this.userMessageEditor = { ...this.userMessageEditor, submitting: true };
+                        const completed = await this.onLastUserMessageAction?.(
+                          'edit',
+                          entryId,
+                          value,
+                        );
+                        if (completed) {
+                          this.userMessageEditor = null;
+                        } else if (this.userMessageEditor?.entryId === entryId) {
+                          this.userMessageEditor = { ...this.userMessageEditor, submitting: false };
+                        }
+                      },
+                    },
+                  }
+                : {}),
+            }
+          : undefined;
       return html`
         <div class="chat-history-row" data-history-key=${item.key} data-minimap-anchor=${item.key}>
-          ${this.renderItems(historyItems, null, showAvatar, showFooter)}
+          ${this.renderItems(historyItems, null, showAvatar, showFooter, userMessageActions)}
         </div>
       `;
     }
@@ -4336,6 +4541,10 @@ export class JustDoChatElement extends LitElement {
     thinkingStream: string | null = null,
     initialAssistantAvatar?: boolean,
     allowFooter = true,
+    userMessageActions?: {
+      entryId: string;
+      onAction: (action: UserMessageHistoryAction, entryId: string) => void;
+    },
   ): Array<TemplateResult | typeof nothing> {
     const rendered: Array<TemplateResult | typeof nothing> = [];
 
@@ -4378,6 +4587,7 @@ export class JustDoChatElement extends LitElement {
             workingDirectory: this.workingDirectory,
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
+            userMessageActions,
           }),
         );
         continue;

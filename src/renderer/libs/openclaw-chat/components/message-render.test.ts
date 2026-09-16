@@ -289,6 +289,23 @@ describe('group footer helpers', () => {
   });
 });
 
+describe('last user message actions', () => {
+  test('renders edit and withdraw controls only when the caller marks the message actionable', () => {
+    const onAction = vi.fn();
+    const actionable = stringifyTemplate(
+      renderMessageBlock(createGroup('user'), {
+        userMessageActions: { entryId: 'user-entry', onAction },
+      }),
+    );
+    const ordinary = stringifyTemplate(renderMessageBlock(createGroup('user')));
+
+    expect(actionable).toContain('user-message-actions');
+    expect(actionable).toContain(i18nService.t('coworkEditLastMessage'));
+    expect(actionable).toContain(i18nService.t('coworkWithdrawLastMessage'));
+    expect(ordinary).not.toContain('user-message-actions');
+  });
+});
+
 describe('renderMessageBlock', () => {
   test('renders read-aloud control only when an assistant speech handler is provided', () => {
     const handler = vi.fn();

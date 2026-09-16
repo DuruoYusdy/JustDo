@@ -27,6 +27,7 @@ import type {
   MessageContentItem,
   MessageGroup,
   NormalizedMessage,
+  UserMessageHistoryAction,
 } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -40,6 +41,17 @@ type MessageRenderOptions = {
   workingDirectory?: string;
   speechState?: 'idle' | 'loading' | 'playing';
   onSpeak?: (groupKey: string, text: string) => void;
+  userMessageActions?: {
+    entryId: string;
+    onAction: (action: UserMessageHistoryAction, entryId: string) => void;
+    editor?: {
+      value: string;
+      submitting: boolean;
+      onChange: (value: string) => void;
+      onCancel: () => void;
+      onSubmit: () => void;
+    };
+  };
 };
 
 type AssistantTimelineContentOptions = Pick<
@@ -90,6 +102,102 @@ const PLAYING_SPEECH_ICON = html`
     <span></span><span></span><span></span><span></span>
   </span>
 `;
+
+const EDIT_ICON = html`
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <path
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="1.8"
+      d="m16.86 3.49 3.65 3.65M5 19l3.9-.78L19.6 7.52a2.58 2.58 0 0 0-3.65-3.65L5.25 14.57 5 19Z"
+    ></path>
+  </svg>
+`;
+
+const WITHDRAW_ICON = html`
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <path
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="1.8"
+      d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"
+    ></path>
+  </svg>
+`;
+
+function renderUserMessageActions(
+  actions: NonNullable<MessageRenderOptions['userMessageActions']>,
+): TemplateResult {
+  const editLabel = i18nService.t('coworkEditLastMessage');
+  const withdrawLabel = i18nService.t('coworkWithdrawLastMessage');
+  return html`
+    <span class="user-message-actions">
+      <button
+        type="button"
+        class="user-message-action"
+        aria-label=${editLabel}
+        title=${editLabel}
+        @click=${(event: Event) => {
+          event.stopPropagation();
+          actions.onAction('edit', actions.entryId);
+        }}
+      >
+        ${EDIT_ICON}
+      </button>
+      <button
+        type="button"
+        class="user-message-action user-message-action--withdraw"
+        aria-label=${withdrawLabel}
+        title=${withdrawLabel}
+        @click=${(event: Event) => {
+          event.stopPropagation();
+          actions.onAction('withdraw', actions.entryId);
+        }}
+      >
+        ${WITHDRAW_ICON}
+      </button>
+    </span>
+  `;
+}
+
+function renderUserMessageEditor(
+  editor: NonNullable<NonNullable<MessageRenderOptions['userMessageActions']>['editor']>,
+): TemplateResult {
+  return html`
+    <div class="user-message-editor">
+      <textarea
+        class="user-message-editor__input"
+        .value=${editor.value}
+        ?disabled=${editor.submitting}
+        aria-label=${i18nService.t('coworkEditLastMessageInput')}
+        @input=${(event: Event) => editor.onChange((event.currentTarget as HTMLTextAreaElement).value)}
+        @keydown=${(event: KeyboardEvent) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            editor.onCancel();
+          }
+          if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            editor.onSubmit();
+          }
+        }}
+      ></textarea>
+      <div class="user-message-editor__actions">
+        <button type="button" ?disabled=${editor.submitting} @click=${editor.onCancel}>
+          ${i18nService.t('cancel')}
+        </button>
+        <button
+          type="button"
+          class="user-message-editor__submit"
+          ?disabled=${editor.submitting}
+          @click=${editor.onSubmit}
+        >
+          ${i18nService.t('coworkSendMessage')}
+        </button>
+      </div>
+    </div>
+  `;
+}
 
 async function copyMessage(event: Event, text: string): Promise<void> {
   event.stopPropagation();
@@ -692,15 +800,19 @@ export function renderMessageBlock(
     >
       <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
       <div class="chat-group__content">
-        ${group.messages.map((message, index) =>
-          renderSingleMessage(
-            message.message,
-            role,
-            opts,
-            index === speechMessageIndex ? speechAction : nothing,
-          ),
-        )}
-        ${renderGroupFooter(group, opts)}
+        ${
+          opts?.userMessageActions?.editor
+            ? renderUserMessageEditor(opts.userMessageActions.editor)
+            : html`${group.messages.map((message, index) =>
+                renderSingleMessage(
+                  message.message,
+                  role,
+                  opts,
+                  index === speechMessageIndex ? speechAction : nothing,
+                ),
+              )}
+              ${renderGroupFooter(group, opts)}`
+        }
       </div>
     </div>
   `;
@@ -897,12 +1009,14 @@ function renderGroupFooter(
   group: MessageGroup,
   opts?: MessageRenderOptions,
 ): TemplateResult | typeof nothing {
-  if (!(opts?.showFooter ?? true)) return nothing;
+  const userMessageActions = group.role === 'user' ? opts?.userMessageActions : undefined;
+  const showMetadata = opts?.showFooter ?? true;
+  if (!showMetadata && !userMessageActions) return nothing;
   const ts = group.timestamp;
-  if (!ts) return nothing;
+  if ((!ts || !showMetadata) && !userMessageActions) return nothing;
   const date = new Date(ts);
-  const time = formatGroupTimestamp(date);
-  const roleName = getGroupFooterLabel(group, opts?.assistantName);
+  const time = ts && showMetadata ? formatGroupTimestamp(date) : '';
+  const roleName = showMetadata ? getGroupFooterLabel(group, opts?.assistantName) : '';
   const duration =
     group.role === 'assistant' &&
     typeof group.durationMs === 'number' &&
@@ -912,13 +1026,14 @@ function renderGroupFooter(
       : null;
   return html`
     <div class="chat-group__footer">
+      ${userMessageActions ? renderUserMessageActions(userMessageActions) : nothing}
       ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
       ${
         roleName
           ? html`<span class="chat-group__footer-separator" aria-hidden="true">·</span>`
           : nothing
       }
-      <time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>
+      ${ts && showMetadata ? html`<time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>` : nothing}
       ${
         duration
           ? html`

@@ -158,7 +158,7 @@ const toMediaDirectivePath = (filePath: string): string => {
   return filePath.replace(/[\r\n]+/g, ' ').trim();
 };
 
-const appendMediaDirectiveLines = (prompt: string, filePaths: string[]): string => {
+export const appendMediaDirectiveLines = (prompt: string, filePaths: string[]): string => {
   const mediaLines = filePaths
     .map(toMediaDirectivePath)
     .filter(Boolean)
@@ -194,8 +194,6 @@ export interface CoworkPromptInputRef {
   setValue: (value: string) => void;
   /** 在当前可见草稿后追加文字，不依赖延迟持久化状态 */
   appendValue: (value: string) => void;
-  /** 设置图片附件（用于重新编辑消息时还原图片） */
-  setAttachments: (attachments: CoworkAttachmentPayload[]) => void;
   /** 聚焦输入框 */
   focus: () => void;
 }
@@ -733,15 +731,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           textarea.focus();
           textarea.setSelectionRange(nextValue.length, nextValue.length);
         });
-      },
-      setAttachments: (payloads: CoworkAttachmentPayload[]) => {
-        const newAttachments: CoworkAttachment[] = payloads.map((attachment, idx) => ({
-          path: `inline:${attachment.name}:reedit-${Date.now()}-${idx}`,
-          name: attachment.name,
-          isImage: attachment.mimeType.startsWith('image/'),
-          dataUrl: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
-        }));
-        dispatch(setDraftAttachments({ draftKey, attachments: newAttachments }));
       },
       focus: () => {
         textareaRef.current?.focus();

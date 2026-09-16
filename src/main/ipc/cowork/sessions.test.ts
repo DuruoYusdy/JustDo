@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
@@ -76,6 +77,211 @@ test('registers session handlers without reading the not-yet-initialized store',
     }),
   ).not.toThrow();
   expect(getCoworkStore).not.toHaveBeenCalled();
+});
+
+test('copies an idle session from its active transcript segment', async () => {
+  const source = {
+    id: 'source-session',
+    title: 'Source',
+    status: 'idle' as const,
+    pinned: false,
+    cwd: 'E:\\workspace\\project',
+    executionMode: 'local' as const,
+    permissionMode: 'auto' as const,
+    activeSkillIds: ['skill-1'],
+    agentId: 'main',
+    modelRef: 'provider/model',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const copied = { ...source, id: 'copied-session', title: 'Source (copy)' };
+  const store = {
+    getSession: vi.fn().mockReturnValue(source),
+    listSessionSegments: vi.fn().mockReturnValue([
+      {
+        id: 'segment-1',
+        logicalSessionId: source.id,
+        sessionKey: 'agent:main:justdo:implementation',
+        ordinal: 1,
+      },
+    ]),
+    createSession: vi.fn().mockReturnValue(copied),
+    deleteSession: vi.fn(),
+  } as unknown as CoworkStore;
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+    prepareSession: vi.fn().mockResolvedValue({
+      sessionKey: 'agent:main:justdo:copied-session',
+      gatewaySessionId: 'gateway-copy',
+    }),
+    onSessionDeleted: vi.fn(),
+  } as unknown as CoworkEngineRouter;
+  const requestGateway = vi.fn().mockResolvedValue({
+    key: 'agent:main:justdo:copied-session',
+    sessionId: 'gateway-copy',
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === CoworkSessionCopyIpc.Copy,
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: source.id, title: copied.title }),
+  ).resolves.toEqual({ success: true, session: copied });
+  expect(store.createSession).toHaveBeenCalledWith(
+    copied.title,
+    source.cwd,
+    source.executionMode,
+    source.activeSkillIds,
+    source.agentId,
+    source.permissionMode,
+    source.modelRef,
+  );
+  expect(requestGateway).toHaveBeenCalledWith('sessions.create', {
+    key: 'agent:main:justdo:copied-session',
+    parentSessionKey: 'agent:main:justdo:implementation',
+    fork: true,
+    cwd: source.cwd,
+    permissionMode: 'workspace',
+  });
+  expect(router.prepareSession).toHaveBeenCalledWith(copied.id);
+  expect(store.deleteSession).not.toHaveBeenCalled();
+});
+
+test('rolls back a copied local session when Gateway creation fails', async () => {
+  const source = {
+    id: 'source-session',
+    title: 'Source',
+    status: 'idle' as const,
+    pinned: false,
+    cwd: 'E:\\workspace\\project',
+    executionMode: 'local' as const,
+    permissionMode: 'ask' as const,
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const copied = { ...source, id: 'copied-session', title: 'Source (copy)' };
+  const store = {
+    getSession: vi.fn().mockReturnValue(source),
+    listSessionSegments: vi.fn().mockReturnValue([]),
+    createSession: vi.fn().mockReturnValue(copied),
+    deleteSession: vi.fn(),
+  } as unknown as CoworkStore;
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+    prepareSession: vi.fn(),
+    onSessionDeleted: vi.fn(),
+  } as unknown as CoworkEngineRouter;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway: vi.fn().mockRejectedValue(new Error('fork failed')),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === CoworkSessionCopyIpc.Copy,
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: source.id, title: copied.title }),
+  ).resolves.toEqual({ success: false, error: 'fork failed' });
+  expect(store.deleteSession).toHaveBeenCalledWith(copied.id);
+  expect(router.onSessionDeleted).toHaveBeenCalledWith(
+    copied.id,
+    copied.agentId,
+    ['agent:main:justdo:copied-session'],
+    [copied.cwd],
+  );
+});
+
+test('refuses to copy when aggregate runtime activity cannot be verified', async () => {
+  const store = {
+    getSession: vi.fn().mockReturnValue({
+      id: 'source-session',
+      cwd: 'E:\\workspace\\project',
+      agentId: 'main',
+    }),
+    createSession: vi.fn(),
+  } as unknown as CoworkStore;
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: false, running: false }),
+  } as unknown as CoworkEngineRouter;
+  const requestGateway = vi.fn();
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === CoworkSessionCopyIpc.Copy,
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: 'source-session', title: 'Source (copy)' }),
+  ).resolves.toEqual({
+    success: false,
+    error: 'The current session activity could not be verified. Try again in a moment.',
+  });
+  expect(store.createSession).not.toHaveBeenCalled();
+  expect(requestGateway).not.toHaveBeenCalled();
+});
+
+test('preserves the copy error when rollback cleanup also fails', async () => {
+  const source = {
+    id: 'source-session',
+    title: 'Source',
+    status: 'idle' as const,
+    pinned: false,
+    cwd: 'E:\\workspace\\project',
+    executionMode: 'local' as const,
+    permissionMode: 'ask' as const,
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const copied = { ...source, id: 'copied-session', title: 'Source (copy)' };
+  const store = {
+    getSession: vi.fn().mockReturnValue(source),
+    listSessionSegments: vi.fn().mockReturnValue([]),
+    createSession: vi.fn().mockReturnValue(copied),
+    deleteSession: vi.fn().mockImplementation(() => {
+      throw new Error('local cleanup failed');
+    }),
+  } as unknown as CoworkStore;
+  const router = {
+    getSessionRuntimeStatus: vi.fn().mockResolvedValue({ known: true, running: false }),
+    prepareSession: vi.fn().mockRejectedValue(new Error('adoption failed')),
+    onSessionDeleted: vi.fn().mockImplementation(() => {
+      throw new Error('runtime cleanup failed');
+    }),
+  } as unknown as CoworkEngineRouter;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => router,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway: vi.fn().mockResolvedValue({
+      key: 'agent:main:justdo:copied-session',
+      sessionId: 'gateway-copy',
+    }),
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === CoworkSessionCopyIpc.Copy,
+  )?.[1] as IpcHandler;
+
+  await expect(
+    handler({}, { sessionId: source.id, title: copied.title }),
+  ).resolves.toEqual({ success: false, error: 'adoption failed' });
+  expect(store.deleteSession).toHaveBeenCalledWith(copied.id);
+  expect(router.onSessionDeleted).toHaveBeenCalled();
 });
 
 test('reports failure when the runtime cannot confirm a session stop', async () => {

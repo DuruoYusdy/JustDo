@@ -259,7 +259,9 @@ Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，�
 
 历史失败消息不使用会话级 `lastError` 回填；错误详情优先取消息自身的 `errorMessage`，其次取同一 run 的失败记录。缺少 run identity 时仅允许唯一且完全相同的时间戳匹配，不使用一分钟邻近窗口，避免新一轮失败改写历史错误。匿名失败消息一旦关联失败记录，不再被其他 run 覆盖；补齐错误详情时保留原生消息已有的错误正文。
 
-## 18. 会话导出
+## 18. 会话操作与导出
+
+消息操作只绑定当前 active transcript 的最后一个持久化 user entry。渲染层根据 `__openclaw.id` 标记这一条，且在断连、sending、compaction、history load/page load 时隐藏操作；旧 segment 前缀、optimistic message 和缺少原生身份的投影都不可修改。确认后 Controller 再次核对最后一条原生 entry identity，再调用 `sessions.rewind`，使旧 history generation、分页窗口和显示缓存失效，并从 `chat.history` 重建当前 branch。修改模式把清理过内部 envelope 的 editor text、内联媒体和 `MEDIA:` 文件交回 React composer；history 重载失败或用户切换会话都不能丢失源会话草稿。撤回模式不恢复草稿。操作按钮仅发出 action/entry identity，不能在 Lit render 中直接维护业务草稿。
 
 导出使用Cowork session presentation与canonical items生成文本/Markdown等产品格式，包含必要角色、时间和内容；不直接dump internal state、token、approval payload或Gateway原始JSON。导出前需完成当前显示history加载范围的产品约定，避免误称“完整”却只导出窗口。
 

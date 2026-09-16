@@ -29,6 +29,217 @@ test('requests local speech from the Gateway for assistant text', async () => {
   expect(request).toHaveBeenCalledWith('tts.speak', { text: '你好' });
 });
 
+function seedControllerMessages(controller: ChatController, messages: unknown[]): void {
+  (
+    controller as unknown as {
+      setCurrentSessionMessages(
+        messages: unknown[],
+        options: { resetLoadedHistory: boolean },
+      ): void;
+    }
+  ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+}
+
+test('rewinds a persisted user message and reloads the authoritative branch', async () => {
+  const controller = new ChatController();
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.rewind') {
+      return {
+        editorText: composeBrowserGatewayPrompt('original prompt\nMEDIA:C:\\workspace\\brief.pdf', [
+          {
+            id: 'browser-1',
+            modelContext: 'private browser context',
+            title: 'Example',
+            displayUrl: 'https://example.com',
+            markedRegionCount: 0,
+            inspectedElement: false,
+            dataUrl: 'data:image/png;base64,aW1hZ2U=',
+            fileName: 'browser.png',
+            addedAt: 1,
+          },
+        ]),
+        editorAttachments: [{ mimeType: 'image/png', data: 'aW1hZ2U=' }],
+      };
+    }
+    if (method === 'chat.history') {
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: 'earlier prompt',
+            __openclaw: { id: 'earlier-user', seq: 1 },
+          },
+        ],
+        sessionId: 'gateway-session',
+        sessionInfo: {
+          sessionId: 'gateway-session',
+          activeLeafEntryId: 'earlier-user',
+        },
+      };
+    }
+    return {};
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-1';
+  controller.state.currentSessionId = 'gateway-session';
+  seedControllerMessages(controller, [
+    { role: 'user', content: 'latest prompt', __openclaw: { id: 'latest-user' } },
+  ]);
+
+  await expect(controller.rewindToUserMessage('latest-user')).resolves.toEqual({
+    text: 'original prompt',
+    attachments: [
+      {
+        name: 'restored-attachment-1.png',
+        mimeType: 'image/png',
+        base64Data: 'aW1hZ2U=',
+      },
+    ],
+    filePaths: ['C:\\workspace\\brief.pdf'],
+  });
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.rewind', {
+    sessionKey: 'agent:main:justdo:session-1',
+    entryId: 'latest-user',
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
+    sessionKey: 'agent:main:justdo:session-1',
+    limit: 250,
+    maxChars: 500_000,
+  });
+  expect(controller.state.chatMessages).toEqual([
+    expect.objectContaining({ role: 'user', content: 'earlier prompt' }),
+  ]);
+});
+
+test('returns the editor draft and schedules a retry when rewind history reload fails', async () => {
+  const controller = new ChatController();
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.rewind') return { editorText: 'recover me' };
+    throw new Error('history unavailable');
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-reload';
+  seedControllerMessages(controller, [
+    { role: 'user', content: 'latest prompt', __openclaw: { id: 'latest-user' } },
+  ]);
+  const internals = controller as unknown as {
+    scheduleDeferredHistoryReload(sessionKey: string, reason: string): void;
+  };
+  const scheduleReload = vi
+    .spyOn(internals, 'scheduleDeferredHistoryReload')
+    .mockImplementation(() => undefined);
+
+  await expect(controller.rewindToUserMessage('latest-user')).resolves.toEqual({
+    text: 'recover me',
+    attachments: [],
+    filePaths: [],
+  });
+  expect(scheduleReload).toHaveBeenCalledWith(
+    'agent:main:justdo:session-reload',
+    'rewind-reload-failed',
+  );
+});
+
+test('returns the source draft without loading it into another selected session', async () => {
+  const controller = new ChatController();
+  let finishRewind!: (value: { editorText: string }) => void;
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.rewind') {
+      return new Promise(resolve => {
+        finishRewind = resolve;
+      });
+    }
+    return Promise.resolve({});
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-source';
+  seedControllerMessages(controller, [
+    { role: 'user', content: 'latest prompt', __openclaw: { id: 'latest-user' } },
+  ]);
+
+  const rewinding = controller.rewindToUserMessage('latest-user');
+  controller.state.sessionKey = 'agent:main:justdo:session-other';
+  finishRewind({ editorText: 'source draft' });
+
+  await expect(rewinding).resolves.toEqual({
+    text: 'source draft',
+    attachments: [],
+    filePaths: [],
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test('keeps a rotated Gateway session identity while rebuilding the rewound branch', async () => {
+  const controller = new ChatController();
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.rewind') {
+      controller.state.currentSessionId = 'gateway-session-rotated';
+      return { editorText: 'rotated draft' };
+    }
+    if (method === 'chat.history') {
+      return {
+        messages: [],
+        sessionId: 'gateway-session-rotated',
+        sessionInfo: { sessionId: 'gateway-session-rotated' },
+      };
+    }
+    return {};
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-rotated';
+  controller.state.currentSessionId = 'gateway-session-original';
+  seedControllerMessages(controller, [
+    { role: 'user', content: 'latest prompt', __openclaw: { id: 'latest-user' } },
+  ]);
+
+  await expect(controller.rewindToUserMessage('latest-user')).resolves.toEqual({
+    text: 'rotated draft',
+    attachments: [],
+    filePaths: [],
+  });
+  expect(controller.state.transcript.sessionId).toBe('gateway-session-rotated');
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey: 'agent:main:justdo:session-rotated',
+    limit: 250,
+    maxChars: 500_000,
+  });
+});
+
+test('rejects rewind when the requested entry is no longer the latest persisted user message', async () => {
+  const controller = new ChatController();
+  const request = vi.fn();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-stale';
+  seedControllerMessages(controller, [
+    { role: 'user', content: 'old prompt', __openclaw: { id: 'old-user' } },
+    { role: 'assistant', content: 'reply', __openclaw: { id: 'reply' } },
+    { role: 'user', content: 'latest prompt', __openclaw: { id: 'latest-user' } },
+  ]);
+
+  await expect(controller.rewindToUserMessage('old-user')).rejects.toThrow(
+    'Only the latest persisted user message can be updated',
+  );
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('does not rewind history while the session is sending', async () => {
+  const controller = new ChatController();
+  const request = vi.fn();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.chatSending = true;
+
+  await expect(controller.rewindToUserMessage('latest-user')).rejects.toThrow(
+    'Wait for the current session activity to finish',
+  );
+  expect(request).not.toHaveBeenCalled();
+});
+
 test('waits through pre-registration no-active replies and cancels the later manual compaction handle', async () => {
   vi.useFakeTimers();
   const controller = new ChatController();

@@ -1252,3 +1252,121 @@ test('publishes the unknown admission receipt only after Main confirms recording
   expect(store.getState().cowork.sessionRuntimeActivity['unknown-marker-session']).toBe(true);
   vi.unstubAllGlobals();
 });
+
+test('copies and selects a session returned by Main', async () => {
+  const source: CoworkSession = {
+    id: 'copy-source',
+    title: 'Source session',
+    status: 'completed',
+    pinned: false,
+    cwd: 'C:\\workspace',
+    executionMode: 'local',
+    permissionMode: 'ask',
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const copied: CoworkSession = {
+    ...source,
+    id: 'copy-target',
+    title: i18nService.t('coworkCopySessionTitle').replace('{title}', source.title),
+    status: 'idle',
+    createdAt: 3,
+    updatedAt: 3,
+  };
+  const copySession = vi.fn().mockResolvedValue({ success: true, session: copied });
+  vi.stubGlobal('window', { electron: { cowork: { copySession } } });
+  store.dispatch(setCurrentSession(source));
+
+  await expect(coworkService.copySession(source)).resolves.toEqual(copied);
+  expect(copySession).toHaveBeenCalledWith({ sessionId: source.id, title: copied.title });
+  expect(store.getState().cowork.currentSession).toEqual(copied);
+
+  store.dispatch(deleteSession(copied.id));
+  store.dispatch(deleteSession(source.id));
+  store.dispatch(clearCurrentSession());
+  vi.unstubAllGlobals();
+});
+
+test('does not select a copied session after the user navigates away', async () => {
+  const source: CoworkSession = {
+    id: 'copy-navigation-source',
+    title: 'Source session',
+    status: 'completed',
+    pinned: false,
+    cwd: 'C:\\workspace',
+    executionMode: 'local',
+    permissionMode: 'ask',
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const other = { ...source, id: 'copy-navigation-other', title: 'Other session' };
+  const copied = { ...source, id: 'copy-navigation-target', title: 'Copied session' };
+  let finishCopy!: (value: { success: true; session: CoworkSession }) => void;
+  const copySession = vi.fn().mockReturnValue(
+    new Promise(resolve => {
+      finishCopy = resolve;
+    }),
+  );
+  vi.stubGlobal('window', { electron: { cowork: { copySession } } });
+  store.dispatch(setCurrentSession(source));
+
+  const copying = coworkService.copySession(source);
+  store.dispatch(setCurrentSession(other));
+  finishCopy({ success: true, session: copied });
+
+  await expect(copying).resolves.toEqual(copied);
+  expect(store.getState().cowork.currentSession).toEqual(other);
+  expect(store.getState().cowork.sessions.some(session => session.id === copied.id)).toBe(true);
+
+  store.dispatch(deleteSession(copied.id));
+  store.dispatch(deleteSession(source.id));
+  store.dispatch(deleteSession(other.id));
+  store.dispatch(clearCurrentSession());
+  vi.unstubAllGlobals();
+});
+
+test('copy selection invalidates an older in-flight session load', async () => {
+  const source: CoworkSession = {
+    id: 'copy-load-source',
+    title: 'Source session',
+    status: 'completed',
+    pinned: false,
+    cwd: 'C:\\workspace',
+    executionMode: 'local',
+    permissionMode: 'ask',
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const copied = { ...source, id: 'copy-load-target', title: 'Copied session' };
+  let finishLoad!: (value: { success: true; session: CoworkSession }) => void;
+  const getSession = vi.fn().mockReturnValue(
+    new Promise(resolve => {
+      finishLoad = resolve;
+    }),
+  );
+  const copySession = vi.fn().mockResolvedValue({ success: true, session: copied });
+  const remoteManaged = vi.fn().mockResolvedValue({ success: true, remoteManaged: false });
+  vi.stubGlobal('window', {
+    electron: { cowork: { copySession, getSession, remoteManaged } },
+  });
+  store.dispatch(setCurrentSession(source));
+
+  const loading = coworkService.loadSession(source.id);
+  await expect(coworkService.copySession(source)).resolves.toEqual(copied);
+  finishLoad({ success: true, session: source });
+  await expect(loading).resolves.toEqual(source);
+
+  expect(store.getState().cowork.currentSession).toEqual(copied);
+  expect(remoteManaged).not.toHaveBeenCalled();
+
+  store.dispatch(deleteSession(copied.id));
+  store.dispatch(deleteSession(source.id));
+  store.dispatch(clearCurrentSession());
+  vi.unstubAllGlobals();
+});

@@ -727,6 +727,29 @@ export class CoworkService {
     return false;
   }
 
+  async copySession(session: CoworkSession): Promise<CoworkSession | null> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.copySession) return null;
+
+    const title = i18nService
+      .t('coworkCopySessionTitle')
+      .replace('{title}', session.title);
+    try {
+      const result = await cowork.copySession({ sessionId: session.id, title });
+      if (result.success && result.session) {
+        const select = store.getState().cowork.currentSession?.id === session.id;
+        if (select) this.latestLoadSessionRequestId += 1;
+        store.dispatch(addSession({ session: result.session, select }));
+        return result.session;
+      }
+      console.error('Failed to copy session:', result.error);
+      return null;
+    } catch (error) {
+      console.error('Failed to copy session:', error);
+      return null;
+    }
+  }
+
   async deleteSessions(sessionIds: string[]): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;

@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react';
 
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
-import type { GatewayMessage } from '@/libs/openclaw-chat/types';
+import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 
 interface ChatMessageDisplayProps {
   className?: string;
@@ -23,6 +23,11 @@ interface ChatMessageDisplayProps {
   onSearchMatchCountChange?: (total: number, index: number) => void;
   runTimings?: SessionRunTiming[];
   historyPrefixMessages?: GatewayMessage[];
+  onLastUserMessageAction?: (
+    action: UserMessageHistoryAction,
+    entryId: string,
+    editedText?: string,
+  ) => boolean | Promise<boolean>;
 }
 
 /**
@@ -46,6 +51,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   onSearchMatchCountChange,
   runTimings = [],
   historyPrefixMessages = [],
+  onLastUserMessageAction,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
@@ -100,6 +106,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
     chat.historyPrefixMessages = historyPrefixMessages;
+    chat.onLastUserMessageAction = onLastUserMessageAction;
   }, [
     assistantName,
     controller,
@@ -109,6 +116,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     workingDirectory,
     runTimings,
     historyPrefixMessages,
+    onLastUserMessageAction,
   ]);
 
   useEffect(() => {

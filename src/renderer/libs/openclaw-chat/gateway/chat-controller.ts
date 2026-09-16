@@ -135,6 +135,7 @@ import {
   shouldHideMessage,
   stripAssistantSilentReplySuffix,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -193,6 +194,12 @@ export interface ChatContextUsageSnapshot {
   totalTokensFresh: boolean;
   updatedAt: number | null;
   modelRef: string | null;
+}
+
+export interface RewindEditorDraft {
+  text: string;
+  attachments: CoworkAttachmentPayload[];
+  filePaths: string[];
 }
 
 export type ChatStateListener = (state: ChatState) => void;
@@ -1912,6 +1919,115 @@ export class ChatController {
   /** Materialize every loaded page only for explicit whole-history consumers such as export. */
   getLoadedMessages(): unknown[] {
     return this.currentMessageHistory.toArray();
+  }
+
+  /** Repoint the current transcript to the state before one persisted user message. */
+  async rewindToUserMessage(entryId: string): Promise<RewindEditorDraft> {
+    const normalizedEntryId = entryId.trim();
+    const client = this.state.client;
+    if (!normalizedEntryId) throw new Error('A persisted user message is required');
+    if (!client || !this.state.connected) throw new Error('OpenClaw gateway is not connected');
+    if (
+      this.state.chatSending ||
+      this.state.compactionInFlight ||
+      this.state.chatLoading ||
+      this.state.historyLoadingOlder ||
+      this.state.pendingUserMessage !== null
+    ) {
+      throw new Error('Wait for the current session activity to finish');
+    }
+
+    const latestUserEntryId = (() => {
+      const messages = this.currentMessageHistory.toArray() as GatewayMessage[];
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message?.role?.toLowerCase() !== 'user') continue;
+        const marker = message.__openclaw;
+        if (marker?.kind === 'pending-send') return null;
+        const id = typeof marker?.id === 'string' ? marker.id.trim() : '';
+        return id || null;
+      }
+      return null;
+    })();
+    if (latestUserEntryId !== normalizedEntryId) {
+      throw new Error('Only the latest persisted user message can be updated');
+    }
+
+    const sessionKey = this.state.sessionKey;
+    const sessionId = this.state.currentSessionId;
+    this.state.chatLoading = true;
+    this.notify();
+    try {
+      const result = await client.request<{
+        editorText?: unknown;
+        editorAttachments?: Array<{ mimeType?: unknown; data?: unknown }>;
+      }>('sessions.rewind', { sessionKey, entryId: normalizedEntryId });
+      const rawEditorText = typeof result.editorText === 'string' ? result.editorText : '';
+      const browserPrompt = parseBrowserAnnotationPrompt(rawEditorText);
+      const editorText = browserPrompt?.userText ?? rawEditorText;
+      const goalText = extractGoalFollowUpRequest(editorText) ?? editorText;
+      const parsedMedia = splitMediaFromOutput(goalText);
+      const filePaths = parsedMedia.mediaUrls ?? [];
+      const text = filePaths.length
+        ? (parsedMedia.segments ?? [])
+            .filter(segment => segment.type === 'text')
+            .map(segment => segment.text)
+            .join('\n\n')
+        : goalText;
+      const attachments = (result.editorAttachments ?? []).flatMap((attachment, index) => {
+        const mimeType =
+          typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
+        const base64Data = typeof attachment.data === 'string' ? attachment.data.trim() : '';
+        if (!mimeType || !base64Data) return [];
+        const subtype = mimeType.split('/')[1]?.split(/[;+]/u)[0]?.replace(/[^a-z0-9]+/giu, '');
+        return [
+          {
+            name: `restored-attachment-${index + 1}${subtype ? `.${subtype}` : ''}`,
+            mimeType,
+            base64Data,
+          },
+        ];
+      });
+      const draft = { text, attachments, filePaths };
+      if (this.state.sessionKey !== sessionKey) {
+        this.chatMessagesBySession.delete(sessionKey);
+        this.historySourceBySession.delete(sessionKey);
+        this.historyPaginationBySession.delete(sessionKey);
+        this.displayedHistoryLeafBySession.delete(normalizeTranscriptSessionKey(sessionKey));
+        return draft;
+      }
+
+      this.historyPagingGeneration += 1;
+      this.resetHistoryPagination(sessionKey);
+      this.displayedHistoryLeafBySession.delete(normalizeTranscriptSessionKey(sessionKey));
+      this.resetTranscriptForSession(
+        sessionKey,
+        this.state.currentSessionId ?? sessionId,
+        false,
+      );
+      this.setCurrentSessionMessages([], { resetLoadedHistory: true });
+      this.state.pendingUserMessage = null;
+      this.state.lastError = null;
+      this.state.chatLoading = false;
+      this.notify();
+
+      try {
+        const loaded = await this.loadHistory();
+        if (!loaded && this.state.sessionKey === sessionKey) {
+          this.scheduleDeferredHistoryReload(sessionKey, 'rewind-reload-failed');
+        }
+      } catch {
+        if (this.state.sessionKey === sessionKey) {
+          this.scheduleDeferredHistoryReload(sessionKey, 'rewind-reload-failed');
+        }
+      }
+      return draft;
+    } finally {
+      if (this.state.sessionKey === sessionKey && this.state.chatLoading) {
+        this.state.chatLoading = false;
+        this.notify();
+      }
+    }
   }
 
   /** Load a closed transcript segment without changing the selected live session. */

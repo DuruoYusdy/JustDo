@@ -7,6 +7,7 @@ import {
   DocumentTextIcon,
   GlobeAltIcon,
   QueueListIcon,
+  Square2StackIcon,
   StopCircleIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -56,6 +57,7 @@ import JustDoChatWrapper, {
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import { submitCoworkMessage } from '@/features/cowork/components/composer/coworkMessageSubmit';
 import CoworkPromptInput, {
+  appendMediaDirectiveLines,
   type CoworkPromptInputRef,
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
@@ -108,7 +110,11 @@ import {
 import { coworkService } from '@/features/cowork/coworkService';
 import {
   addDraftBrowserAnnotation,
+  clearDraftBrowserAnnotations,
+  type DraftAttachment,
   setCurrentSession,
+  setDraftAttachments,
+  setDraftPrompt,
   setPlanMode,
   setStreaming,
   updateSessionStatus,
@@ -126,9 +132,13 @@ import {
 } from '@/features/cowork/sessionExport';
 import { clearActiveSkills } from '@/features/plugins/slices/skillSlice';
 import type { SettingsOpenOptions } from '@/features/settings/Settings';
-import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type {
+  ChatContextUsageSnapshot,
+  RewindEditorDraft,
+} from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
+import Modal from '@/shared/components/common/Modal';
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
@@ -212,6 +222,39 @@ export interface CoworkViewHandle {
 // Keep the last greeting across home view remounts in this app session.
 let lastHomeGreeting: string | undefined;
 
+type SessionTranscriptMutation = {
+  kind: 'copy' | 'message';
+  sessionId: string;
+};
+
+type PendingMessageHistoryAction = {
+  action: 'edit' | 'withdraw';
+  entryId: string;
+  sourceSessionId: string;
+  confirmationKey: string;
+  editedText?: string;
+};
+
+function restoredDraftAttachments(draft: RewindEditorDraft): DraftAttachment[] {
+  const restoredAt = Date.now();
+  const inline = draft.attachments.map((attachment, index) => ({
+    path: `inline:${attachment.name}:reedit-${restoredAt}-${index}`,
+    name: attachment.name,
+    isImage: attachment.mimeType.startsWith('image/'),
+    dataUrl: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
+  }));
+  const paths = draft.filePaths.map(filePath => {
+    const pathParts = filePath.split(/[\\/]/u).filter(Boolean);
+    const name = pathParts[pathParts.length - 1] ?? filePath;
+    return {
+      path: filePath,
+      name,
+      isImage: /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/iu.test(filePath),
+    };
+  });
+  return [...inline, ...paths];
+}
+
 const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) => {
   const {
     onRequestAppSettings,
@@ -269,6 +312,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [areProcessSummariesExpanded, setAreProcessSummariesExpanded] = useState(false);
   const [isSessionExportOpen, setIsSessionExportOpen] = useState(false);
+  const [sessionTranscriptMutation, setSessionTranscriptMutation] =
+    useState<SessionTranscriptMutation | null>(null);
+  const [pendingMessageHistoryAction, setPendingMessageHistoryAction] =
+    useState<PendingMessageHistoryAction | null>(null);
   const [sessionExportMessageCount, setSessionExportMessageCount] = useState(0);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
@@ -295,6 +342,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const filePreviewsRef = useRef(filePreviews);
   filePreviewsRef.current = filePreviews;
   const filePreviewRequestIdRef = useRef(0);
+  const sessionTranscriptMutationRef = useRef<SessionTranscriptMutation | null>(null);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
@@ -1541,6 +1589,138 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setIsSessionExportOpen(true);
     };
 
+    const handleCopySession = async (): Promise<void> => {
+      const sourceSessionId = currentSession.id;
+      if (
+        sourceSessionId.startsWith('temp-') ||
+        currentSessionRuntimeRunning ||
+        sessionTranscriptMutationRef.current
+      ) {
+        return;
+      }
+      const operation = { kind: 'copy' as const, sessionId: sourceSessionId };
+      sessionTranscriptMutationRef.current = operation;
+      setSessionTranscriptMutation(operation);
+      try {
+        const canNavigate = await requestFilePreviewTransition();
+        if (
+          !canNavigate ||
+          currentSessionIdRef.current !== sourceSessionId ||
+          currentSessionRuntimeRunningRef.current
+        ) {
+          return;
+        }
+        const copied = await coworkService.copySession(currentSession);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t(copied ? 'coworkCopySessionSuccess' : 'coworkCopySessionFailed'),
+          }),
+        );
+      } finally {
+        if (sessionTranscriptMutationRef.current === operation) {
+          sessionTranscriptMutationRef.current = null;
+          setSessionTranscriptMutation(null);
+        }
+      }
+    };
+
+    const performLastUserMessageAction = async ({
+      action,
+      entryId,
+      sourceSessionId,
+      editedText,
+    }: PendingMessageHistoryAction): Promise<boolean> => {
+      if (currentSessionIdRef.current !== sourceSessionId || sessionTranscriptMutationRef.current) {
+        return false;
+      }
+      const operation = { kind: 'message' as const, sessionId: sourceSessionId };
+      sessionTranscriptMutationRef.current = operation;
+      setSessionTranscriptMutation(operation);
+      try {
+        const runtime = await coworkService.getSessionRuntimeStatus(sourceSessionId, {
+          includeSubagents: true,
+          forceRefresh: true,
+          fullScan: true,
+        });
+        if (currentSessionIdRef.current !== sourceSessionId) return false;
+        if (!runtime.known || runtime.running) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t(
+                runtime.running
+                  ? 'coworkMessageHistoryWaitForCompletion'
+                  : 'coworkMessageHistoryActivityUnknown',
+              ),
+            }),
+          );
+          return false;
+        }
+        const draft = await chatWrapperRef.current?.rewindToUserMessage(entryId);
+        if (!draft) throw new Error('Chat controller is not ready');
+        if (action === 'edit') {
+          const nextText = editedText ?? draft.text;
+          const sent = await handleSendMessage(
+            nextText,
+            draft.attachments,
+            appendMediaDirectiveLines(nextText, draft.filePaths),
+          );
+          if (sent === false) {
+            dispatch(setDraftPrompt({ sessionId: sourceSessionId, draft: nextText }));
+            dispatch(
+              setDraftAttachments({
+                draftKey: sourceSessionId,
+                attachments: restoredDraftAttachments(draft),
+              }),
+            );
+            dispatch(clearDraftBrowserAnnotations({ draftKey: sourceSessionId }));
+            if (currentSessionIdRef.current === sourceSessionId) {
+              promptInputRef.current?.setValue(nextText);
+              requestAnimationFrame(() => promptInputRef.current?.focus());
+            }
+          }
+        }
+        return true;
+      } catch (error) {
+        console.error('[CoworkView] Failed to update the last user message:', error);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkMessageHistoryMutationFailed'),
+          }),
+        );
+        return false;
+      } finally {
+        if (sessionTranscriptMutationRef.current === operation) {
+          sessionTranscriptMutationRef.current = null;
+          setSessionTranscriptMutation(null);
+        }
+      }
+    };
+
+    const handleLastUserMessageAction = (
+      action: 'edit' | 'withdraw',
+      entryId: string,
+      editedText?: string,
+    ): boolean | Promise<boolean> => {
+      const sourceSessionId = currentSession.id;
+      if (sessionTranscriptMutationRef.current) return false;
+      if (action === 'edit') {
+        return performLastUserMessageAction({
+          action,
+          entryId,
+          sourceSessionId,
+          confirmationKey: '',
+          editedText,
+        });
+      }
+      setPendingMessageHistoryAction({
+        action,
+        entryId,
+        sourceSessionId,
+        confirmationKey: 'coworkWithdrawLastMessageConfirm',
+      });
+      return true;
+    };
+
     const handleExportSession = async (includeRawData: boolean): Promise<boolean> => {
       try {
         const snapshot = chatWrapperRef.current?.getExportSnapshot();
@@ -1773,6 +1953,40 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   <ArrowDownTrayIcon className="h-4 w-4" />
                 </button>
+                <button
+                  type="button"
+                  onMouseDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    void handleCopySession();
+                  }}
+                  disabled={
+                    currentSession.id.startsWith('temp-') ||
+                    currentSessionRuntimeRunning ||
+                    sessionTranscriptMutation !== null
+                  }
+                  className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+                  title={i18nService.t(
+                    currentSessionRuntimeRunning
+                      ? 'coworkCopyWaitForCompletion'
+                      : currentSession.id.startsWith('temp-')
+                        ? 'coworkCopyUnavailableForDraft'
+                        : 'coworkCopySession',
+                  )}
+                  aria-label={i18nService.t(
+                    currentSessionRuntimeRunning
+                      ? 'coworkCopyWaitForCompletion'
+                      : currentSession.id.startsWith('temp-')
+                        ? 'coworkCopyUnavailableForDraft'
+                        : 'coworkCopySession',
+                  )}
+                >
+                  {sessionTranscriptMutation?.kind === 'copy' ? (
+                    <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Square2StackIcon className="h-4 w-4" />
+                  )}
+                </button>
                 {progressCard && (
                   <button
                     type="button"
@@ -1959,6 +2173,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onSessionKeyChange={sessionKey =>
                 setReportedGatewaySessionKey({ sessionId: currentSession.id, sessionKey })
               }
+              onLastUserMessageAction={
+                sessionTranscriptMutation === null ? handleLastUserMessageAction : undefined
+              }
               runTimings={sessionRunTimings[currentSession.id] ?? []}
             />
             {/* Input */}
@@ -2132,6 +2349,49 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             onClose={() => setIsSessionExportOpen(false)}
             onExport={handleExportSession}
           />
+          {pendingMessageHistoryAction && (
+            <Modal
+              onClose={() => setPendingMessageHistoryAction(null)}
+              className="mx-4 w-full max-w-md overflow-hidden rounded-2xl bg-surface shadow-xl"
+            >
+              <div className="px-5 py-4">
+                <h2 className="text-base font-semibold text-foreground">
+                  {i18nService.t(
+                    pendingMessageHistoryAction.action === 'edit'
+                      ? 'coworkEditLastMessageConfirmTitle'
+                      : 'coworkWithdrawLastMessageConfirmTitle',
+                  )}
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-secondary">
+                  {i18nService.t(pendingMessageHistoryAction.confirmationKey)}
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => setPendingMessageHistoryAction(null)}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-secondary transition-colors hover:bg-surface-raised"
+                >
+                  {i18nService.t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pending = pendingMessageHistoryAction;
+                    setPendingMessageHistoryAction(null);
+                    void performLastUserMessageAction(pending);
+                  }}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
+                    pendingMessageHistoryAction.action === 'withdraw'
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : 'bg-primary hover:opacity-90'
+                  }`}
+                >
+                  {i18nService.t('confirm')}
+                </button>
+              </div>
+            </Modal>
+          )}
         </div>
       </div>
     );

@@ -29,6 +29,7 @@ import {
   normalizeBrowserPanelOpenTabEvent,
 } from '../shared/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
+import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
@@ -477,6 +478,8 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke('cowork:session:start', options),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
+    copySession: (input: CopyCoworkSessionInput) =>
+      ipcRenderer.invoke(CoworkSessionCopyIpc.Copy, input),
     deleteSessions: (sessionIds: string[]) =>
       ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>

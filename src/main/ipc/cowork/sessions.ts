@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 
+import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
 import {
   type BeginSessionRunInput,
   SessionRunBeginErrorCode,
@@ -11,10 +12,18 @@ import {
   type SessionRunUnknownInput,
 } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
-import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
+import {
+  isPermissionMode,
+  type PermissionMode,
+  toOpenClawSessionPermissionMode,
+} from '../../../shared/openclaw/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
+import {
+  buildManagedSessionKey,
+  DEFAULT_MANAGED_AGENT_ID,
+} from '../../openclaw/sessions/openclawSessionKeys';
 import { searchCoworkSessionMessages } from '../../openclaw/sessions/openclawSessionSearch';
 
 interface SessionHandlerDependencies {
@@ -636,6 +645,118 @@ export const registerCoworkSessionHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to delete session',
+      };
+    }
+  });
+
+  ipcMain.handle(CoworkSessionCopyIpc.Copy, async (_event, input: CopyCoworkSessionInput) => {
+    const sourceSessionId = typeof input?.sessionId === 'string' ? input.sessionId.trim() : '';
+    const title = typeof input?.title === 'string' ? input.title.trim() : '';
+    if (!sourceSessionId || !title) {
+      return { success: false, error: 'A source session and title are required.' };
+    }
+
+    const store = getCoworkStore();
+    const router = getCoworkEngineRouter();
+    const source = store.getSession(sourceSessionId);
+    if (!source) return { success: false, error: 'Source session not found.' };
+    if (!requestGateway) {
+      return { success: false, error: 'OpenClaw Gateway session copy is unavailable.' };
+    }
+
+    let copiedSession: ReturnType<CoworkStore['createSession']> | null = null;
+    let copiedSessionKey = '';
+    try {
+      const runtime = await router.getSessionRuntimeStatus(sourceSessionId, {
+        includeSubagents: true,
+        forceRefresh: true,
+        fullScan: true,
+      });
+      if (!runtime.known) {
+        return {
+          success: false,
+          error: 'The current session activity could not be verified. Try again in a moment.',
+        };
+      }
+      if (runtime.running) {
+        return { success: false, error: 'Wait for the current session to finish before copying.' };
+      }
+
+      const segments = store
+        .listSessionSegments(sourceSessionId)
+        .slice()
+        .sort((left, right) => right.ordinal - left.ordinal);
+      const activeSegment = segments
+        .find(segment => segment.endedAt === undefined);
+      if (segments.length > 0 && !activeSegment) {
+        throw new Error('The source session has no active transcript segment.');
+      }
+      const parentSessionKey =
+        activeSegment?.sessionKey ??
+        buildManagedSessionKey(
+          sourceSessionId,
+          source.agentId || DEFAULT_MANAGED_AGENT_ID,
+        );
+      copiedSession = store.createSession(
+        title,
+        source.cwd,
+        source.executionMode,
+        source.activeSkillIds,
+        source.agentId,
+        source.permissionMode,
+        source.modelRef,
+      );
+      copiedSessionKey = buildManagedSessionKey(
+        copiedSession.id,
+        copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
+      );
+      const created = await requestGateway<{
+        key?: unknown;
+        sessionId?: unknown;
+        entry?: { sessionId?: unknown };
+      }>('sessions.create', {
+        key: copiedSessionKey,
+        parentSessionKey,
+        fork: true,
+        cwd: source.cwd,
+        permissionMode: toOpenClawSessionPermissionMode(source.permissionMode),
+      });
+      const gatewaySessionId =
+        typeof created.sessionId === 'string'
+          ? created.sessionId.trim()
+          : typeof created.entry?.sessionId === 'string'
+            ? created.entry.sessionId.trim()
+            : '';
+      const returnedKey = typeof created.key === 'string' ? created.key.trim() : copiedSessionKey;
+      if (!gatewaySessionId || returnedKey !== copiedSessionKey) {
+        throw new Error('OpenClaw did not create the requested copied session.');
+      }
+
+      // Adopting the explicit key verifies the copied workspace and permission
+      // boundary and records the runtime key in the adapter cache.
+      await router.prepareSession(copiedSession.id);
+      return { success: true, session: copiedSession };
+    } catch (error) {
+      if (copiedSession) {
+        try {
+          store.deleteSession(copiedSession.id);
+        } catch {
+          // Preserve the original copy failure; local cleanup is best effort.
+        }
+        try {
+          router.onSessionDeleted(
+            copiedSession.id,
+            copiedSession.agentId,
+            copiedSessionKey ? [copiedSessionKey] : [],
+            [copiedSession.cwd],
+          );
+        } catch {
+          // Preserve the original copy failure; runtime cleanup is best effort.
+        }
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to copy session.',
       };
     }
   });

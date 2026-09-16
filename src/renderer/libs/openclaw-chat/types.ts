@@ -5,6 +5,8 @@
 
 import type { BrowserAnnotationDisplay } from '@shared/browser';
 
+export type UserMessageHistoryAction = 'edit' | 'withdraw';
+
 // ─── ChatItem (rendering pipeline output) ───────────────────────────────────
 
 /** Union type for items in the chat thread */

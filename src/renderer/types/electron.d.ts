@@ -704,6 +704,9 @@ interface IElectronAPI {
     }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    copySession: (
+      input: import('../../shared/cowork/sessionCopy').CopyCoworkSessionInput,
+    ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
     setSessionPinned: (options: {
       sessionId: string;

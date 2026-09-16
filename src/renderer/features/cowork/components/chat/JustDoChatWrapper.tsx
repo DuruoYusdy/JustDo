@@ -32,7 +32,9 @@ import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/c
 import {
   type ChatContextUsageSnapshot,
   ChatController,
+  type RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type { UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 const DEBUG_CHAT_WRAPPER =
@@ -59,6 +61,11 @@ interface JustDoChatWrapperProps {
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
   onSessionKeyChange?: (sessionKey: string) => void;
   runTimings?: SessionRunTiming[];
+  onLastUserMessageAction?: (
+    action: UserMessageHistoryAction,
+    entryId: string,
+    editedText?: string,
+  ) => boolean | Promise<boolean>;
 }
 
 type SegmentLoadState = {
@@ -113,6 +120,7 @@ export interface JustDoChatWrapperRef {
   beginGoalResume: (sessionKey: string, runId: string) => void;
   /** Clear the current card only if its completed revision is still current. */
   dismissProgressCard: () => Promise<boolean>;
+  rewindToUserMessage: (entryId: string) => Promise<RewindEditorDraft>;
 }
 
 const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(
@@ -131,6 +139,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onContextUsageChange,
       onProgressCardChange,
       onSessionKeyChange,
+      onLastUserMessageAction,
       runTimings = [],
     },
     ref,
@@ -479,6 +488,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           controllerRef.current?.beginGoalResume(sessionKey, runId);
         },
         dismissProgressCard: async () => controllerRef.current?.dismissProgressCard() ?? false,
+        rewindToUserMessage: async entryId => {
+          const controller = controllerRef.current;
+          if (!controller) throw new Error('Controller not initialized');
+          return controller.rewindToUserMessage(entryId);
+        },
       }),
       [],
     );
@@ -710,6 +724,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             ? (historyPrefix.messages as import('@/libs/openclaw-chat/types').GatewayMessage[])
             : []
         }
+        onLastUserMessageAction={onLastUserMessageAction}
       />
     );
   },

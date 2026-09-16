@@ -108,6 +108,8 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 Main 与 Redux 也不再维护 transcript projection。Renderer 的 chat controller 直接消费 Gateway history、in-flight snapshot 和实时 Thinking/Tool/Content 事件，并只在页面生命周期内保存有界的显示状态。会话导出必须从 controller 的 Gateway 快照生成；全文搜索、历史详情、定时任务结果和 subagent timeline 均按需查询 Gateway。产品侧 `CoworkSession` 契约不再包含 `messages` 字段，避免空数组被误当作可用 transcript 或降级数据源。
 
+会话复制只新增一条独立的 `cowork_sessions` 元数据记录；正文复制由 OpenClaw transcript fork 完成，不写入 `justdo.sqlite`。复制失败时删除这条新记录，因此不需要新表、迁移或消息缓存。最后一条消息修改/撤回同样只改变 OpenClaw 的 active transcript branch，不更新本 schema。
+
 OpenClaw v2026.9.2 对接不再由 JustDo 直接读写 agent `sessions.json`。Gateway history、session model 与 task state 分别通过 `chat.history`、`sessions.patch`、`tasks.list/get` 获取；受限 history detail 由内置 runtime services RPC 投影。
 
 若升级时检测到 legacy OpenClaw `sessions.json`，Gateway 启动会被 migration coordinator 阻止。migration receipt、manifest 和不含 workspace 的已验证备份保存在 OpenClaw state 的受管迁移目录，不进入 `justdo.sqlite` schema；只有原生 import、validate、inspect 和 integrity 全部成功才写完成 receipt。取消或失败不删除 legacy store，也不启动空 Gateway。

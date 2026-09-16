@@ -1034,6 +1034,26 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportHistoryLoading: '会话历史仍在加载，请稍后再试',
     coworkSessionRoutingLoading: '会话执行上下文仍在加载，请稍后再试',
     coworkExportWaitForCompletion: '请等待当前回复完成后再导出',
+    coworkCopySession: '复制当前会话',
+    coworkCopySessionTitle: '{title}（副本）',
+    coworkCopySessionSuccess: '已复制为新会话',
+    coworkCopySessionFailed: '复制会话失败，请稍后重试',
+    coworkCopyWaitForCompletion: '请等待当前回复完成后再复制',
+    coworkCopyUnavailableForDraft: '发送第一条消息后才能复制会话',
+    coworkEditLastMessage: '修改最后一条消息',
+    coworkEditLastMessageInput: '编辑消息内容',
+    coworkWithdrawLastMessage: '撤回最后一条消息',
+    coworkEditLastMessageConfirmTitle: '修改最后一条消息？',
+    coworkWithdrawLastMessageConfirmTitle: '撤回最后一条消息？',
+    coworkEditLastMessageConfirm:
+      '修改后将从当前会话移除这条消息及其后的回复，并把原内容放回输入框。仅回退会话记录，已经执行的操作不会撤销。是否继续？',
+    coworkEditLastMessageWithDraftConfirm:
+      '修改后将从当前会话移除这条消息及其后的回复，并替换输入框中尚未发送的草稿和附件。仅回退会话记录，已经执行的操作不会撤销。是否继续？',
+    coworkWithdrawLastMessageConfirm:
+      '撤回后将从当前会话移除这条消息及其后的回复。仅回退会话记录，已经执行的操作不会撤销。是否继续？',
+    coworkMessageHistoryWaitForCompletion: '请等待当前会话及其子任务完成后再修改消息',
+    coworkMessageHistoryActivityUnknown: '暂时无法确认会话运行状态，请稍后重试',
+    coworkMessageHistoryMutationFailed: '更新消息失败，请稍后重试',
 
     // 模型选择
 
@@ -3404,6 +3424,28 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkSessionRoutingLoading:
       'The session execution context is still loading. Please try again shortly.',
     coworkExportWaitForCompletion: 'Wait for the current response to finish before exporting',
+    coworkCopySession: 'Copy current session',
+    coworkCopySessionTitle: '{title} (copy)',
+    coworkCopySessionSuccess: 'Copied to a new session',
+    coworkCopySessionFailed: 'Failed to copy the session. Please try again.',
+    coworkCopyWaitForCompletion: 'Wait for the current response to finish before copying',
+    coworkCopyUnavailableForDraft: 'Send the first message before copying this session',
+    coworkEditLastMessage: 'Edit last message',
+    coworkEditLastMessageInput: 'Edit message content',
+    coworkWithdrawLastMessage: 'Withdraw last message',
+    coworkEditLastMessageConfirmTitle: 'Edit the last message?',
+    coworkWithdrawLastMessageConfirmTitle: 'Withdraw the last message?',
+    coworkEditLastMessageConfirm:
+      'Editing will remove this message and all replies after it from the current session, then restore the original content to the composer. Only the conversation record is rewound; completed actions are not undone. Continue?',
+    coworkEditLastMessageWithDraftConfirm:
+      'Editing will remove this message and all replies after it from the current session, and replace the unsent draft and attachments in the composer. Only the conversation record is rewound; completed actions are not undone. Continue?',
+    coworkWithdrawLastMessageConfirm:
+      'Withdrawing will remove this message and all replies after it from the current session. Only the conversation record is rewound; completed actions are not undone. Continue?',
+    coworkMessageHistoryWaitForCompletion:
+      'Wait for the current session and its subtasks to finish before changing messages.',
+    coworkMessageHistoryActivityUnknown:
+      'The session activity could not be verified. Please try again shortly.',
+    coworkMessageHistoryMutationFailed: 'Failed to update the message. Please try again.',
 
     // Model Selection
 
