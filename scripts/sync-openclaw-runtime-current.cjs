@@ -40,20 +40,34 @@ try {
 const linkType = process.platform === 'win32' ? 'junction' : 'dir';
 fs.symlinkSync(targetRuntimeDir, currentRuntimeDir, linkType);
 
-console.log(`[sync-openclaw-runtime-current] Synced ${targetId} -> vendor/openclaw-runtime/current`);
+console.log(
+  `[sync-openclaw-runtime-current] Synced ${targetId} -> vendor/openclaw-runtime/current`,
+);
 
 // Extract entry files from gateway.asar if bare files are missing.
 // On Windows, Electron's utilityProcess.fork() cannot load ESM from inside .asar archives,
 // so bare files must exist on the real filesystem.
 const gatewayAsarPath = path.join(currentRuntimeDir, 'gateway.asar');
 const bareEntryPath = path.join(currentRuntimeDir, 'openclaw.mjs');
-if (fs.existsSync(gatewayAsarPath) && !fs.existsSync(bareEntryPath)) {
+const bareNodeVersionPath = path.join(currentRuntimeDir, 'node-version.mjs');
+const hasBareDistEntry =
+  fs.existsSync(path.join(currentRuntimeDir, 'dist', 'entry.js')) ||
+  fs.existsSync(path.join(currentRuntimeDir, 'dist', 'entry.mjs'));
+if (
+  fs.existsSync(gatewayAsarPath) &&
+  (!fs.existsSync(bareEntryPath) || !fs.existsSync(bareNodeVersionPath) || !hasBareDistEntry)
+) {
   try {
     const asar = require('@electron/asar');
     const entries = asar.listPackage(gatewayAsarPath);
     const toExtract = entries.filter(function (e) {
       const normalized = e.replace(/\\/g, '/');
-      return normalized === '/openclaw.mjs' || normalized.startsWith('/dist/');
+      return (
+        normalized === '/openclaw.mjs' ||
+        normalized === '/node-version.mjs' ||
+        normalized === '/package.json' ||
+        normalized.startsWith('/dist/')
+      );
     });
 
     let extracted = 0;
@@ -61,6 +75,7 @@ if (fs.existsSync(gatewayAsarPath) && !fs.existsSync(bareEntryPath)) {
       // Use forward slashes for filesystem dest path.
       const normalized = entry.replace(/\\/g, '/').replace(/^\//, '');
       const destPath = path.join(currentRuntimeDir, normalized);
+      if (fs.existsSync(destPath)) continue;
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       // asar.extractFile needs the path in the same format stored in the archive.
       // On Windows the asar is packed with backslash paths; strip only the leading
@@ -75,9 +90,13 @@ if (fs.existsSync(gatewayAsarPath) && !fs.existsSync(bareEntryPath)) {
       }
     }
 
-    console.log(`[sync-openclaw-runtime-current] Extracted ${extracted}/${toExtract.length} entry files from gateway.asar`);
+    console.log(
+      `[sync-openclaw-runtime-current] Extracted ${extracted}/${toExtract.length} entry files from gateway.asar`,
+    );
   } catch (err) {
-    console.warn(`[sync-openclaw-runtime-current] Could not extract from gateway.asar: ${err.message}`);
+    console.warn(
+      `[sync-openclaw-runtime-current] Could not extract from gateway.asar: ${err.message}`,
+    );
   }
 }
 

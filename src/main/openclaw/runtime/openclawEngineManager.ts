@@ -17,6 +17,7 @@ import type {
   OpenClawSessionMigrationResult,
 } from '../../../shared/openclaw/sessionMigration';
 import type { SystemPromptReplacementRule } from '../../../shared/openclaw/systemPromptReplacements';
+import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
 import { applyPortableGitRuntimeEnv } from '../../core/portableGitRuntime';
 import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
@@ -164,6 +165,69 @@ const findPath = (candidates: string[]): string | null => {
   }
   return null;
 };
+
+export const resolveOpenClawCliEntry = (runtimeRoot: string): string | null =>
+  findPath([
+    path.join(runtimeRoot, 'openclaw.mjs'),
+    path.join(runtimeRoot, 'gateway.asar', 'openclaw.mjs'),
+  ]);
+
+export const resolveOpenClawGatewayBundleEntry = (
+  runtimeRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null => {
+  const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
+  return platform !== 'win32' && fs.existsSync(bundlePath) ? bundlePath : null;
+};
+
+export const buildOpenClawCliShimSources = (): {
+  shell: string;
+  windows: string;
+} => ({
+  shell: [
+    '#!/usr/bin/env bash',
+    'if [ -z "${JUSTDO_OPENCLAW_ENTRY:-}" ]; then',
+    '  echo "JUSTDO_OPENCLAW_ENTRY is not set" >&2',
+    '  exit 127',
+    'fi',
+    'if [ -x "${JUSTDO_ELECTRON_PATH:-}" ]; then',
+    '  exec env ELECTRON_RUN_AS_NODE=1 "${JUSTDO_ELECTRON_PATH}" "${JUSTDO_OPENCLAW_ENTRY}" "$@"',
+    'fi',
+    'if command -v node >/dev/null 2>&1; then',
+    '  exec node "${JUSTDO_OPENCLAW_ENTRY}" "$@"',
+    'fi',
+    'echo "Neither JUSTDO_ELECTRON_PATH nor node is available for OpenClaw CLI." >&2',
+    'exit 127',
+    '',
+  ].join('\n'),
+  windows: [
+    '@echo off',
+    'setlocal',
+    'if "%JUSTDO_OPENCLAW_ENTRY%"=="" (',
+    '  echo JUSTDO_OPENCLAW_ENTRY is not set 1>&2',
+    '  exit /b 127',
+    ')',
+    'for /f "delims=" %%N in (\'where.exe node.exe 2^>nul\') do (',
+    '  set "JUSTDO_CLI_NODE=%%N"',
+    '  goto run_node',
+    ')',
+    'if not "%JUSTDO_ELECTRON_PATH%"=="" if exist "%JUSTDO_ELECTRON_PATH%" goto run_electron',
+    'echo Neither node.exe nor JUSTDO_ELECTRON_PATH is available for OpenClaw CLI. 1>&2',
+    'exit /b 127',
+    ':run_electron',
+    'set ELECTRON_RUN_AS_NODE=1',
+    '"%JUSTDO_ELECTRON_PATH%" "%JUSTDO_OPENCLAW_ENTRY%" %*',
+    'exit /b %ERRORLEVEL%',
+    ':run_node',
+    '"%JUSTDO_CLI_NODE%" "%JUSTDO_OPENCLAW_ENTRY%" %*',
+    'exit /b %ERRORLEVEL%',
+    '',
+  ].join('\r\n'),
+});
+
+export const OPENCLAW_CLI_COMMAND_NAMES = [
+  ...new Set(['openclaw', 'claw', PRODUCT_NAME_LOWERCASE]),
+] as const;
 
 const isPortReachable = (host: string, port: number, timeoutMs = 1200): Promise<boolean> => {
   return new Promise(resolve => {
@@ -584,9 +648,9 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     this.ensureBareEntryFiles(runtime.root);
-    const openclawEntry = this.resolveOpenClawEntry(runtime.root);
+    const openclawEntry = resolveOpenClawCliEntry(runtime.root);
     if (!openclawEntry) {
-      throw new Error(`OpenClaw entry file is missing in runtime: ${runtime.root}.`);
+      throw new Error(`OpenClaw CLI entry file is missing in runtime: ${runtime.root}.`);
     }
 
     const token = this.ensureGatewayToken();
@@ -915,7 +979,16 @@ export class OpenClawEngineManager extends EventEmitter {
     }
     const launchEnvironmentGeneration = this.gatewayLaunchEnvironmentGeneration;
     console.log(`[OpenClaw] buildCliEnvironment done (${elapsed()})`);
-    const openclawEntry = cliEnvironment.openclawEntry;
+    const openclawEntry = this.resolveOpenClawGatewayEntry(runtime.root);
+    if (!openclawEntry) {
+      this.setStatus({
+        phase: 'error',
+        version: runtime.version,
+        message: `OpenClaw Gateway entry file is missing in runtime: ${runtime.root}.`,
+        canRetry: true,
+      });
+      return this.getStatus();
+    }
     console.log(
       `[OpenClaw] startGateway: resolveOpenClawEntry done (${elapsed()}), entry=${openclawEntry}`,
     );
@@ -1235,45 +1308,12 @@ export class OpenClawEngineManager extends EventEmitter {
 
   private ensureBundledCliShims(): string | null {
     const shimDir = path.join(this.stateDir, 'bin');
-    const shellWrapper = [
-      '#!/usr/bin/env bash',
-      'if [ -z "${JUSTDO_OPENCLAW_ENTRY:-}" ]; then',
-      '  echo "JUSTDO_OPENCLAW_ENTRY is not set" >&2',
-      '  exit 127',
-      'fi',
-      'if [ -n "${JUSTDO_ELECTRON_PATH:-}" ]; then',
-      '  exec env ELECTRON_RUN_AS_NODE=1 "${JUSTDO_ELECTRON_PATH}" "${JUSTDO_OPENCLAW_ENTRY}" "$@"',
-      'fi',
-      'if command -v node >/dev/null 2>&1; then',
-      '  exec node "${JUSTDO_OPENCLAW_ENTRY}" "$@"',
-      'fi',
-      'echo "Neither JUSTDO_ELECTRON_PATH nor node is available for OpenClaw CLI." >&2',
-      'exit 127',
-      '',
-    ].join('\n');
-    const windowsWrapper = [
-      '@echo off',
-      'if "%JUSTDO_OPENCLAW_ENTRY%"=="" (',
-      '  echo JUSTDO_OPENCLAW_ENTRY is not set 1>&2',
-      '  exit /b 127',
-      ')',
-      'for /f "delims=" %%N in (\'where.exe node.exe 2^>nul\') do (',
-      '  "%%N" "%JUSTDO_OPENCLAW_ENTRY%" %*',
-      '  exit /b %ERRORLEVEL%',
-      ')',
-      'if not "%JUSTDO_ELECTRON_PATH%"=="" (',
-      '  set ELECTRON_RUN_AS_NODE=1',
-      '  "%JUSTDO_ELECTRON_PATH%" "%JUSTDO_OPENCLAW_ENTRY%" %*',
-      '  exit /b %ERRORLEVEL%',
-      ')',
-      'echo Neither node.exe nor JUSTDO_ELECTRON_PATH is available for OpenClaw CLI. 1>&2',
-      'exit /b 127',
-      '',
-    ].join('\r\n');
+    const { shell: shellWrapper, windows: windowsWrapper } =
+      buildOpenClawCliShimSources();
 
     try {
       ensureDir(shimDir);
-      for (const commandName of ['openclaw', 'claw']) {
+      for (const commandName of OPENCLAW_CLI_COMMAND_NAMES) {
         const shellPath = path.join(shimDir, commandName);
         const existingShell = fs.existsSync(shellPath) ? fs.readFileSync(shellPath, 'utf8') : '';
         if (existingShell !== shellWrapper) {
@@ -1311,18 +1351,17 @@ export class OpenClawEngineManager extends EventEmitter {
     }
   }
 
-  private resolveOpenClawEntry(runtimeRoot: string): string | null {
-    // Bundle fast-path via CJS launcher is only needed on Windows where
-    // utilityProcess.fork() cannot load ESM directly. On macOS/Linux,
-    // ensureBareEntryFiles already skips extraction when bundle exists,
-    // but this method falls through to gateway.asar/openclaw.mjs which
-    // ESM loads directly without a CJS wrapper.
-    if (process.platform === 'win32') {
-      const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
-      if (fs.existsSync(bundlePath)) {
+  private resolveOpenClawGatewayEntry(runtimeRoot: string): string | null {
+    // Windows needs the CJS launcher because utilityProcess.fork() cannot load
+    // the ESM bundle directly. macOS/Linux execute the dedicated ESM Gateway
+    // bundle, while public CLI commands continue to use openclaw.mjs.
+    const bundlePath = path.join(runtimeRoot, 'gateway-bundle.mjs');
+    if (fs.existsSync(bundlePath)) {
+      if (process.platform === 'win32') {
         console.log('[OpenClaw] resolveOpenClawEntry: using bundle fast path');
         return this.ensureGatewayLauncherCjsForBundle(runtimeRoot);
       }
+      return resolveOpenClawGatewayBundleEntry(runtimeRoot);
     }
 
     const esmEntry = findPath([

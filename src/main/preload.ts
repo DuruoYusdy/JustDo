@@ -414,7 +414,7 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.invoke(SystemPromptReplacementIpc.GetRules),
       setSystemPromptReplacementRules: (rules: SystemPromptReplacementRule[]) =>
         ipcRenderer.invoke(SystemPromptReplacementIpc.SetRules, rules),
-      openTerminal: () => ipcRenderer.invoke('openclaw:engine:openTerminal'),
+      openTerminal: (cwd?: string) => ipcRenderer.invoke('openclaw:engine:openTerminal', cwd),
       onProgress: (callback: (status: unknown) => void) => {
         const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
         ipcRenderer.on('openclaw:engine:onProgress', handler);

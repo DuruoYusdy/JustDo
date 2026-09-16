@@ -498,6 +498,9 @@ async function packGatewayAsar(electronRoot, runtimeRoot) {
   if (!fs.existsSync(path.join(runtimeRoot, 'openclaw.mjs'))) {
     fail('openclaw.mjs not found before asar pack.');
   }
+  if (!fs.existsSync(path.join(runtimeRoot, 'node-version.mjs'))) {
+    fail('node-version.mjs not found before asar pack.');
+  }
   if (!fs.existsSync(path.join(runtimeRoot, 'dist', 'control-ui', 'index.html'))) {
     fail('dist/control-ui/index.html not found before asar pack.');
   }
@@ -514,8 +517,9 @@ async function packGatewayAsar(electronRoot, runtimeRoot) {
   try {
     fs.mkdirSync(stageRoot, { recursive: true });
 
-    // Copy openclaw.mjs and dist/ into staging.
-    for (const name of ['openclaw.mjs', 'dist']) {
+    // Keep the complete public CLI bootstrap inside the archive. The Gateway
+    // bundle is a dedicated entry point and cannot serve arbitrary CLI commands.
+    for (const name of ['openclaw.mjs', 'node-version.mjs', 'package.json', 'dist']) {
       const src = path.join(runtimeRoot, name);
       fs.cpSync(src, path.join(stageRoot, name), { recursive: true, force: true });
     }
@@ -527,11 +531,19 @@ async function packGatewayAsar(electronRoot, runtimeRoot) {
     // Validate asar contents.
     const entries = new Set(asar.listPackage(gatewayAsarPath).map(e => e.replace(/\\/g, '/')));
     const hasOpenClawEntry = entries.has('/openclaw.mjs');
+    const hasNodeVersion = entries.has('/node-version.mjs');
+    const hasPackageMetadata = entries.has('/package.json');
     const hasControlUiIndex = entries.has('/dist/control-ui/index.html');
     const hasGatewayEntry = entries.has('/dist/entry.js') || entries.has('/dist/entry.mjs');
-    if (!hasOpenClawEntry || !hasControlUiIndex || !hasGatewayEntry) {
+    if (
+      !hasOpenClawEntry ||
+      !hasNodeVersion ||
+      !hasPackageMetadata ||
+      !hasControlUiIndex ||
+      !hasGatewayEntry
+    ) {
       fail(
-        `gateway.asar validation failed (openclaw.mjs=${hasOpenClawEntry}, control-ui=${hasControlUiIndex}, entry=${hasGatewayEntry}).`,
+        `gateway.asar validation failed (openclaw.mjs=${hasOpenClawEntry}, node-version.mjs=${hasNodeVersion}, package.json=${hasPackageMetadata}, control-ui=${hasControlUiIndex}, entry=${hasGatewayEntry}).`,
       );
     }
 

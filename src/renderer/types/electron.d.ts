@@ -622,7 +622,7 @@ interface IElectronAPI {
         rules?: SystemPromptReplacementRule[];
         error?: string;
       }>;
-      openTerminal: () => Promise<{
+      openTerminal: (cwd?: string) => Promise<{
         success: boolean;
         error?: string;
         status?: OpenClawEngineStatus;

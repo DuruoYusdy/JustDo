@@ -78,6 +78,7 @@ import {
   retainedPlanForSession,
 } from '@/features/cowork/components/preview/planPreviewState';
 import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
+import TerminalTabContextMenu from '@/features/cowork/components/preview/TerminalTabContextMenu';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
@@ -249,6 +250,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [browserTabs, setBrowserTabs] = useState<BrowserPanelTab[]>([]);
   const [browserTabCreationSequence, setBrowserTabCreationSequence] = useState(0);
   const [terminalTabs, setTerminalTabs] = useState<CoworkTerminalTab[]>([]);
+  const [terminalTabMenu, setTerminalTabMenu] = useState<{
+    cwd: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [preferredDisplayTabId, setPreferredDisplayTabId] = useState<string | null>(null);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
@@ -1308,6 +1314,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [selectAdjacentDisplayTabAfterClose],
   );
 
+  const handleOpenSystemTerminal = useCallback(async (cwd: string) => {
+    setTerminalTabMenu(null);
+    try {
+      const result = await window.electron.openclaw.engine.openTerminal(cwd);
+      if (result.success) return;
+      console.warn('[CoworkView] Failed to open system terminal:', result.error);
+    } catch (error) {
+      console.error('[CoworkView] Failed to open system terminal:', error);
+    }
+    window.dispatchEvent(
+      new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkOpenSystemTerminalFailed'),
+      }),
+    );
+  }, []);
+
   const handleOpenCurrentSessionFolder = useCallback(async () => {
     if (!currentSessionFolderPath) return;
     try {
@@ -1597,6 +1619,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         icon: <CommandLineIcon className="h-4 w-4" />,
         onSelect: () => setPreferredDisplayTabId(tab.id),
         onClose: () => closeTerminalTab(tab.id),
+        onContextMenu: ({ x, y }: { x: number; y: number }) =>
+          setTerminalTabMenu({ cwd: tab.cwd, x, y }),
       })),
       ...filePreviews.map(preview => ({
         id: fileDisplayTabId(preview.filePath),
@@ -2093,6 +2117,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
             </CoworkDisplayPanel>
           )}
+          {terminalTabMenu && (
+            <TerminalTabContextMenu
+              x={terminalTabMenu.x}
+              y={terminalTabMenu.y}
+              onDismiss={() => setTerminalTabMenu(null)}
+              onOpenSystemTerminal={() => void handleOpenSystemTerminal(terminalTabMenu.cwd)}
+            />
+          )}
           <ExportSessionModal
             isOpen={isSessionExportOpen}
             sessionTitle={currentSession.title}
@@ -2127,6 +2159,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       icon: <CommandLineIcon className="h-4 w-4" />,
       onSelect: () => setPreferredDisplayTabId(tab.id),
       onClose: () => closeTerminalTab(tab.id),
+      onContextMenu: ({ x, y }: { x: number; y: number }) =>
+        setTerminalTabMenu({ cwd: tab.cwd, x, y }),
     })),
   ];
 
@@ -2226,6 +2260,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               />
             ))}
           </CoworkDisplayPanel>
+        )}
+        {terminalTabMenu && (
+          <TerminalTabContextMenu
+            x={terminalTabMenu.x}
+            y={terminalTabMenu.y}
+            onDismiss={() => setTerminalTabMenu(null)}
+            onOpenSystemTerminal={() => void handleOpenSystemTerminal(terminalTabMenu.cwd)}
+          />
         )}
       </div>
     </div>

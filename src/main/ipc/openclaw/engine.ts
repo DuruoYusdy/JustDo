@@ -332,10 +332,28 @@ const escapeWindowsCmdValue = (value: string): string =>
     .replace(/>/g, '^>');
 
 const interactiveShellCommand = (fallbackShell: string): string =>
-  'exec ${SHELL:-' + fallbackShell + '}';
+  'exec "${SHELL:-' + fallbackShell + '}"';
+
+export const resolveExternalTerminalCwd = (requestedCwd: unknown, fallbackCwd: string): string => {
+  if (requestedCwd === undefined) return fallbackCwd;
+  if (
+    typeof requestedCwd !== 'string' ||
+    requestedCwd.length === 0 ||
+    requestedCwd.length > 4096 ||
+    requestedCwd.includes('\0')
+  ) {
+    throw new Error('Invalid terminal working directory');
+  }
+  const resolved = path.resolve(requestedCwd);
+  if (!fs.statSync(resolved).isDirectory()) {
+    throw new Error('Terminal working directory is not a directory');
+  }
+  return resolved;
+};
 
 const isOpenClawTerminalEnvKey = (key: string): boolean => {
-  if (key.toUpperCase() === JUSTDO_MANAGED_PYTHON_USER_BASE_ENV) return false;
+  const normalizedKey = key.toUpperCase();
+  if (normalizedKey === JUSTDO_MANAGED_PYTHON_USER_BASE_ENV) return false;
   return (
     key === 'OPENCLAW_BUNDLED_SKILLS_DIR' ||
     key === 'OPENCLAW_BUNDLED_HOOKS_DIR' ||
@@ -350,12 +368,23 @@ const isOpenClawTerminalEnvKey = (key: string): boolean => {
     key === 'NPM_CONFIG_USERCONFIG' ||
     key === 'npm_config_userconfig' ||
     key === 'PIP_CONFIG_FILE' ||
+    key === 'NODE_OPTIONS' ||
+    key === 'NODE_EXTRA_CA_CERTS' ||
+    key === 'NODE_USE_ENV_PROXY' ||
+    key === 'REQUESTS_CA_BUNDLE' ||
+    key === 'CURL_CA_BUNDLE' ||
+    key === 'SSL_CERT_FILE' ||
+    key === 'PIP_CERT' ||
     key === 'JUSTDO_ELECTRON_PATH' ||
     key === 'JUSTDO_OPENCLAW_ENTRY' ||
     key === 'JUSTDO_NPM_BIN_DIR' ||
     key === 'PATH' ||
     key === 'Path' ||
     key === 'TZ' ||
+    normalizedKey === 'HTTP_PROXY' ||
+    normalizedKey === 'HTTPS_PROXY' ||
+    normalizedKey === 'ALL_PROXY' ||
+    normalizedKey === 'NO_PROXY' ||
     key.startsWith('JUSTDO_')
   );
 };
@@ -384,102 +413,129 @@ const buildPosixExportScript = (env: NodeJS.ProcessEnv): string => {
     .join('; ');
 };
 
-const launchTerminal = (options: {
+export type TerminalCandidate = {
+  command: string;
+  args: string[];
+};
+
+export const buildWindowsTerminalCandidates = (
+  commandProcessor: string,
+  cwd: string,
+  setupCommand: string,
+): TerminalCandidate[] => [
+  {
+    command: commandProcessor,
+    args: ['/d', '/k', setupCommand],
+  },
+  {
+    command: 'wt.exe',
+    args: ['-w', 'new', 'new-tab', '-d', cwd, commandProcessor, '/d', '/k', setupCommand],
+  },
+];
+
+export const spawnDetachedTerminal = (
+  candidate: TerminalCandidate,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; windowsHide?: boolean },
+  spawnProcess: typeof spawn = spawn,
+  startupObservationMs: number | null = 500,
+): Promise<{ success: boolean; error?: string }> =>
+  new Promise(resolve => {
+    let settled = false;
+    let startupTimer: NodeJS.Timeout | undefined;
+    const settle = (result: { success: boolean; error?: string }): void => {
+      if (settled) return;
+      settled = true;
+      if (startupTimer) clearTimeout(startupTimer);
+      resolve(result);
+    };
+    const child = spawnProcess(candidate.command, candidate.args, {
+      ...options,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.once('error', error => {
+      settle({ success: false, error: error.message });
+    });
+    child.once('spawn', () => {
+      if (startupObservationMs === null) return;
+      startupTimer = setTimeout(() => {
+        child.unref();
+        settle({ success: true });
+      }, startupObservationMs);
+    });
+    child.once('exit', code => {
+      settle(
+        code === 0
+          ? { success: true }
+          : { success: false, error: `Terminal launcher exited with code ${String(code)}` },
+      );
+    });
+  });
+
+const launchTerminal = async (options: {
   env: NodeJS.ProcessEnv;
   cwd: string;
 }): Promise<{ success: boolean; error?: string }> => {
   const { env, cwd } = options;
-  const terminalTitle = `${PRODUCT_NAME} Terminal`;
-  const terminalReadyMessage = `${PRODUCT_NAME} CLI is ready.`;
 
   if (process.platform === 'win32') {
-    const launcherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-terminal-'));
-    fs.mkdirSync(launcherDir, { recursive: true });
-    const launcherPath = path.join(launcherDir, 'justdo-openclaw-terminal.cmd');
-    const envLines = getOpenClawTerminalEnvKeys(env)
-      .map(key => {
-        const value = key === 'PATH' ? env.PATH || env.Path : env[key];
-        return typeof value === 'string' ? `set "${key}=${escapeWindowsCmdValue(value)}"` : null;
-      })
-      .filter((line): line is string => line !== null);
-    const launcher = [
-      '@echo off',
-      `title ${escapeWindowsCmdValue(terminalTitle)}`,
-      ...envLines,
-      `cd /d "${cwd}"`,
-      `echo ${escapeWindowsCmdValue(terminalTitle)}`,
-      'echo.',
-      `echo ${escapeWindowsCmdValue(terminalReadyMessage)}`,
-      'echo.',
-      '',
-    ].join('\r\n');
-
-    fs.writeFileSync(launcherPath, launcher, 'utf8');
-
-    console.log(
-      `[OpenClawEngine] Opening OpenClaw terminal on Windows via launcher=${launcherPath}, cwd=${cwd}`,
-    );
-    const commandProcessor = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
-
-    return new Promise(resolve => {
-      const child = spawn(
-        commandProcessor,
-        ['/d', '/c', 'start', '', commandProcessor, '/d', '/k', launcherPath],
-        {
-          cwd,
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-        },
+    const commandProcessor =
+      process.env.ComSpec ||
+      path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+    const setupCommand = `title ${escapeWindowsCmdValue(`${PRODUCT_NAME} Terminal`)}`;
+    console.log(`[OpenClawEngine] Opening OpenClaw terminal on Windows, cwd=${cwd}`);
+    for (const candidate of buildWindowsTerminalCandidates(commandProcessor, cwd, setupCommand)) {
+      const result = await spawnDetachedTerminal(candidate, { cwd, env, windowsHide: false });
+      if (result.success) {
+        console.log(`[OpenClawEngine] Opened Windows terminal via ${candidate.command}`);
+        return result;
+      }
+      console.warn(
+        `[OpenClawEngine] Failed to open Windows terminal via ${candidate.command}: ${result.error || 'unknown error'}`,
       );
-
-      child.once('error', error => {
-        fs.rmSync(launcherDir, { recursive: true, force: true });
-        console.error('[OpenClawEngine] Failed to launch Windows terminal:', error);
-        resolve({ success: false, error: error.message });
-      });
-      child.once('exit', code => {
-        if (code !== 0) {
-          fs.rmSync(launcherDir, { recursive: true, force: true });
-          const error = `Windows terminal launcher exited with code ${code}`;
-          console.error(`[OpenClawEngine] ${error}`);
-          resolve({ success: false, error });
-          return;
-        }
-        child.unref();
-        const cleanupTimer = setTimeout(() => {
-          fs.rmSync(launcherDir, { recursive: true, force: true });
-        }, 10_000);
-        cleanupTimer.unref();
-        resolve({ success: true });
-      });
-    });
+    }
+    return { success: false, error: 'Failed to launch the Windows system terminal' };
   }
 
   if (process.platform === 'darwin') {
+    const launcherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-terminal-'));
+    const launcherPath = path.join(launcherDir, 'launch.sh');
+    const launcher = [
+      '#!/bin/sh',
+      buildPosixExportScript(env),
+      `rm -f -- ${quotePosixShell(launcherPath)}`,
+      `rmdir ${quotePosixShell(launcherDir)} 2>/dev/null || true`,
+      `cd ${quotePosixShell(cwd)}`,
+      interactiveShellCommand('/bin/zsh'),
+      '',
+    ].join('\n');
+    fs.writeFileSync(launcherPath, launcher, { encoding: 'utf8', mode: 0o700 });
     const script = [
       'tell application "Terminal"',
       'activate',
-      `do script "${quoteAppleScriptString(
-        `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
-          env,
-        )}; clear; echo ${quotePosixShell(terminalTitle)}; echo; echo ${quotePosixShell(terminalReadyMessage)}; echo; ${interactiveShellCommand('/bin/zsh')}`,
-      )}"`,
+      `do script "${quoteAppleScriptString(quotePosixShell(launcherPath))}"`,
       'end tell',
     ].join('\n');
     console.log(`[OpenClawEngine] Opening OpenClaw terminal on macOS, cwd=${cwd}`);
-    const child = spawn('osascript', ['-e', script], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.unref();
-    return Promise.resolve({ success: true });
+    const result = await spawnDetachedTerminal(
+      { command: 'osascript', args: ['-e', script] },
+      {},
+      spawn,
+      null,
+    );
+    if (!result.success) {
+      fs.rmSync(launcherDir, { recursive: true, force: true });
+      return result;
+    }
+    const cleanupTimer = setTimeout(() => {
+      fs.rmSync(launcherDir, { recursive: true, force: true });
+    }, 30_000);
+    cleanupTimer.unref();
+    return result;
   }
 
-  const command = `cd ${quotePosixShell(cwd)}; ${buildPosixExportScript(
-    env,
-  )}; clear; echo ${quotePosixShell(terminalTitle)}; echo; echo ${quotePosixShell(terminalReadyMessage)}; echo; ${interactiveShellCommand('/bin/bash')}`;
-  const terminalCandidates: Array<{ command: string; args: string[] }> = [
+  const command = `${buildPosixExportScript(env)}; ${interactiveShellCommand('/bin/bash')}`;
+  const terminalCandidates: TerminalCandidate[] = [
     { command: 'x-terminal-emulator', args: ['-e', 'sh', '-lc', command] },
     { command: 'gnome-terminal', args: ['--', 'sh', '-lc', command] },
     { command: 'konsole', args: ['-e', 'sh', '-lc', command] },
@@ -487,21 +543,11 @@ const launchTerminal = (options: {
   ];
 
   for (const candidate of terminalCandidates) {
-    try {
-      console.log(
-        `[OpenClawEngine] Opening OpenClaw terminal on Linux via ${candidate.command}, cwd=${cwd}`,
-      );
-      const child = spawn(candidate.command, candidate.args, {
-        cwd,
-        env,
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
-      return Promise.resolve({ success: true });
-    } catch {
-      // Try the next installed terminal.
-    }
+    console.log(
+      `[OpenClawEngine] Opening OpenClaw terminal on Linux via ${candidate.command}, cwd=${cwd}`,
+    );
+    const result = await spawnDetachedTerminal(candidate, { cwd, env });
+    if (result.success) return result;
   }
 
   return Promise.resolve({ success: false, error: 'No supported terminal emulator was found' });
@@ -697,7 +743,7 @@ export const registerOpenClawEngineHandlers = ({
     }
   });
 
-  ipcMain.handle('openclaw:engine:openTerminal', async () => {
+  ipcMain.handle('openclaw:engine:openTerminal', async (_event, requestedCwd?: unknown) => {
     try {
       const manager = getManager();
       const status = manager.getStatus();
@@ -715,7 +761,7 @@ export const registerOpenClawEngineHandlers = ({
       const cliEnvironment = await manager.buildCliEnvironment();
       return launchTerminal({
         env: cliEnvironment.env,
-        cwd: cliEnvironment.runtimeRoot,
+        cwd: resolveExternalTerminalCwd(requestedCwd, cliEnvironment.runtimeRoot),
       });
     } catch (error) {
       console.error('[OpenClawEngine] Failed to open terminal:', error);

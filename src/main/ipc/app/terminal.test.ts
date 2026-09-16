@@ -45,16 +45,22 @@ describe('terminal IPC', () => {
     send: vi.fn(),
   };
   const event = { sender };
+  const buildEnvironment = vi.fn(async () => ({
+    PATH: process.env.PATH,
+    OPENCLAW_STATE_DIR: 'C:\\state',
+    JUSTDO_OPENCLAW_ENTRY: 'C:/runtime/gateway.asar/openclaw.mjs',
+  }));
 
   beforeEach(() => {
     mocks.handlers.clear();
     vi.clearAllMocks();
-    registerTerminalHandlers();
+    sender.isDestroyed.mockReturnValue(false);
+    registerTerminalHandlers({ buildEnvironment });
   });
 
   it('creates an owned PTY in the requested project directory and forwards data', async () => {
     const id = `terminal:test-${crypto.randomUUID()}`;
-    const result = mocks.handlers.get(TerminalIpc.Create)?.(event, {
+    const result = await mocks.handlers.get(TerminalIpc.Create)?.(event, {
       id,
       cwd: process.cwd(),
       cols: 100,
@@ -65,8 +71,17 @@ describe('terminal IPC', () => {
     expect(mocks.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Array),
-      expect.objectContaining({ cwd: process.cwd(), cols: 100, rows: 30 }),
+      expect.objectContaining({
+        cwd: process.cwd(),
+        cols: 100,
+        rows: 30,
+        env: expect.objectContaining({
+          OPENCLAW_STATE_DIR: 'C:\\state',
+          JUSTDO_OPENCLAW_ENTRY: 'C:/runtime/gateway.asar/openclaw.mjs',
+        }),
+      }),
     );
+    expect(buildEnvironment).toHaveBeenCalledOnce();
     if (process.platform === 'win32') {
       expect(String(mocks.spawn.mock.calls[0]?.[0]).toLowerCase()).toContain('powershell');
       expect(mocks.spawn.mock.calls[0]?.[1]).toEqual([
@@ -105,10 +120,10 @@ describe('terminal IPC', () => {
     }
   });
 
-  it('rejects missing directories and access from a different renderer', () => {
+  it('rejects missing directories and access from a different renderer', async () => {
     const missingId = `terminal:test-${crypto.randomUUID()}`;
     expect(
-      mocks.handlers.get(TerminalIpc.Create)?.(event, {
+      await mocks.handlers.get(TerminalIpc.Create)?.(event, {
         id: missingId,
         cwd: `${process.cwd()}-missing`,
         cols: 80,
@@ -116,7 +131,7 @@ describe('terminal IPC', () => {
       }),
     ).toEqual(expect.objectContaining({ success: false }));
     expect(
-      mocks.handlers.get(TerminalIpc.Create)?.(event, {
+      await mocks.handlers.get(TerminalIpc.Create)?.(event, {
         id: `terminal:test-${crypto.randomUUID()}`,
         cwd: process.cwd(),
         cols: Number.NaN,
@@ -129,7 +144,7 @@ describe('terminal IPC', () => {
     });
 
     const id = `terminal:test-${crypto.randomUUID()}`;
-    mocks.handlers.get(TerminalIpc.Create)?.(event, {
+    await mocks.handlers.get(TerminalIpc.Create)?.(event, {
       id,
       cwd: process.cwd(),
       cols: 80,
@@ -143,5 +158,101 @@ describe('terminal IPC', () => {
     ).toEqual({ success: false, error: 'Invalid terminal write request' });
     mocks.handlers.get(TerminalIpc.Close)?.(event, id);
     mocks.emitExit(0);
+  });
+
+  it('reserves a terminal ID while the OpenClaw environment is being prepared', async () => {
+    let resolveEnvironment: ((env: NodeJS.ProcessEnv) => void) | undefined;
+    registerTerminalHandlers({
+      buildEnvironment: () =>
+        new Promise(resolve => {
+          resolveEnvironment = resolve;
+        }),
+    });
+    const create = mocks.handlers.get(TerminalIpc.Create);
+    const id = `terminal:test-${crypto.randomUUID()}`;
+    const request = { id, cwd: process.cwd(), cols: 80, rows: 24 };
+
+    const first = create?.(event, request) as Promise<unknown>;
+    await Promise.resolve();
+    await expect(create?.(event, request)).resolves.toEqual({
+      success: false,
+      error: 'Invalid or duplicate terminal ID',
+    });
+
+    resolveEnvironment?.({ PATH: process.env.PATH });
+    await expect(first).resolves.toEqual({ success: true, cwd: process.cwd() });
+    mocks.handlers.get(TerminalIpc.Close)?.(event, id);
+    mocks.emitExit(0);
+  });
+
+  it('does not spawn a terminal after its renderer is destroyed', async () => {
+    let resolveEnvironment: ((env: NodeJS.ProcessEnv) => void) | undefined;
+    registerTerminalHandlers({
+      buildEnvironment: () =>
+        new Promise(resolve => {
+          resolveEnvironment = resolve;
+        }),
+    });
+    const create = mocks.handlers.get(TerminalIpc.Create);
+    const pending = create?.(event, {
+      id: `terminal:test-${crypto.randomUUID()}`,
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+    });
+
+    sender.isDestroyed.mockReturnValue(true);
+    resolveEnvironment?.({ PATH: process.env.PATH });
+
+    await expect(pending).resolves.toEqual({
+      success: false,
+      error: 'Terminal owner was destroyed',
+    });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it('counts pending terminal creation against the per-window limit', async () => {
+    const environmentResolvers: Array<(env: NodeJS.ProcessEnv) => void> = [];
+    registerTerminalHandlers({
+      buildEnvironment: () =>
+        new Promise(resolve => {
+          environmentResolvers.push(resolve);
+        }),
+    });
+    const create = mocks.handlers.get(TerminalIpc.Create);
+    const ids = Array.from({ length: 16 }, () => `terminal:test-${crypto.randomUUID()}`);
+    const pending = ids.map(id => create?.(event, { id, cwd: process.cwd(), cols: 80, rows: 24 }));
+
+    await expect(
+      create?.(event, {
+        id: `terminal:test-${crypto.randomUUID()}`,
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+      }),
+    ).resolves.toEqual({ success: false, error: 'Too many terminal tabs are open' });
+
+    for (const resolve of environmentResolvers) resolve({ PATH: process.env.PATH });
+    const results = await Promise.all(pending);
+    expect(results).toHaveLength(16);
+    expect(results.every(result => result?.success === true)).toBe(true);
+    expect(mocks.spawn).toHaveBeenCalledTimes(16);
+    for (const id of ids) mocks.handlers.get(TerminalIpc.Close)?.(event, id);
+  });
+
+  it('returns an error without spawning when OpenClaw preparation fails', async () => {
+    registerTerminalHandlers({
+      buildEnvironment: vi.fn().mockRejectedValue(new Error('runtime unavailable')),
+    });
+    const id = `terminal:test-${crypto.randomUUID()}`;
+    const result = await mocks.handlers.get(TerminalIpc.Create)?.(event, {
+      id,
+      cwd: process.cwd(),
+      cols: 80,
+      rows: 24,
+    });
+
+    expect(result).toEqual({ success: false, error: 'runtime unavailable' });
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 });

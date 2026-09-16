@@ -1,4 +1,5 @@
 # Agent Engine 与 OpenClaw 集成
+
 本文描述 JustDo 如何安装、配置、启动、连接和监督 OpenClaw `v2026.9.2`。当前唯一 Cowork engine 是 OpenClaw；`CoworkEngineRouter` 只是稳定接口层，不再提供多引擎选择。
 
 ## 1. 组件分工
@@ -25,6 +26,8 @@ npm run electron:dev:openclaw
 ```
 
 它先为 host 准备 runtime，再编译/启动 Electron。普通 `electron:dev` 假设 runtime 已存在。打包测试验证 runtime freeze、staging、prune、launcher、patch manifest 与平台资产，不能只凭目录存在判定可发布。
+
+Gateway 与 CLI 使用不同入口。Gateway 走为常驻服务优化的 `gateway-bundle.mjs` / launcher；受管 one-shot 命令、外部开发者终端及右侧内置 PTY 中的 `openclaw` 都走上游公开 `openclaw.mjs`。交互终端同时生成 `<productName lowercase>` 品牌别名，不使用内部 package id 推导用户可见命令。两种交互终端都复用 `buildCliEnvironment()`，因此 state/config、Gateway port/token、runtime shim、Git/Python 及证书环境保持一致；内置终端若无法完成 OpenClaw 环境准备则明确创建失败，不会静默打开未注入的普通终端。macOS 通过仅当前用户可执行且启动后立即删除的临时 bootstrap 注入环境，AppleScript 命令本身不包含 Gateway token。发布 runtime 的 `gateway.asar` 必须同时包含公开 launcher 所需的 `node-version.mjs`、`package.json` 和 `dist/`，不能把 Gateway bundle 当作通用 CLI。终端 shim 优先使用仍然存在且可执行的应用自带 Electron Node runtime，避免用户系统 Node 版本改变行为；受控 runtime 不可用时回退到 PATH 中的 Node。
 
 ## 3. Manager 状态机
 

@@ -1,3 +1,8 @@
+import type { ChildProcess, spawn } from 'child_process';
+import { EventEmitter } from 'events';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const { ipcHandle } = vi.hoisted(() => ({ ipcHandle: vi.fn() }));
@@ -8,10 +13,13 @@ vi.mock('electron', () => ({
 
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
+  buildWindowsTerminalCandidates,
   getOpenClawTerminalEnvKeys,
   readOpenClawAssistantMedia,
   registerOpenClawEngineHandlers,
+  resolveExternalTerminalCwd,
   restartOpenClawGatewayForUser,
+  spawnDetachedTerminal,
 } from './engine';
 
 const createRestartHarness = (options: {
@@ -356,6 +364,35 @@ describe('OpenClaw terminal environment', () => {
     ]);
   });
 
+  test('keeps proxy and trust settings needed by terminal CLI tools', () => {
+    const keys = getOpenClawTerminalEnvKeys({
+      NODE_OPTIONS: '--use-system-ca',
+      NODE_EXTRA_CA_CERTS: '/state/ca.pem',
+      REQUESTS_CA_BUNDLE: '/state/ca.pem',
+      CURL_CA_BUNDLE: '/state/ca.pem',
+      SSL_CERT_FILE: '/state/ca.pem',
+      PIP_CERT: '/state/ca.pem',
+      HTTPS_PROXY: 'http://127.0.0.1:8080',
+      http_proxy: 'http://127.0.0.1:8080',
+      NO_PROXY: '127.0.0.1',
+      NODE_USE_ENV_PROXY: '1',
+    });
+
+    expect(keys).toEqual([
+      'PATH',
+      'CURL_CA_BUNDLE',
+      'HTTPS_PROXY',
+      'NODE_EXTRA_CA_CERTS',
+      'NODE_OPTIONS',
+      'NODE_USE_ENV_PROXY',
+      'NO_PROXY',
+      'PIP_CERT',
+      'REQUESTS_CA_BUNDLE',
+      'SSL_CERT_FILE',
+      'http_proxy',
+    ]);
+  });
+
   test('passes the managed Python user base but excludes unrelated host values', () => {
     const keys = getOpenClawTerminalEnvKeys({
       PATH: 'C:\\Windows',
@@ -396,6 +433,100 @@ describe('OpenClaw terminal environment', () => {
 
     expect(keys).not.toContain('PYTHONUSERBASE');
     expect(keys).not.toContain('justdo_managed_python_user_base');
+  });
+});
+
+describe('external terminal startup', () => {
+  test('launches the system command processor first with Windows Terminal as fallback', () => {
+    expect(
+      buildWindowsTerminalCandidates('C:\\Windows\\System32\\cmd.exe', 'C:\\workspace', 'echo ready'),
+    ).toEqual([
+      {
+        command: 'C:\\Windows\\System32\\cmd.exe',
+        args: ['/d', '/k', 'echo ready'],
+      },
+      {
+        command: 'wt.exe',
+        args: [
+          '-w',
+          'new',
+          'new-tab',
+          '-d',
+          'C:\\workspace',
+          'C:\\Windows\\System32\\cmd.exe',
+          '/d',
+          '/k',
+          'echo ready',
+        ],
+      },
+    ]);
+  });
+
+  test('uses a validated requested working directory for a system terminal', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'system-terminal-cwd-'));
+    const filePath = path.join(directory, 'file.txt');
+    fs.writeFileSync(filePath, 'test');
+    try {
+      expect(resolveExternalTerminalCwd(directory, 'fallback')).toBe(path.resolve(directory));
+      expect(resolveExternalTerminalCwd(undefined, 'fallback')).toBe('fallback');
+      expect(() => resolveExternalTerminalCwd(filePath, 'fallback')).toThrow(
+        'Terminal working directory is not a directory',
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('reports an asynchronous launcher failure', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    child.unref = vi.fn();
+    const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
+    const launched = spawnDetachedTerminal(
+      { command: 'terminal', args: [] },
+      {},
+      spawnProcess,
+    );
+
+    child.emit('spawn');
+    child.emit('exit', 1, null);
+
+    await expect(launched).resolves.toEqual({
+      success: false,
+      error: 'Terminal launcher exited with code 1',
+    });
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  test('can wait for a short-lived launcher to exit without assuming startup success', async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new EventEmitter() as ChildProcess;
+      child.unref = vi.fn();
+      const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
+      let settled = false;
+      const launched = spawnDetachedTerminal(
+        { command: 'osascript', args: [] },
+        {},
+        spawnProcess,
+        null,
+      ).then(result => {
+        settled = true;
+        return result;
+      });
+
+      child.emit('spawn');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+
+      child.emit('exit', 1, null);
+      await expect(launched).resolves.toEqual({
+        success: false,
+        error: 'Terminal launcher exited with code 1',
+      });
+      expect(child.unref).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

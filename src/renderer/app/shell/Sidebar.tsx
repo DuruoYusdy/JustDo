@@ -1,9 +1,4 @@
-import {
-  BookOpenIcon,
-  CommandLineIcon,
-  ExclamationTriangleIcon,
-  Squares2X2Icon,
-} from '@heroicons/react/24/outline';
+import { BookOpenIcon, ExclamationTriangleIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -218,33 +213,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleOpenTerminal = async () => {
-    try {
-      if (!window.electron?.openclaw?.engine?.openTerminal) {
-        console.warn('[Sidebar] OpenClaw terminal API not available');
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: i18nService.t('coworkErrorEngineNotReady') }),
-        );
-        return;
-      }
-
-      const result = await window.electron.openclaw.engine.openTerminal();
-      if (!result.success) {
-        console.warn('[Sidebar] Failed to open OpenClaw terminal:', result.error);
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', {
-            detail: result.error || i18nService.t('openTerminalError'),
-          }),
-        );
-      }
-    } catch (error) {
-      console.error('[Sidebar] Failed to open OpenClaw terminal:', error);
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', { detail: i18nService.t('openTerminalError') }),
-      );
-    }
-  };
-
   return (
     <aside
       className={`shrink-0 bg-surface-raised flex flex-col sidebar-transition overflow-hidden ${
@@ -284,26 +252,15 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div className="flex items-center gap-1">
             {developerModeAvailable && developerMode && isOpenClawEngine && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleOpenTerminal}
-                  className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-                  aria-label={i18nService.t('openTerminal')}
-                  title={i18nService.t('openTerminal')}
-                >
-                  <CommandLineIcon className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenChatWeb}
-                  className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
-                  aria-label={i18nService.t('openChatWeb')}
-                  title={i18nService.t('openChatWeb')}
-                >
-                  <ArrowUpRightIcon className="h-3.5 w-3.5" />
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={handleOpenChatWeb}
+                className="non-draggable h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+                aria-label={i18nService.t('openChatWeb')}
+                title={i18nService.t('openChatWeb')}
+              >
+                <ArrowUpRightIcon className="h-3.5 w-3.5" />
+              </button>
             )}
             <button
               type="button"

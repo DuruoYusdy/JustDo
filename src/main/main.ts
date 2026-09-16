@@ -1166,7 +1166,10 @@ if (!gotTheLock) {
   registerLocalSpeechModelHandlers({ getService: getLocalSpeechModelService });
 
   registerShellHandlers();
-  registerTerminalHandlers();
+  registerTerminalHandlers({
+    buildEnvironment: async () =>
+      (await getOpenClawEngineManager().buildCliEnvironment()).env,
+  });
 
   // 创建主窗口
   const createWindow = () => {

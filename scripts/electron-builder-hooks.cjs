@@ -237,6 +237,7 @@ function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
       'gateway-launcher.cjs',
       'gateway.asar',
       'openclaw.mjs',
+      'node-version.mjs',
       'docs/channels/index.md',
       'docs/gateway/config-channels.md',
       'docs/reference/templates/AGENTS.md',
@@ -247,6 +248,26 @@ function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
     'Bundled OpenClaw runtime',
     buildHint,
   );
+
+  verifyBareOpenClawCliRuntime(runtimeRoot, buildHint, 'Bundled OpenClaw CLI runtime');
+}
+
+function verifyBareOpenClawCliRuntime(runtimeRoot, buildHint, label) {
+  verifyRequiredPathSet(
+    runtimeRoot,
+    ['package.json', 'openclaw.mjs', 'node-version.mjs'],
+    label,
+    buildHint,
+  );
+  const hasEntry =
+    existsSync(path.join(runtimeRoot, 'dist', 'entry.js')) ||
+    existsSync(path.join(runtimeRoot, 'dist', 'entry.mjs'));
+  if (!hasEntry) {
+    throw new Error(
+      `[electron-builder-hooks] ${label} is incomplete. Missing dist/entry.js or dist/entry.mjs. ` +
+        `Run \`${buildHint}\` before packaging.`,
+    );
+  }
 }
 
 function verifyBundledSkillResources(buildHint) {
@@ -339,13 +360,22 @@ async function ensureBundledOpenClawRuntime(context) {
     }
 
     const hasOpenClawEntry = entries.has('/openclaw.mjs');
+    const hasNodeVersion = entries.has('/node-version.mjs');
+    const hasPackageMetadata = entries.has('/package.json');
     const hasControlUiIndex = entries.has('/dist/control-ui/index.html');
     const hasGatewayEntry = entries.has('/dist/entry.js') || entries.has('/dist/entry.mjs');
 
-    if (!hasOpenClawEntry || !hasControlUiIndex || !hasGatewayEntry) {
+    if (
+      !hasOpenClawEntry ||
+      !hasNodeVersion ||
+      !hasPackageMetadata ||
+      !hasControlUiIndex ||
+      !hasGatewayEntry
+    ) {
       throw new Error(
         '[electron-builder-hooks] OpenClaw gateway.asar is incomplete. ' +
-          `openclaw.mjs=${hasOpenClawEntry}, control-ui=${hasControlUiIndex}, entry=${hasGatewayEntry}.`,
+          `openclaw.mjs=${hasOpenClawEntry}, node-version.mjs=${hasNodeVersion}, ` +
+          `package.json=${hasPackageMetadata}, control-ui=${hasControlUiIndex}, entry=${hasGatewayEntry}.`,
       );
     }
 
@@ -759,6 +789,7 @@ async function beforePack(context) {
       'cfmind/gateway-bundle.mjs',
       'cfmind/gateway-launcher.cjs',
       'cfmind/openclaw.mjs',
+      'cfmind/node-version.mjs',
       'cfmind/docs/channels/index.md',
       'cfmind/docs/gateway/config-channels.md',
       'cfmind/docs/reference/templates/AGENTS.md',
@@ -778,6 +809,8 @@ async function beforePack(context) {
       ...runtimeCompanionTarEntries,
     ];
     const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
+    const hasBareOpenClawEntry =
+      tarEntryPaths.has('cfmind/dist/entry.js') || tarEntryPaths.has('cfmind/dist/entry.mjs');
     const hasMinGit =
       tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
     const hasPythonPipCommand = [
@@ -789,11 +822,17 @@ async function beforePack(context) {
       'python-win/Scripts/pip3',
     ].some(entry => tarEntryPaths.has(entry));
 
-    if (missingTarEntries.length > 0 || !hasMinGit || !hasPythonPipCommand) {
+    if (
+      missingTarEntries.length > 0 ||
+      !hasBareOpenClawEntry ||
+      !hasMinGit ||
+      !hasPythonPipCommand
+    ) {
       throw new Error(
         '[electron-builder-hooks] Combined tar validation FAILED. Missing critical entries: ' +
           [
             ...missingTarEntries,
+            ...(!hasBareOpenClawEntry ? ['cfmind/dist/entry.js or cfmind/dist/entry.mjs'] : []),
             ...(!hasMinGit ? ['mingit/bin/git.exe or mingit/cmd/git.exe'] : []),
             ...(!hasPythonPipCommand ? ['python-win/Scripts/pip command'] : []),
           ].join(', '),
@@ -1349,6 +1388,10 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/runtime-build-info.json',
         'cfmind/gateway-bundle.mjs',
         'cfmind/package.json',
+        'cfmind/openclaw.mjs',
+        'cfmind/node-version.mjs',
+        'cfmind/dist/entry.js',
+        'cfmind/dist/entry.mjs',
         'cfmind/npm-shrinkwrap.json',
       ]);
       const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
@@ -1364,13 +1407,24 @@ async function verifyPackagedOpenClawRuntime(context) {
         expectedTarget: resolveOpenClawRuntimeTargetId(context),
         allowOmittedGatewayAsar: true,
       });
+      verifyBareOpenClawCliRuntime(
+        path.join(temporaryRoot, 'cfmind'),
+        getOpenClawRuntimeBuildHint(resolveOpenClawRuntimeTargetId(context)),
+        'Packaged Windows OpenClaw CLI runtime',
+      );
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
   } else {
-    verifyOpenClawPatchManifest(path.join(resourcesRoot, 'cfmind'), {
+    const packagedRuntimeRoot = path.join(resourcesRoot, 'cfmind');
+    verifyOpenClawPatchManifest(packagedRuntimeRoot, {
       expectedTarget: resolveOpenClawRuntimeTargetId(context),
     });
+    verifyBareOpenClawCliRuntime(
+      packagedRuntimeRoot,
+      getOpenClawRuntimeBuildHint(resolveOpenClawRuntimeTargetId(context)),
+      'Packaged OpenClaw CLI runtime',
+    );
   }
 
   console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');

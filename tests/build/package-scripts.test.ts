@@ -77,6 +77,36 @@ test('defines the JSON reader used to validate the downloaded OpenClaw package',
   );
 });
 
+test('packages the complete OpenClaw CLI bootstrap into the runtime archive', () => {
+  const runtimeInstaller = fs.readFileSync(
+    path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),
+    'utf8',
+  );
+
+  expect(runtimeInstaller).toContain(
+    "['openclaw.mjs', 'node-version.mjs', 'package.json', 'dist']",
+  );
+  expect(runtimeInstaller).toContain("entries.has('/node-version.mjs')");
+  expect(runtimeInstaller).toContain("entries.has('/package.json')");
+
+  const builderHooks = fs.readFileSync(
+    path.resolve(__dirname, '../../scripts/electron-builder-hooks.cjs'),
+    'utf8',
+  );
+  expect(builderHooks).toContain("entries.has('/node-version.mjs')");
+  expect(builderHooks).toContain("entries.has('/package.json')");
+  expect(builderHooks).toContain("'cfmind/node-version.mjs'");
+  expect(builderHooks).toContain("tarEntryPaths.has('cfmind/dist/entry.js')");
+  expect(builderHooks).toContain('verifyBareOpenClawCliRuntime(');
+
+  const runtimeSync = fs.readFileSync(
+    path.resolve(__dirname, '../../scripts/sync-openclaw-runtime-current.cjs'),
+    'utf8',
+  );
+  expect(runtimeSync).toContain('!hasBareDistEntry');
+  expect(runtimeSync).toContain("normalized === '/node-version.mjs'");
+});
+
 test('keeps an installed OpenClaw runtime frozen unless force install is requested', () => {
   const runtimeInstaller = fs.readFileSync(
     path.resolve(__dirname, '../../scripts/install-openclaw-runtime.cjs'),

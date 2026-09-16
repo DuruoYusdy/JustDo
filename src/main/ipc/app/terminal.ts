@@ -32,7 +32,12 @@ interface ManagedTerminal {
   forceKillTimer?: NodeJS.Timeout;
 }
 
+interface TerminalHandlerDependencies {
+  buildEnvironment?: () => Promise<NodeJS.ProcessEnv>;
+}
+
 const terminals = new Map<string, ManagedTerminal>();
+const pendingTerminalOwners = new Map<string, number>();
 const ownerTerminalIds = new Map<number, Set<string>>();
 const registeredOwners = new Set<number>();
 
@@ -72,11 +77,9 @@ const resolveTerminalCwd = (cwd: string): string => {
   return resolved;
 };
 
-const getTerminalEnvironment = (): Record<string, string> =>
+const getTerminalEnvironment = (env: NodeJS.ProcessEnv): Record<string, string> =>
   Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
 
 const findExecutableOnPath = (executable: string): string | undefined => {
@@ -169,77 +172,99 @@ const closeOwnedTerminals = (ownerId: number): void => {
   registeredOwners.delete(ownerId);
 };
 
+const countPendingTerminals = (ownerId: number): number =>
+  [...pendingTerminalOwners.values()].filter(pendingOwnerId => pendingOwnerId === ownerId).length;
+
 const findOwnedTerminal = (event: IpcMainInvokeEvent, id: string): ManagedTerminal | null => {
   const managed = terminals.get(id);
   return managed?.ownerId === event.sender.id ? managed : null;
 };
 
-export const registerTerminalHandlers = (): void => {
-  ipcMain.handle(TerminalIpc.Create, (event, request: unknown): TerminalCreateResult => {
-    try {
-      if (!isTerminalCreateRequest(request) || terminals.has(request.id)) {
-        return { success: false, error: 'Invalid or duplicate terminal ID' };
-      }
-      const ownerId = event.sender.id;
-      const ownedIds = ownerTerminalIds.get(ownerId) ?? new Set<string>();
-      if (ownedIds.size >= MAX_TERMINALS_PER_WINDOW) {
-        return { success: false, error: 'Too many terminal tabs are open' };
-      }
-      const cwd = resolveTerminalCwd(request.cwd);
-      const shell = getShell();
-      const terminalProcess = pty.spawn(shell.executable, shell.args, {
-        name: 'xterm-256color',
-        cols: clampDimension(request.cols, MIN_TERMINAL_COLUMNS, MAX_TERMINAL_COLUMNS),
-        rows: clampDimension(request.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS),
-        cwd,
-        env: {
-          ...getTerminalEnvironment(),
-          COLORTERM: 'truecolor',
-          TERM: 'xterm-256color',
-        },
-      });
-      const managed: ManagedTerminal = { closing: false, ownerId, process: terminalProcess };
-      terminals.set(request.id, managed);
-      ownedIds.add(request.id);
-      ownerTerminalIds.set(ownerId, ownedIds);
-
-      if (!registeredOwners.has(ownerId)) {
-        registeredOwners.add(ownerId);
-        event.sender.once('destroyed', () => closeOwnedTerminals(ownerId));
-      }
-
-      terminalProcess.onData(data => {
+export const registerTerminalHandlers = ({
+  buildEnvironment = async () => process.env,
+}: TerminalHandlerDependencies = {}): void => {
+  ipcMain.handle(
+    TerminalIpc.Create,
+    async (event, request: unknown): Promise<TerminalCreateResult> => {
+      try {
         if (
-          !managed.closing &&
-          terminals.get(request.id) === managed &&
-          !event.sender.isDestroyed()
+          !isTerminalCreateRequest(request) ||
+          terminals.has(request.id) ||
+          pendingTerminalOwners.has(request.id)
         ) {
-          event.sender.send(TerminalIpc.Data, { id: request.id, data });
+          return { success: false, error: 'Invalid or duplicate terminal ID' };
         }
-      });
-      terminalProcess.onExit(({ exitCode }) => {
-        if (managed.gracefulExitTimer) {
-          clearTimeout(managed.gracefulExitTimer);
-          managed.gracefulExitTimer = undefined;
+        const ownerId = event.sender.id;
+        const ownedIds = ownerTerminalIds.get(ownerId) ?? new Set<string>();
+        if (ownedIds.size + countPendingTerminals(ownerId) >= MAX_TERMINALS_PER_WINDOW) {
+          return { success: false, error: 'Too many terminal tabs are open' };
         }
-        if (managed.forceKillTimer) {
-          clearTimeout(managed.forceKillTimer);
-          managed.forceKillTimer = undefined;
+        const cwd = resolveTerminalCwd(request.cwd);
+        const shell = getShell();
+        pendingTerminalOwners.set(request.id, ownerId);
+        let terminalProcess: pty.IPty;
+        try {
+          const environment = await buildEnvironment();
+          if (event.sender.isDestroyed()) {
+            return { success: false, error: 'Terminal owner was destroyed' };
+          }
+          terminalProcess = pty.spawn(shell.executable, shell.args, {
+            name: 'xterm-256color',
+            cols: clampDimension(request.cols, MIN_TERMINAL_COLUMNS, MAX_TERMINAL_COLUMNS),
+            rows: clampDimension(request.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS),
+            cwd,
+            env: {
+              ...getTerminalEnvironment(environment),
+              COLORTERM: 'truecolor',
+              TERM: 'xterm-256color',
+            },
+          });
+        } finally {
+          pendingTerminalOwners.delete(request.id);
         }
-        const isCurrentInstance = terminals.get(request.id) === managed;
-        if (isCurrentInstance) forgetTerminal(request.id);
-        if (!managed.closing && isCurrentInstance && !event.sender.isDestroyed()) {
-          event.sender.send(TerminalIpc.Exit, { id: request.id, exitCode });
+        const managed: ManagedTerminal = { closing: false, ownerId, process: terminalProcess };
+        terminals.set(request.id, managed);
+        ownedIds.add(request.id);
+        ownerTerminalIds.set(ownerId, ownedIds);
+
+        if (!registeredOwners.has(ownerId)) {
+          registeredOwners.add(ownerId);
+          event.sender.once('destroyed', () => closeOwnedTerminals(ownerId));
         }
-      });
-      return { success: true, cwd };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create terminal',
-      };
-    }
-  });
+
+        terminalProcess.onData(data => {
+          if (
+            !managed.closing &&
+            terminals.get(request.id) === managed &&
+            !event.sender.isDestroyed()
+          ) {
+            event.sender.send(TerminalIpc.Data, { id: request.id, data });
+          }
+        });
+        terminalProcess.onExit(({ exitCode }) => {
+          if (managed.gracefulExitTimer) {
+            clearTimeout(managed.gracefulExitTimer);
+            managed.gracefulExitTimer = undefined;
+          }
+          if (managed.forceKillTimer) {
+            clearTimeout(managed.forceKillTimer);
+            managed.forceKillTimer = undefined;
+          }
+          const isCurrentInstance = terminals.get(request.id) === managed;
+          if (isCurrentInstance) forgetTerminal(request.id);
+          if (!managed.closing && isCurrentInstance && !event.sender.isDestroyed()) {
+            event.sender.send(TerminalIpc.Exit, { id: request.id, exitCode });
+          }
+        });
+        return { success: true, cwd };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to create terminal',
+        };
+      }
+    },
+  );
 
   ipcMain.handle(TerminalIpc.Write, (event, request: unknown): TerminalActionResult => {
     if (!isTerminalWriteRequest(request)) {

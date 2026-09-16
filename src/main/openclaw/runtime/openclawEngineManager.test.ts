@@ -5,11 +5,16 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
+import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import {
   applyOpenClawCliNetworkMode,
   buildInitialOpenClawConfig,
+  buildOpenClawCliShimSources,
+  OPENCLAW_CLI_COMMAND_NAMES,
   OpenClawCliNetworkMode,
   OpenClawEngineManager,
+  resolveOpenClawCliEntry,
+  resolveOpenClawGatewayBundleEntry,
   resolveOpenClawRuntimeResourcePaths,
 } from './openclawEngineManager';
 
@@ -24,6 +29,56 @@ test('resolves the OpenClaw v2026.9.2 runtime resource layout', () => {
 
 test('leaves managed skill discovery out of the initial OpenClaw config', () => {
   expect(buildInitialOpenClawConfig()).toEqual({ gateway: { mode: 'local' } });
+});
+
+test('resolves the public OpenClaw CLI independently from the Gateway bundle', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-cli-entry-'));
+  try {
+    const archivedEntry = path.join(directory, 'gateway.asar', 'openclaw.mjs');
+    fs.mkdirSync(path.dirname(archivedEntry), { recursive: true });
+    fs.writeFileSync(archivedEntry, '');
+    fs.writeFileSync(path.join(directory, 'gateway-bundle.mjs'), '');
+    fs.writeFileSync(path.join(directory, 'gateway-launcher.cjs'), '');
+
+    expect(resolveOpenClawCliEntry(directory)).toBe(archivedEntry);
+
+    const bareEntry = path.join(directory, 'openclaw.mjs');
+    fs.writeFileSync(bareEntry, '');
+    expect(resolveOpenClawCliEntry(directory)).toBe(bareEntry);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('uses a TTY-capable Node runtime for Windows CLI shims', () => {
+  const sources = buildOpenClawCliShimSources();
+
+  expect(sources.shell.indexOf('if [ -x "${JUSTDO_ELECTRON_PATH:-}" ]')).toBeLessThan(
+    sources.shell.indexOf('command -v node'),
+  );
+  expect(sources.windows).toContain('setlocal');
+  expect(sources.windows.indexOf('where.exe node.exe')).toBeLessThan(
+    sources.windows.indexOf('goto run_electron'),
+  );
+});
+
+test('exposes the lowercase product name as a CLI alias', () => {
+  expect(OPENCLAW_CLI_COMMAND_NAMES).toContain(PRODUCT_NAME_LOWERCASE);
+  expect(PRODUCT_NAME_LOWERCASE).toBe(PRODUCT_NAME_LOWERCASE.toLowerCase());
+});
+
+test('uses the dedicated Gateway bundle directly on POSIX only', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-openclaw-gateway-entry-'));
+  try {
+    const bundleEntry = path.join(directory, 'gateway-bundle.mjs');
+    fs.writeFileSync(bundleEntry, '');
+
+    expect(resolveOpenClawGatewayBundleEntry(directory, 'linux')).toBe(bundleEntry);
+    expect(resolveOpenClawGatewayBundleEntry(directory, 'darwin')).toBe(bundleEntry);
+    expect(resolveOpenClawGatewayBundleEntry(directory, 'win32')).toBeNull();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('keeps the inherited CLI environment when outbound proxy mode is not requested', () => {
