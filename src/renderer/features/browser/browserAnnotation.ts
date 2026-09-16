@@ -14,7 +14,13 @@ const clean = (value: string, maxLength: number): string =>
   value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
 
 const cleanUrl = (value: string): string => {
-  const raw = clean(value, 500);
+  const raw = value
+    .replace(/[\r\n\t]+/gu, ' ')
+    .trim()
+    .slice(0, 500);
+  if (/^[a-z]:[\\/]/iu.test(raw) || raw.startsWith('\\\\') || raw.startsWith('/')) {
+    return raw;
+  }
   try {
     const parsed = new URL(raw);
     parsed.username = '';

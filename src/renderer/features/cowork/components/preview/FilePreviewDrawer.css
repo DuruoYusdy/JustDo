@@ -61,7 +61,7 @@
 .file-preview-resize-handle {
   position: absolute;
   z-index: 12;
-  top: 72px;
+  top: 58px;
   bottom: 20px;
   left: 0;
   width: 11px;
@@ -105,8 +105,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 72px;
-  padding: 14px 16px 12px 20px;
+  min-height: 58px;
+  padding: 7px 16px 7px 20px;
 }
 
 .file-preview-file-icon {
@@ -114,8 +114,8 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   color: var(--justdo-primary);
   background: linear-gradient(
     145deg,
@@ -128,8 +128,8 @@
 }
 
 .file-preview-file-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   stroke-width: 1.7;
 }
 
@@ -169,8 +169,26 @@
   border-radius: 5px;
 }
 
+.file-preview-title-dirty {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--justdo-text-muted);
+  font-size: 9.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.file-preview-title-dirty > span {
+  width: 5px;
+  height: 5px;
+  background: var(--justdo-warning);
+  border-radius: 50%;
+}
+
 .file-preview-title-copy > p {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   overflow: hidden;
   color: var(--justdo-text-muted);
   font-size: 10.5px;
@@ -184,6 +202,14 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+}
+
+.file-preview-primary-actions {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
 }
 
 .file-preview-icon-button {
@@ -219,19 +245,8 @@
   height: 17px;
 }
 
-.file-preview-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
-  min-height: 53px;
-  padding: 9px 16px 10px 20px;
-  border-top: 1px solid var(--justdo-border-subtle);
-}
-
 .file-preview-mode-switch {
   display: inline-grid;
-  grid-column: 2;
   grid-template-columns: 1fr 1fr;
   gap: 3px;
   padding: 3px;
@@ -244,10 +259,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-width: 84px;
+  width: 32px;
+  min-width: 32px;
   height: 30px;
-  padding: 0 12px;
+  padding: 0;
   color: var(--justdo-text-secondary);
   font-size: 11.5px;
   font-weight: 550;
@@ -283,93 +298,16 @@
   stroke-width: 1.8;
 }
 
-.file-preview-toolbar-actions {
-  display: flex;
-  grid-column: 3;
-  align-items: center;
-  justify-self: end;
-  gap: 10px;
+.file-preview-save-icon-button {
+  color: var(--justdo-primary);
+  background: color-mix(in srgb, var(--justdo-primary-muted) 72%, transparent);
+  border-color: color-mix(in srgb, var(--justdo-primary) 18%, transparent);
 }
 
-.file-preview-save-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 150px;
-  overflow: hidden;
-  color: var(--justdo-text-muted);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-preview-save-status svg {
-  width: 14px;
-  height: 14px;
-  color: var(--justdo-success);
-}
-
-.file-preview-save-status.is-dirty {
-  color: color-mix(in srgb, var(--justdo-warning) 72%, var(--justdo-foreground));
-}
-
-.file-preview-save-status.is-dirty span {
-  width: 7px;
-  height: 7px;
-  background: var(--justdo-warning);
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--justdo-warning) 14%, transparent);
-}
-
-.file-preview-save-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-width: 82px;
-  height: 34px;
-  padding: 0 14px;
-  color: var(--justdo-primary-foreground);
-  font-size: 11.5px;
-  font-weight: 650;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--justdo-primary) 90%, white 10%),
-    var(--justdo-primary)
-  );
-  border: 1px solid color-mix(in srgb, var(--justdo-primary) 72%, black 28%);
-  border-radius: 9px;
-  box-shadow:
-    0 3px 8px color-mix(in srgb, var(--justdo-primary) 22%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.24);
-  transition:
-    transform 120ms ease,
-    filter 120ms ease,
-    opacity 120ms ease;
-}
-
-.file-preview-save-button:hover:not(:disabled) {
-  filter: brightness(1.05);
-  transform: translateY(-1px);
-}
-
-.file-preview-save-button:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.file-preview-save-button:disabled {
-  color: var(--justdo-text-muted);
-  cursor: not-allowed;
-  background: var(--justdo-surface-raised);
-  border-color: var(--justdo-border-subtle);
-  box-shadow: none;
-  opacity: 0.65;
-}
-
-.file-preview-save-button svg {
-  width: 15px;
-  height: 15px;
-  stroke-width: 1.9;
+.file-preview-save-icon-button:hover:not(:disabled) {
+  color: var(--justdo-primary);
+  background: color-mix(in srgb, var(--justdo-primary-muted) 92%, var(--justdo-surface));
+  border-color: color-mix(in srgb, var(--justdo-primary) 28%, transparent);
 }
 
 .file-preview-workspace {
@@ -464,10 +402,17 @@
 }
 
 .file-preview-preview-scroll {
+  display: flex;
   height: 100%;
   padding: 24px clamp(18px, 4vw, 42px) 48px;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+
+.file-preview-preview-scroll.is-preformatted {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .file-preview-preview-scroll::selection,
@@ -478,7 +423,8 @@
 
 .file-preview-document {
   width: 100%;
-  min-height: min(100%, 560px);
+  min-height: 100%;
+  flex: 1 0 auto;
   margin: 0 auto;
   padding: clamp(28px, 5vw, 52px) clamp(28px, 6vw, 64px) 64px;
   color: var(--justdo-foreground);
@@ -498,6 +444,9 @@
 }
 
 .file-preview-document.is-preformatted {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
   padding: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--justdo-surface) 92%, var(--justdo-background));
@@ -505,7 +454,9 @@
 
 .file-preview-readonly-editor {
   width: 100%;
-  min-height: 320px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .file-preview-editor-stage {
@@ -689,22 +640,8 @@
   }
 
   .file-preview-titlebar {
-    min-height: 64px;
+    min-height: 56px;
     padding-left: 14px;
-  }
-
-  .file-preview-toolbar {
-    gap: 8px;
-    padding-left: 14px;
-  }
-
-  .file-preview-mode-switch button {
-    min-width: 70px;
-    padding: 0 9px;
-  }
-
-  .file-preview-save-status {
-    display: none;
   }
 
   .file-preview-preview-scroll {
@@ -740,17 +677,12 @@
 }
 
 @container (max-width: 560px) {
-  .file-preview-save-status {
+  .file-preview-title-dirty {
     display: none;
   }
 
-  .file-preview-toolbar {
+  .file-preview-titlebar {
     gap: 8px;
-  }
-
-  .file-preview-mode-switch button {
-    min-width: 70px;
-    padding: 0 9px;
   }
 }
 

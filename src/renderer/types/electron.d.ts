@@ -66,6 +66,7 @@ type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
 type BrowserImportRequest = import('../../shared/browser').BrowserImportRequest;
 type BrowserImportResult = import('../../shared/browser').BrowserImportResult;
 type BrowserImportSourcesResult = import('../../shared/browser').BrowserImportSourcesResult;
+type BrowserLocalHtmlPreviewResult = import('../../shared/browser').BrowserLocalHtmlPreviewResult;
 type BrowserHistoryListResult = import('../../shared/browser').BrowserHistoryListResult;
 type BrowserDownloadListResult = import('../../shared/browser').BrowserDownloadListResult;
 type BrowserConnectionTestResult = import('../../shared/browser').BrowserConnectionTestResult;
@@ -385,6 +386,10 @@ import type { McpServerFormData } from '@/features/plugins/types/mcp';
 
 interface IElectronAPI {
   browser: {
+    createLocalHtmlPreview: (
+      filePath: string,
+      workingDirectory?: string,
+    ) => Promise<BrowserLocalHtmlPreviewResult>;
     getStatus: () => Promise<BrowserStatusResult>;
     canSetMode: () => Promise<BrowserModeSwitchAvailabilityResult>;
     setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;

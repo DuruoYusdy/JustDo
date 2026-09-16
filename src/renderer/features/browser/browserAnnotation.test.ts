@@ -59,6 +59,32 @@ describe('browser annotation context', () => {
     });
   });
 
+  test('preserves a local file path in annotation context and display metadata', () => {
+    const filePath = 'C:\\项目资料\\My  Report\\报告.html';
+    const annotation = buildBrowserAnnotationDraft({
+      frame: {
+        targetId: 'local-preview',
+        url: filePath,
+        title: 'Local report',
+        width: 1280,
+        height: 720,
+        viewportWidth: 1280,
+        viewportHeight: 720,
+        capturedAt: 1,
+        dataUrl: 'data:image/png;base64,YWJj',
+      },
+      profile: 'embedded',
+      strokes: [],
+      regions: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
+      element: null,
+      dataUrl: 'data:image/png;base64,YWJj',
+    });
+
+    expect(annotation.modelContext).toContain(`at ${filePath}`);
+    expect(annotation.displayUrl).toBe(filePath);
+    expect(annotation.display?.displayUrl).toBe(filePath);
+  });
+
   test('wraps gateway-only context and restores the user-visible prompt', () => {
     const gateway = composeBrowserGatewayPrompt('Please fix this.', [
       {

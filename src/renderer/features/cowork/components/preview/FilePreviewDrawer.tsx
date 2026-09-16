@@ -4,6 +4,7 @@ import './FilePreviewDrawer.css';
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ArrowUturnLeftIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   EyeIcon,
@@ -148,8 +149,10 @@ const showToast = (message: string): void => {
 
 const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerProps>(
   ({ preview, onClose, isObscured = false, embedded = false }, ref) => {
+    const extension = getPreviewableFileExtension(preview.filePath) ?? '.txt';
+    const isMarkdown = extension === '.md' || extension === '.markdown';
     const [drawerWidth, setDrawerWidth] = useState(() => clampDrawerWidth(DRAWER_DEFAULT_WIDTH));
-    const [mode, setMode] = useState<PreviewMode>('preview');
+    const [mode, setMode] = useState<PreviewMode>(() => (isMarkdown ? 'preview' : 'edit'));
     const [savedContent, setSavedContent] = useState(preview.content);
     const [draft, setDraft] = useState(preview.content);
     const [isAuthorizing, setIsAuthorizing] = useState(false);
@@ -171,9 +174,7 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
     const transitionPromiseRef = useRef<Promise<boolean> | null>(null);
     const saveActionRef = useRef<() => void>(() => undefined);
     const fileName = preview.filePath.split(/[\\/]/).pop() || preview.filePath;
-    const extension = getPreviewableFileExtension(preview.filePath) ?? '.txt';
     const isJson = extension === '.json';
-    const isMarkdown = extension === '.md' || extension === '.markdown';
     const isPreformatted = !isMarkdown;
     const isDirty = hasUnsavedFilePreviewChanges(draft, savedContent);
     const editorLanguage = getFilePreviewEditorLanguage(extension);
@@ -206,13 +207,13 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
       isEditAuthorizedRef.current = false;
       savedContentRef.current = preview.content;
       versionRef.current = preview.version;
-      setMode('preview');
+      setMode(isMarkdown ? 'preview' : 'edit');
       if (previousEditToken !== preview.editToken) {
         void window.electron.shell
           .revokePreviewFileEdit(previousEditToken)
           .catch((): undefined => undefined);
       }
-    }, [preview.content, preview.editToken, preview.filePath, preview.version]);
+    }, [isMarkdown, preview.content, preview.editToken, preview.filePath, preview.version]);
 
     useEffect(() => {
       if (!drawerRef.current) return;
@@ -342,6 +343,10 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
       });
     }, [reloadFromDisk]);
 
+    useEffect(() => {
+      if (!isMarkdown) void requestEditAuthorization();
+    }, [isMarkdown, preview.editToken, requestEditAuthorization]);
+
     const performSaveDraft = useCallback(async (): Promise<boolean> => {
       if (!(await requestEditAuthorization())) return false;
       const contentToSave = draftRef.current;
@@ -390,6 +395,11 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
     const saveDraft = useCallback((): Promise<boolean> => {
       return runFilePreviewSingleFlight(savePromiseRef, performSaveDraft);
     }, [performSaveDraft]);
+
+    const discardDraft = useCallback(() => {
+      draftRef.current = savedContentRef.current;
+      setDraft(savedContentRef.current);
+    }, []);
 
     saveActionRef.current = () => {
       void saveDraft();
@@ -503,8 +513,81 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                 <div className="file-preview-title-line">
                   <h2 title={fileName}>{fileName}</h2>
                   <span className="file-preview-type-badge">{fileTypeLabel}</span>
+                  {isDirty && (
+                    <span
+                      className="file-preview-title-dirty"
+                      title={i18nService.t('coworkFilePreviewUnsaved')}
+                    >
+                      <span aria-hidden="true" />
+                      {i18nService.t('coworkFilePreviewUnsavedShort')}
+                    </span>
+                  )}
                 </div>
                 <p title={preview.filePath}>{preview.filePath}</p>
+              </div>
+              <div className="file-preview-primary-actions">
+                {isMarkdown && (
+                  <div className="file-preview-mode-switch" role="group">
+                    <button
+                      type="button"
+                      onClick={() => setMode('preview')}
+                      className={mode === 'preview' ? 'is-active' : ''}
+                      aria-label={i18nService.t('coworkFilePreviewModePreview')}
+                      aria-pressed={mode === 'preview'}
+                      title={i18nService.t('coworkFilePreviewModePreview')}
+                    >
+                      <EyeIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void requestEditAuthorization().then(authorized => {
+                          if (authorized && mountedRef.current) setMode('edit');
+                        });
+                      }}
+                      disabled={isAuthorizing}
+                      className={mode === 'edit' ? 'is-active' : ''}
+                      aria-label={i18nService.t('coworkFilePreviewModeEdit')}
+                      aria-pressed={mode === 'edit'}
+                      title={i18nService.t('coworkFilePreviewModeEdit')}
+                    >
+                      {isAuthorizing ? (
+                        <ArrowPathIcon className="animate-spin" />
+                      ) : (
+                        <PencilSquareIcon />
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {isDirty && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={discardDraft}
+                      disabled={isSaving}
+                      className="file-preview-icon-button"
+                      aria-label={i18nService.t('coworkFilePreviewRevert')}
+                      title={i18nService.t('coworkFilePreviewRevert')}
+                    >
+                      <ArrowUturnLeftIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void saveDraft()}
+                      disabled={isSaving}
+                      className="file-preview-icon-button file-preview-save-icon-button"
+                      aria-label={i18nService.t('coworkFilePreviewSaveShortcut')}
+                      title={i18nService.t('coworkFilePreviewSaveShortcut')}
+                    >
+                      {isSaving ? (
+                        <ArrowPathIcon className="animate-spin" />
+                      ) : (
+                        <ArrowDownTrayIcon />
+                      )}
+                    </button>
+                  </>
+                )}
               </div>
               <div className="file-preview-title-actions">
                 <button
@@ -534,60 +617,6 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                   title={i18nService.t('close')}
                 >
                   <XMarkIcon />
-                </button>
-              </div>
-            </div>
-
-            <div className="file-preview-toolbar">
-              <div className="file-preview-mode-switch" role="group">
-                <button
-                  type="button"
-                  onClick={() => setMode('preview')}
-                  className={mode === 'preview' ? 'is-active' : ''}
-                  aria-pressed={mode === 'preview'}
-                >
-                  <EyeIcon />
-                  {i18nService.t('coworkFilePreviewModePreview')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void requestEditAuthorization().then(authorized => {
-                      if (authorized && mountedRef.current) setMode('edit');
-                    });
-                  }}
-                  disabled={isAuthorizing}
-                  className={mode === 'edit' ? 'is-active' : ''}
-                  aria-pressed={mode === 'edit'}
-                >
-                  {isAuthorizing ? (
-                    <ArrowPathIcon className="animate-spin" />
-                  ) : (
-                    <PencilSquareIcon />
-                  )}
-                  {i18nService.t('coworkFilePreviewModeEdit')}
-                </button>
-              </div>
-
-              <div className="file-preview-toolbar-actions">
-                {isDirty && (
-                  <div
-                    className="file-preview-save-status is-dirty"
-                    title={i18nService.t('coworkFilePreviewUnsaved')}
-                  >
-                    <span />
-                    {i18nService.t('coworkFilePreviewUnsaved')}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void saveDraft()}
-                  disabled={!isDirty || isSaving}
-                  className="file-preview-save-button"
-                  title={i18nService.t('coworkFilePreviewSaveShortcut')}
-                >
-                  {isSaving ? <ArrowPathIcon className="animate-spin" /> : <ArrowDownTrayIcon />}
-                  {isSaving ? i18nService.t('saving') : i18nService.t('save')}
                 </button>
               </div>
             </div>
@@ -646,12 +675,14 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                 </div>
               </div>
             ) : (
-              <div className="file-preview-preview-scroll">
+              <div
+                className={`file-preview-preview-scroll ${isPreformatted ? 'is-preformatted' : ''}`}
+              >
                 <div className={`file-preview-document ${isPreformatted ? 'is-preformatted' : ''}`}>
                   {isPreformatted ? (
                     <div className="file-preview-readonly-editor">
                       <Editor
-                        height="max(320px, calc(100vh - 220px))"
+                        height="100%"
                         language={editorLanguage}
                         theme={isDark ? FILE_PREVIEW_DARK_THEME : FILE_PREVIEW_LIGHT_THEME}
                         beforeMount={configureFilePreviewThemes}
@@ -675,6 +706,12 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                           readOnly: true,
                           renderLineHighlight: 'none',
                           scrollBeyondLastLine: false,
+                          scrollbar: {
+                            horizontal: 'visible',
+                            horizontalScrollbarSize: 12,
+                            vertical: 'visible',
+                            verticalScrollbarSize: 12,
+                          },
                           smoothScrolling: true,
                           unicodeHighlight: FILE_PREVIEW_UNICODE_HIGHLIGHT,
                           wordWrap: 'off',

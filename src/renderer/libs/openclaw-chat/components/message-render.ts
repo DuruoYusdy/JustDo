@@ -194,6 +194,7 @@ function localPathFromAttachmentUrl(url: string): string {
   try {
     const parsed = new URL(url);
     const pathname = decodeURIComponent(parsed.pathname);
+    if (parsed.hostname) return `//${decodeURIComponent(parsed.hostname)}${pathname}`;
     return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
   } catch {
     return url.replace(/^file:\/\/\/?/i, '');
@@ -214,6 +215,10 @@ function resolveAttachmentUrl(url: string, workingDirectory?: string): string {
 type AttachmentOpenOptions = {
   workingDirectory?: string;
 };
+
+function isHtmlDocumentPath(filePath: string): boolean {
+  return /\.(?:html?|xhtml)$/iu.test(filePath);
+}
 
 function labelForMediaPath(mediaPath: string): string {
   const trimmed = mediaPath.trim();
@@ -251,6 +256,14 @@ async function openAttachment(
   try {
     const url = resolveAttachmentUrl(source, options.workingDirectory);
     const localPath = localPathFromAttachmentUrl(url);
+    if (!/^https?:\/\//i.test(url) && isHtmlDocumentPath(localPath)) {
+      window.dispatchEvent(
+        new CustomEvent('cowork:open-local-html', {
+          detail: { filePath: localPath, workingDirectory: options.workingDirectory },
+        }),
+      );
+      return;
+    }
     if (!/^https?:\/\//i.test(url) && getPreviewableFileExtension(localPath)) {
       window.dispatchEvent(
         new CustomEvent('cowork:preview-file', {

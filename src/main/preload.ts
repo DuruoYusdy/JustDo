@@ -20,6 +20,7 @@ import {
   type BrowserImportResult,
   type BrowserImportSourcesResult,
   BrowserIpc,
+  type BrowserLocalHtmlPreviewResult,
   type BrowserMode,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
@@ -252,6 +253,11 @@ contextBridge.exposeInMainWorld('electron', {
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
   },
   browser: {
+    createLocalHtmlPreview: (
+      filePath: string,
+      workingDirectory?: string,
+    ): Promise<BrowserLocalHtmlPreviewResult> =>
+      ipcRenderer.invoke(BrowserIpc.CreateLocalHtmlPreview, filePath, workingDirectory),
     getStatus: (): Promise<BrowserStatusResult> => ipcRenderer.invoke(BrowserIpc.GetStatus),
     canSetMode: (): Promise<BrowserModeSwitchAvailabilityResult> =>
       ipcRenderer.invoke(BrowserIpc.CanSetMode),

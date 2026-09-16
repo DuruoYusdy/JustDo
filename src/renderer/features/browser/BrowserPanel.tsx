@@ -112,6 +112,7 @@ let retainedTabs: BrowserPanelTab[] | null = null;
 
 export const BROWSER_PANEL_DEFAULT_WIDTH = 520;
 const BROWSER_PANEL_MIN_WIDTH = 320;
+const ANNOTATION_NOTICE_DURATION_MS = 3_500;
 // Bump this when guest creation preferences change. Besides documenting that those
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests
 // that were created by an older implementation instead of reusing a broken one.
@@ -120,9 +121,75 @@ const BROWSER_WEBVIEW_CAPABILITY_VERSION = 'isolated-session-v2';
 const getBrowserPanelMaxWidth = (availableWidth = window.innerWidth): number =>
   Math.max(BROWSER_PANEL_MIN_WIDTH, availableWidth - 32);
 
-const createTab = (url = 'about:blank'): BrowserPanelTab => {
+type BrowserLocalHtmlSource = {
+  sourceFilePath: string;
+  sourcePreviewUrl: string;
+  sourceRootPath: string;
+  sourcePreviewRootUrl: string;
+};
+
+type BrowserOpenTabOptions = Partial<BrowserLocalHtmlSource> & {
+  insertAfterTargetId?: string;
+};
+
+const createTab = (
+  url = 'about:blank',
+  source?: Partial<BrowserLocalHtmlSource>,
+): BrowserPanelTab => {
   const targetId = `embedded-${crypto.randomUUID()}`;
-  return { id: targetId, targetId, title: '', url };
+  return {
+    id: targetId,
+    targetId,
+    title: '',
+    url,
+    ...(source?.sourceFilePath
+      ? {
+          sourceFilePath: source.sourceFilePath,
+          sourcePreviewUrl: source.sourcePreviewUrl || url,
+          sourceRootPath: source.sourceRootPath,
+          sourcePreviewRootUrl: source.sourcePreviewRootUrl,
+        }
+      : {}),
+  };
+};
+
+const getLocalPreviewFilePath = (tab: BrowserPanelTab): string | null => {
+  if (!tab.sourceFilePath || !tab.sourcePreviewUrl) return null;
+  try {
+    const current = new URL(tab.url);
+    const source = new URL(tab.sourcePreviewUrl);
+    if (current.origin !== source.origin) return null;
+    if (current.pathname === source.pathname) return tab.sourceFilePath;
+    if (!tab.sourceRootPath || !tab.sourcePreviewRootUrl) return null;
+    const previewRoot = new URL(tab.sourcePreviewRootUrl);
+    if (current.origin !== previewRoot.origin) return null;
+    if (!current.pathname.startsWith(previewRoot.pathname)) return tab.sourceFilePath;
+    if (current.pathname === previewRoot.pathname) return tab.sourceFilePath;
+    const relativeSegments = current.pathname
+      .slice(previewRoot.pathname.length)
+      .split('/')
+      .filter(Boolean)
+      .map(decodeURIComponent);
+    if (
+      !relativeSegments.length ||
+      relativeSegments.some(
+        segment => segment === '.' || segment === '..' || /[\\/\0]/u.test(segment),
+      )
+    ) {
+      return null;
+    }
+    const separator = tab.sourceRootPath.includes('\\') ? '\\' : '/';
+    return `${tab.sourceRootPath.replace(/[\\/]+$/u, '')}${separator}${relativeSegments.join(separator)}`;
+  } catch {
+    return tab.url === tab.sourcePreviewUrl ? tab.sourceFilePath : null;
+  }
+};
+
+const isAtSourcePreview = (tab: BrowserPanelTab): boolean => getLocalPreviewFilePath(tab) !== null;
+
+export const getBrowserTabAddress = (tab: BrowserPanelTab | null | undefined): string => {
+  if (!tab || tab.url === 'about:blank') return '';
+  return getLocalPreviewFilePath(tab) ?? tab.url;
 };
 
 const normalizeUrl = (raw: string): string | null => {
@@ -185,7 +252,7 @@ const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
 export interface BrowserPanelHandle {
   closeTab: (targetId: string) => void;
   openTabContextMenu: (targetId: string, x: number, y: number) => void;
-  openTab: (url?: string) => void;
+  openTab: (url?: string, options?: Omit<BrowserOpenTabOptions, 'insertAfterTargetId'>) => void;
 }
 
 interface BrowserPanelProps {
@@ -227,6 +294,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [loadErrors, setLoadErrors] = useState<Map<string, string>>(() => new Map());
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [annotationNoticeSequence, setAnnotationNoticeSequence] = useState(0);
   const [mode, setMode] = useState<BrowserPanelMode>('interact');
   const [annotationTool, setAnnotationTool] = useState<BrowserAnnotationTool>('pen');
   const [annotationToolMenuAnchor, setAnnotationToolMenuAnchor] = useState<{
@@ -271,7 +339,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const readyGuestsRef = useRef(new WeakSet<LiveWebview>());
   const initialUrlsRef = useRef(new Map(tabs.map(tab => [tab.targetId, tab.url])));
   const tabsRef = useRef(tabs);
-  const closedTabUrlsRef = useRef<string[]>([]);
+  const closedTabsRef = useRef<BrowserPanelTab[]>([]);
   const pendingInspectionsRef = useRef(
     new Map<string, (value: BrowserInspectedElement[]) => void>(),
   );
@@ -281,6 +349,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const inspectionSequenceRef = useRef(0);
   const contentEpochRef = useRef(0);
   const inspectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const annotationNoticeTargetRef = useRef<string | null>(null);
+  const annotationNoticeTextRef = useRef<string | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
@@ -344,14 +414,41 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, [onTabsChange, tabs]);
 
   const activeTabTargetId = activeTab?.targetId ?? null;
+  const annotationAddedNotice = i18nService.t('browserAnnotationAdded');
   useEffect(() => {
     if (!activeTabTargetId) return;
     if (activeTargetId !== activeTabTargetId) onActiveTargetChange(activeTabTargetId);
     const selectedTab = tabsRef.current.find(tab => tab.targetId === activeTabTargetId);
     addressDirtyRef.current = false;
     setError(null);
-    setUrlDraft(selectedTab?.url === 'about:blank' ? '' : (selectedTab?.url ?? ''));
+    setUrlDraft(getBrowserTabAddress(selectedTab));
   }, [activeTabTargetId, activeTargetId, onActiveTargetChange]);
+
+  useEffect(() => {
+    const noticeTargetId = annotationNoticeTargetRef.current;
+    if (!noticeTargetId || noticeTargetId === activeTabTargetId) return;
+    const noticeText = annotationNoticeTextRef.current;
+    annotationNoticeTargetRef.current = null;
+    annotationNoticeTextRef.current = null;
+    setNotice(current => (current === noticeText ? null : current));
+  }, [activeTabTargetId]);
+
+  useEffect(() => {
+    if (!annotationNoticeTargetRef.current || annotationNoticeSequence === 0) return;
+    const previousText = annotationNoticeTextRef.current;
+    annotationNoticeTextRef.current = annotationAddedNotice;
+    setNotice(current =>
+      current === previousText || current === null ? annotationAddedNotice : current,
+    );
+    const targetId = annotationNoticeTargetRef.current;
+    const timer = window.setTimeout(() => {
+      if (annotationNoticeTargetRef.current !== targetId) return;
+      annotationNoticeTargetRef.current = null;
+      annotationNoticeTextRef.current = null;
+      setNotice(current => (current === annotationAddedNotice ? null : current));
+    }, ANNOTATION_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [annotationAddedNotice, annotationNoticeSequence]);
 
   useEffect(() => clearAnnotations(), [clearAnnotations, draftKey]);
   useEffect(() => setCredentialOfferTargetId(null), [activeTabTargetId]);
@@ -387,13 +484,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, []);
 
   const openTab = useCallback(
-    (rawUrl = 'about:blank', insertAfterTargetId?: string) => {
+    (rawUrl = 'about:blank', options?: BrowserOpenTabOptions) => {
       const url = normalizeUrl(rawUrl);
       if (!url || tabsRef.current.length >= 8) return;
-      const tab = createTab(url);
+      const tab = createTab(url, options);
       initialUrlsRef.current.set(tab.targetId, tab.url);
-      const insertionIndex = insertAfterTargetId
-        ? tabsRef.current.findIndex(candidate => candidate.targetId === insertAfterTargetId) + 1
+      const insertionIndex = options?.insertAfterTargetId
+        ? tabsRef.current.findIndex(
+            candidate => candidate.targetId === options.insertAfterTargetId,
+          ) + 1
         : tabsRef.current.length;
       const nextTabs = [...tabsRef.current];
       nextTabs.splice(insertionIndex > 0 ? insertionIndex : nextTabs.length, 0, tab);
@@ -401,7 +500,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       setTabs(nextTabs);
       activeTargetRef.current = tab.targetId;
       onActiveTargetChange(tab.targetId);
-      setUrlDraft(url === 'about:blank' ? '' : url);
+      setUrlDraft(getBrowserTabAddress(tab));
       clearAnnotations();
     },
     [clearAnnotations, onActiveTargetChange],
@@ -428,7 +527,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       const closingWebview = webviewsRef.current.get(targetId);
       const closingUrl = closingWebview?.getURL() || closingTab.url;
       if (closingUrl && closingUrl !== 'about:blank') {
-        closedTabUrlsRef.current = [...closedTabUrlsRef.current.slice(-9), closingUrl];
+        closedTabsRef.current = [
+          ...closedTabsRef.current.slice(-9),
+          { ...closingTab, url: closingUrl },
+        ];
       }
       initialUrlsRef.current.delete(targetId);
       const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
@@ -454,7 +556,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
       activeTargetRef.current = nextTab?.targetId ?? null;
       onActiveTargetChange(nextTab?.targetId ?? null);
-      setUrlDraft(nextTab?.url === 'about:blank' ? '' : (nextTab?.url ?? ''));
+      setUrlDraft(getBrowserTabAddress(nextTab));
       if (nextTab) setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
     },
     [clearAnnotations, onActiveTargetChange],
@@ -487,8 +589,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return;
       }
       if (command === 'reopen-tab') {
-        const url = closedTabUrlsRef.current.pop();
-        if (url) openTab(url);
+        const closedTab = closedTabsRef.current.pop();
+        if (closedTab) {
+          openTab(closedTab.url, {
+            sourceFilePath: closedTab.sourceFilePath,
+            sourcePreviewUrl: closedTab.sourcePreviewUrl,
+            sourceRootPath: closedTab.sourceRootPath,
+            sourcePreviewRootUrl: closedTab.sourcePreviewRootUrl,
+          });
+        }
         return;
       }
       if (command === 'close-tab') {
@@ -507,7 +616,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           currentTabs[(currentIndex + direction + currentTabs.length) % currentTabs.length]!;
         activeTargetRef.current = nextTab.targetId;
         onActiveTargetChange(nextTab.targetId);
-        setUrlDraft(nextTab.url === 'about:blank' ? '' : nextTab.url);
+        setUrlDraft(getBrowserTabAddress(nextTab));
         clearAnnotations();
         setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
         return;
@@ -540,7 +649,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         setCredentialOfferTargetId(null);
         if (authoritative) addressDirtyRef.current = false;
         if (authoritative || !addressDirtyRef.current) {
-          setUrlDraft(nextUrl === 'about:blank' ? '' : nextUrl);
+          const nextTab = retainedTab ? { ...retainedTab, url: nextUrl } : undefined;
+          setUrlDraft(getBrowserTabAddress(nextTab));
         }
         clearAnnotations();
         setNavigationVersion(value => value + 1);
@@ -888,9 +998,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   };
 
   const submitUrl = async () => {
-    const url = resolveAddressInput(urlDraft);
+    const activeTab = tabsRef.current.find(tab => tab.targetId === activeTargetRef.current);
+    const url =
+      activeTab && urlDraft.trim() === getBrowserTabAddress(activeTab)
+        ? activeTab.url
+        : resolveAddressInput(urlDraft);
     if (!url) {
       setError(i18nService.t('browserPanelInvalidUrl'));
+      return;
+    }
+    if (activeTab && isAtSourcePreview(activeTab) && url !== activeTab.url) {
+      openTab(url);
       return;
     }
     const targetId = activeTargetRef.current;
@@ -960,7 +1078,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       if (contentEpochRef.current !== captureEpoch || activeTargetRef.current !== targetId) return;
       const frame: BrowserPanelFrame = {
         targetId,
-        url: webview.getURL() || tab.url,
+        url: getBrowserTabAddress({ ...tab, url: webview.getURL() || tab.url }),
         title: webview.getTitle() || tab.title,
         width: size.width,
         height: size.height,
@@ -998,7 +1116,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         setError(i18nService.t('browserAnnotationLimitReached'));
         return;
       }
-      setNotice(i18nService.t('browserAnnotationAdded'));
+      annotationNoticeTargetRef.current = targetId;
+      annotationNoticeTextRef.current = annotationAddedNotice;
+      setNotice(annotationAddedNotice);
+      setAnnotationNoticeSequence(value => value + 1);
       clearAnnotations();
     } catch (captureError) {
       setError(
@@ -1057,7 +1178,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     const url = webview?.getURL() || tab.url;
 
     if (action === 'new-right') {
-      openTab('about:blank', targetId);
+      openTab('about:blank', { insertAfterTargetId: targetId });
       return;
     }
     if (action === 'reload') {
@@ -1065,13 +1186,27 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return;
     }
     if (action === 'duplicate') {
-      openTab(url, targetId);
+      openTab(url, {
+        insertAfterTargetId: targetId,
+        ...(isAtSourcePreview(tab) && tab.sourceFilePath
+          ? {
+              sourceFilePath: tab.sourceFilePath,
+              sourcePreviewUrl: tab.sourcePreviewUrl,
+              sourceRootPath: tab.sourceRootPath,
+              sourcePreviewRootUrl: tab.sourcePreviewRootUrl,
+            }
+          : {}),
+      });
       return;
     }
     if (action === 'copy-url') {
       try {
-        await navigator.clipboard.writeText(url);
-        setNotice(i18nService.t('browserTabMenuUrlCopied'));
+        await navigator.clipboard.writeText(getBrowserTabAddress({ ...tab, url }));
+        setNotice(
+          isAtSourcePreview({ ...tab, url })
+            ? i18nService.t('browserTabMenuFilePathCopied')
+            : i18nService.t('browserTabMenuUrlCopied'),
+        );
       } catch {
         setError(i18nService.t('browserTabMenuCopyFailed'));
       }
@@ -1404,7 +1539,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                     onClick={() => {
                       onActiveTargetChange(tab.targetId);
                       activeTargetRef.current = tab.targetId;
-                      setUrlDraft(tab.url === 'about:blank' ? '' : tab.url);
+                      setUrlDraft(getBrowserTabAddress(tab));
                       clearAnnotations();
                       setTimeout(() => webviewsRef.current.get(tab.targetId)?.focus(), 0);
                     }}
@@ -1769,7 +1904,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             type="button"
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-primary/70 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             aria-label={i18nService.t('browserPanelDismissNotice')}
-            onClick={() => setNotice(null)}
+            onClick={() => {
+              annotationNoticeTargetRef.current = null;
+              annotationNoticeTextRef.current = null;
+              setNotice(null);
+            }}
           >
             <XMarkIcon className="h-3.5 w-3.5" />
           </button>
@@ -1892,6 +2031,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           x={tabMenu.x}
           y={tabMenu.y}
           muted={Boolean(menuTab.muted)}
+          copyAddressLabel={
+            isAtSourcePreview(menuTab) ? i18nService.t('browserTabMenuCopyFilePath') : undefined
+          }
           canCloseOthers={tabs.length > 1}
           canCloseRight={menuTabIndex >= 0 && menuTabIndex < tabs.length - 1}
           onAction={action => void handleTabMenuAction(action)}

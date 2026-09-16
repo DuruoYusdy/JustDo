@@ -37,6 +37,7 @@ export default function BrowserTabContextMenu({
   x,
   y,
   muted,
+  copyAddressLabel,
   canCloseOthers,
   canCloseRight,
   onAction,
@@ -45,6 +46,7 @@ export default function BrowserTabContextMenu({
   x: number;
   y: number;
   muted: boolean;
+  copyAddressLabel?: string;
   canCloseOthers: boolean;
   canCloseRight: boolean;
   onAction: (action: BrowserTabMenuAction) => void;
@@ -71,7 +73,7 @@ export default function BrowserTabContextMenu({
       },
       {
         action: 'copy-url',
-        label: i18nService.t('browserTabMenuCopyUrl'),
+        label: copyAddressLabel || i18nService.t('browserTabMenuCopyUrl'),
         icon: <LinkIcon className={iconClass} />,
       },
       {

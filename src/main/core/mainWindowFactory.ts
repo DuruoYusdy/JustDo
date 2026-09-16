@@ -29,6 +29,10 @@ import {
   resolveAvailableBrowserDownloadPath,
   resolveBrowserDownloadDirectory,
 } from '../browser/browserDownloadPath';
+import {
+  isLocalHtmlPreviewUrl,
+  isSameLocalHtmlPreviewScope,
+} from '../browser/localHtmlPreviewServer';
 import { isAllowedBrowserPanelUrl, isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import {
   shouldAllowAudioMediaCheck,
@@ -135,6 +139,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
   const windowSession = mainWindow.webContents.session;
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  const localPreviewScopesByGuestId = new Map<number, string>();
   browserPanelSession.setPermissionCheckHandler(() => false);
   browserPanelSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
@@ -226,8 +231,23 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     }
   });
   mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+    let localPreviewScopeUrl = isLocalHtmlPreviewUrl(guestContents.getURL())
+      ? guestContents.getURL()
+      : null;
+    const bindLocalPreviewScope = (url: string): void => {
+      if (localPreviewScopeUrl || !isLocalHtmlPreviewUrl(url)) return;
+      localPreviewScopeUrl = url;
+      localPreviewScopesByGuestId.set(guestContents.id, url);
+    };
+    if (localPreviewScopeUrl) {
+      localPreviewScopesByGuestId.set(guestContents.id, localPreviewScopeUrl);
+    }
+    const canNavigateWithinPreviewScope = (url: string): boolean => {
+      return !localPreviewScopeUrl || isSameLocalHtmlPreviewScope(localPreviewScopeUrl, url);
+    };
     guestContents.setWindowOpenHandler(details => {
       const { url } = details;
+      if (!canNavigateWithinPreviewScope(url)) return { action: 'deny' };
       if (details.postBody) {
         mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
           url,
@@ -247,16 +267,28 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       guestContents.send(BROWSER_GUEST_COMMAND_CHANNEL, command);
     });
     guestContents.on('will-navigate', (event, url) => {
-      if (!isAllowedBrowserPanelUrl(url)) event.preventDefault();
+      bindLocalPreviewScope(url);
+      if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
+        event.preventDefault();
+      }
     });
     guestContents.on('will-frame-navigate', event => {
-      if (!isAllowedBrowserPanelUrl(event.url)) event.preventDefault();
+      if (event.isMainFrame) bindLocalPreviewScope(event.url);
+      if (!isAllowedBrowserPanelUrl(event.url) || !canNavigateWithinPreviewScope(event.url)) {
+        event.preventDefault();
+      }
     });
     guestContents.on('will-redirect', (event, url) => {
-      if (!isAllowedBrowserPanelUrl(url)) event.preventDefault();
+      if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
+        event.preventDefault();
+      }
     });
     guestContents.on('did-stop-loading', () => {
-      recordBrowserHistory(guestContents.getURL(), guestContents.getTitle());
+      const url = guestContents.getURL();
+      if (!localPreviewScopeUrl) recordBrowserHistory(url, guestContents.getTitle());
+    });
+    guestContents.once('destroyed', () => {
+      localPreviewScopesByGuestId.delete(guestContents.id);
     });
     guestContents.on('login', (event, _details, authInfo, callback) => {
       const credentials = options.getProxyCredentials();
@@ -274,9 +306,13 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     });
   });
   browserPanelSession.webRequest.onBeforeRequest((details, callback) => {
+    const localPreviewScopeUrl = localPreviewScopesByGuestId.get(details.webContentsId);
+    const blockPreviewRequest = Boolean(
+      localPreviewScopeUrl && !isSameLocalHtmlPreviewScope(localPreviewScopeUrl, details.url),
+    );
     const blockGuestMainFrame =
       details.resourceType === 'mainFrame' && !isAllowedBrowserPanelUrl(details.url);
-    callback(blockGuestMainFrame ? { cancel: true } : {});
+    callback(blockPreviewRequest || blockGuestMainFrame ? { cancel: true } : {});
   });
   const pendingDownloads = new Set<Electron.DownloadItem>();
   const reservedDownloadPaths = new Set<string>();

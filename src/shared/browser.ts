@@ -8,6 +8,7 @@ export const BrowserIpc = {
   RevealExtension: 'browser:revealExtension',
   CopyExtensionPairing: 'browser:copyExtensionPairing',
   TestExtensionConnection: 'browser:testExtensionConnection',
+  CreateLocalHtmlPreview: 'browser:createLocalHtmlPreview',
   PanelOpenTab: 'browser:panelOpenTab',
   ListImportSources: 'browser:listImportSources',
   ImportData: 'browser:importData',
@@ -22,6 +23,19 @@ export const BrowserIpc = {
   GetClearDataSummary: 'browser:getClearDataSummary',
   ClearBrowsingData: 'browser:clearBrowsingData',
 } as const;
+
+export type BrowserLocalHtmlPreviewResult =
+  | {
+      success: true;
+      url: string;
+      filePath: string;
+      rootPath: string;
+      previewRootUrl: string;
+    }
+  | {
+      success: false;
+      errorCode: 'invalid_request' | 'not_found' | 'invalid_type' | 'invalid_source' | 'failed';
+    };
 
 export const BROWSER_GUEST_COMMAND_CHANNEL = 'justdo-browser-command';
 export const BROWSER_GUEST_CREDENTIALS_GET_CHANNEL = 'justdo-browser-credentials:get';
@@ -336,6 +350,10 @@ export type BrowserPanelTab = {
   faviconUrl?: string;
   muted?: boolean;
   url: string;
+  sourceFilePath?: string;
+  sourcePreviewUrl?: string;
+  sourceRootPath?: string;
+  sourcePreviewRootUrl?: string;
   urlUnavailableReason?: 'navigation_blocked' | 'navigation_check_failed';
 };
 

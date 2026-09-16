@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import BrowserPanel, { type BrowserPanelHandle } from './BrowserPanel';
+import BrowserPanel, { type BrowserPanelHandle, getBrowserTabAddress } from './BrowserPanel';
 
 vi.mock('@/features/cowork/components/composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
@@ -182,6 +182,58 @@ describe('BrowserPanel embedded webview', () => {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
+  });
+
+  it('uses the source file path as the user-facing address for local HTML', () => {
+    expect(
+      getBrowserTabAddress({
+        id: 'local-preview',
+        targetId: 'local-preview',
+        title: 'Report',
+        url: 'http://127.0.0.1:43128/token/report.html#summary',
+        sourcePreviewUrl: 'http://127.0.0.1:43128/token/report.html',
+        sourceFilePath: 'C:\\reports\\report.html',
+      }),
+    ).toBe('C:\\reports\\report.html');
+
+    expect(
+      getBrowserTabAddress({
+        id: 'local-preview',
+        targetId: 'local-preview',
+        title: 'Details',
+        url: 'http://127.0.0.1:43128/token/chapters/%E8%AF%A6%E6%83%85.html',
+        sourcePreviewUrl: 'http://127.0.0.1:43128/token/report.html',
+        sourceFilePath: 'C:\\reports\\report.html',
+        sourcePreviewRootUrl: 'http://127.0.0.1:43128/token/',
+        sourceRootPath: 'C:\\reports',
+      }),
+    ).toBe('C:\\reports\\chapters\\详情.html');
+
+    expect(
+      getBrowserTabAddress({
+        id: 'local-preview',
+        targetId: 'local-preview',
+        title: 'Report',
+        url: 'http://127.0.0.1:43128/token/',
+        sourcePreviewUrl: 'http://127.0.0.1:43128/token/report.html',
+        sourceFilePath: 'C:\\reports\\report.html',
+        sourcePreviewRootUrl: 'http://127.0.0.1:43128/token/',
+        sourceRootPath: 'C:\\reports',
+      }),
+    ).toBe('C:\\reports\\report.html');
+
+    expect(
+      getBrowserTabAddress({
+        id: 'local-preview',
+        targetId: 'local-preview',
+        title: 'Report dashboard',
+        url: 'http://127.0.0.1:43128/dashboard',
+        sourcePreviewUrl: 'http://127.0.0.1:43128/token/report.html',
+        sourceFilePath: 'C:\\reports\\report.html',
+        sourcePreviewRootUrl: 'http://127.0.0.1:43128/token/',
+        sourceRootPath: 'C:\\reports',
+      }),
+    ).toBe('C:\\reports\\report.html');
   });
 
   afterEach(() => {
@@ -742,6 +794,77 @@ describe('BrowserPanel embedded webview', () => {
     expect(lastCall?.[0].length).toBeGreaterThan(0);
     expect(screen.queryByRole('tablist', { name: 'Browser tabs' })).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Browser address' })).toBeTruthy();
+  });
+
+  it('shows and copies the source path for a local HTML preview', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    render(
+      <BrowserPanelHarness
+        embedded
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={onTabsChange}
+      />,
+    );
+    const previewUrl = 'http://127.0.0.1:43128/token/report.html';
+    const sourceFilePath = 'C:\\reports\\report.html';
+
+    act(() => panelHandle?.openTab(previewUrl, { sourceFilePath }));
+
+    expect(
+      (screen.getByRole('textbox', { name: 'Browser address' }) as HTMLInputElement).value,
+    ).toBe(sourceFilePath);
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    const latestCall = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1];
+    const tabs = latestCall?.[0] as BrowserPanelTab[];
+    act(() => panelHandle?.openTabContextMenu(tabs[tabs.length - 1]!.targetId, 40, 40));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy file path' }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(sourceFilePath));
+  });
+
+  it('preserves the source path when reopening a closed local HTML tab', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    const { container } = render(
+      <BrowserPanelHarness
+        embedded
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={onTabsChange}
+      />,
+    );
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    let tabs = onTabsChange.mock.calls[
+      onTabsChange.mock.calls.length - 1
+    ]?.[0] as BrowserPanelTab[];
+    act(() => tabs.forEach(tab => panelHandle?.closeTab(tab.targetId)));
+    act(() => panelHandle?.openTab());
+    act(() =>
+      panelHandle?.openTab('http://127.0.0.1:43128/token/report.html', {
+        sourceFilePath: 'C:\\reports\\report.html',
+        sourcePreviewUrl: 'http://127.0.0.1:43128/token/report.html',
+        sourceRootPath: 'C:\\reports',
+        sourcePreviewRootUrl: 'http://127.0.0.1:43128/token/',
+      }),
+    );
+    await waitFor(() => {
+      const latest = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0];
+      expect(latest).toHaveLength(2);
+    });
+    tabs = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0] as BrowserPanelTab[];
+    act(() => panelHandle?.closeTab(tabs[1]!.targetId));
+    const command = new Event('ipc-message');
+    Object.assign(command, { channel: 'justdo-browser-command', args: ['reopen-tab'] });
+    fireEvent(container.querySelector('webview')!, command);
+
+    await waitFor(() =>
+      expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+        'C:\\reports\\report.html',
+      ),
+    );
   });
 
   it('opens the original tab menu from the shared display bar when embedded', async () => {

@@ -48,6 +48,7 @@ import {
   listBrowserHistory,
   listChromeImportSources,
 } from '../../browser/browserDataImportService';
+import { createLocalHtmlPreview } from '../../browser/localHtmlPreviewServer';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { OpenClawCliEnvironment } from '../../openclaw/runtime/openclawEngineManager';
 
@@ -557,6 +558,22 @@ export const registerBrowserHandlers = ({
   hasActiveSessions,
   setBrowserMode,
 }: BrowserHandlerDependencies): void => {
+  ipcMain.handle(
+    BrowserIpc.CreateLocalHtmlPreview,
+    (event, filePath: unknown, workingDirectory?: unknown) => {
+      if (
+        event.sender.getType() !== 'window' ||
+        typeof filePath !== 'string' ||
+        (workingDirectory !== undefined && typeof workingDirectory !== 'string')
+      ) {
+        return { success: false as const, errorCode: 'invalid_request' as const };
+      }
+      return createLocalHtmlPreview(
+        filePath,
+        typeof workingDirectory === 'string' ? workingDirectory : undefined,
+      );
+    },
+  );
   ipcMain.handle(BROWSER_GUEST_CREDENTIALS_GET_CHANNEL, event => {
     if (
       event.sender.getType() !== 'webview' ||

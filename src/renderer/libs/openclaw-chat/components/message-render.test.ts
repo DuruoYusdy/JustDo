@@ -667,6 +667,106 @@ describe('renderMessageBlock', () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
+  test('opens a MEDIA HTML document in the sidebar browser instead of the file preview', async () => {
+    const openExternal = vi.fn();
+    const openPath = vi.fn().mockResolvedValue({ success: true });
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', {
+      electron: { shell: { openExternal, openPath } },
+      dispatchEvent,
+      setTimeout,
+    });
+    const rendered = renderMessageBlock(
+      {
+        kind: 'group',
+        key: 'assistant-media-html-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-media-html-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'attachment',
+                  attachment: {
+                    url: 'output/report#1.HTML',
+                    kind: 'document',
+                    label: 'report.HTML',
+                    mimeType: 'text/html',
+                  },
+                },
+              ],
+              timestamp: 1,
+            },
+          },
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      },
+      { workingDirectory: 'C:\\workspace\\project' },
+    );
+
+    const handlers = collectTemplateFunctions(rendered);
+    handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
+
+    await vi.waitFor(() => expect(dispatchEvent).toHaveBeenCalledOnce());
+    const browserEvent = dispatchEvent.mock.calls[0][0] as CustomEvent;
+    expect(browserEvent.type).toBe('cowork:open-local-html');
+    expect(browserEvent.detail).toEqual({
+      filePath: 'C:\\workspace\\project\\output/report#1.HTML',
+      workingDirectory: 'C:\\workspace\\project',
+    });
+    expect(openPath).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  test('opens a MEDIA web URL with the system browser', async () => {
+    const openExternal = vi.fn().mockResolvedValue({ success: true });
+    const openPath = vi.fn();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', {
+      electron: { shell: { openExternal, openPath } },
+      dispatchEvent,
+      setTimeout,
+    });
+    const rendered = renderMessageBlock({
+      kind: 'group',
+      key: 'assistant-media-web-group',
+      role: 'assistant',
+      messages: [
+        {
+          key: 'assistant-media-web-message',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'attachment',
+                attachment: {
+                  url: 'https://example.com/report.html',
+                  kind: 'document',
+                  label: 'report.html',
+                  mimeType: 'text/html',
+                },
+              },
+            ],
+            timestamp: 1,
+          },
+        },
+      ],
+      timestamp: 1,
+      isStreaming: false,
+    });
+
+    const handlers = collectTemplateFunctions(rendered);
+    handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
+
+    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledOnce());
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/report.html');
+    expect(openPath).not.toHaveBeenCalled();
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+
   test('does not infer a local path for an unbound managed attachment', () => {
     const renderedTemplate = renderMessageBlock(
       {

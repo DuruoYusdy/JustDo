@@ -275,6 +275,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
   const browserPanelRef = useRef<BrowserPanelHandle>(null);
+  const pendingBrowserTabsRef = useRef<
+    Array<{
+      url?: string;
+      sourceFilePath?: string;
+      sourcePreviewUrl?: string;
+      sourceRootPath?: string;
+      sourcePreviewRootUrl?: string;
+    }>
+  >([]);
   const terminalSequenceRef = useRef(0);
   const filePreviewDrawerRefs = useRef(new Map<string, FilePreviewDrawerHandle>());
   const filePreviewsRef = useRef(filePreviews);
@@ -1203,6 +1212,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const terminalWorkingDirectory = currentSessionFolderPath || config.workingDirectory.trim();
 
   const handleCreateBrowserTab = useCallback(() => {
+    pendingBrowserTabsRef.current.push({});
     setIsDisplayPanelOpen(true);
     setHasBrowserPanelOpened(true);
     setIsBrowserPanelOpen(true);
@@ -1211,8 +1221,60 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   useEffect(() => {
     if (browserTabCreationSequence === 0) return;
-    browserPanelRef.current?.openTab();
+    const pendingTabs = pendingBrowserTabsRef.current.splice(0);
+    pendingTabs.forEach(pendingTab => {
+      browserPanelRef.current?.openTab(pendingTab.url, {
+        sourceFilePath: pendingTab.sourceFilePath,
+        sourcePreviewUrl: pendingTab.sourcePreviewUrl,
+        sourceRootPath: pendingTab.sourceRootPath,
+        sourcePreviewRootUrl: pendingTab.sourcePreviewRootUrl,
+      });
+    });
   }, [browserTabCreationSequence]);
+
+  useEffect(() => {
+    const handleOpenLocalHtml = async (event: Event) => {
+      const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>)
+        .detail;
+      if (!detail?.filePath) return;
+      try {
+        const result = await window.electron.browser.createLocalHtmlPreview(
+          detail.filePath,
+          detail.workingDirectory,
+        );
+        if (!result.success) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail:
+                result.errorCode === 'not_found'
+                  ? i18nService.t('coworkAttachmentNotFound').replace('{filepath}', detail.filePath)
+                  : result.errorCode === 'invalid_type' || result.errorCode === 'invalid_source'
+                    ? i18nService.t('coworkLocalHtmlPreviewInvalid')
+                    : i18nService.t('coworkFilePreviewFailed'),
+            }),
+          );
+          return;
+        }
+        pendingBrowserTabsRef.current.push({
+          url: result.url,
+          sourceFilePath: result.filePath,
+          sourcePreviewUrl: result.url,
+          sourceRootPath: result.rootPath,
+          sourcePreviewRootUrl: result.previewRootUrl,
+        });
+        setIsDisplayPanelOpen(true);
+        setHasBrowserPanelOpened(true);
+        setIsBrowserPanelOpen(true);
+        setBrowserTabCreationSequence(sequence => sequence + 1);
+      } catch {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', { detail: i18nService.t('coworkFilePreviewFailed') }),
+        );
+      }
+    };
+    window.addEventListener('cowork:open-local-html', handleOpenLocalHtml);
+    return () => window.removeEventListener('cowork:open-local-html', handleOpenLocalHtml);
+  }, []);
 
   const handleCreateTerminalTab = useCallback(() => {
     if (!terminalWorkingDirectory) {
