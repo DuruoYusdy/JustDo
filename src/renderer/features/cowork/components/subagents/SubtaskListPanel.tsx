@@ -30,7 +30,8 @@ interface SubtaskListPanelProps {
   sessionId: string;
   isOpen: boolean;
   parentRunning?: boolean;
-  onClose: () => void;
+  anchorRef?: React.RefObject<HTMLElement>;
+  onClose: (restoreFocus?: boolean) => void;
   onOpenSubtask?: (subtask: Subtask) => void;
   onSubtasksChange?: (subtasks: Subtask[]) => void;
 }
@@ -50,6 +51,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   sessionId,
   isOpen,
   parentRunning = false,
+  anchorRef,
   onClose,
   onOpenSubtask,
   onSubtasksChange,
@@ -65,6 +67,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const [detailStatsFailed, setDetailStatsFailed] = useState(false);
   const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [clock, setClock] = useState(Date.now());
+  const panelRef = useRef<HTMLElement>(null);
   const detailDialogRef = useRef<HTMLDivElement>(null);
   const detailCloseButtonRef = useRef<HTMLButtonElement>(null);
   const detailReturnFocusRef = useRef<HTMLButtonElement | null>(null);
@@ -91,6 +94,27 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     parentRunning,
     subtasks.map(subtask => subtask.status),
   );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (panelRef.current?.contains(target) || anchorRef?.current?.contains(target)) return;
+      onClose(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || detailSubtask) return;
+      event.preventDefault();
+      onClose(true);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [anchorRef, detailSubtask, isOpen, onClose]);
   const { active, finished } = useMemo(() => partitionSubtasks(subtasks), [subtasks]);
 
   const closeDetails = useCallback(() => setDetailSubtask(null), []);
@@ -461,8 +485,9 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     <>
       {isOpen && (
         <aside
+          ref={panelRef}
           id="cowork-subtask-list"
-          className="absolute inset-y-0 right-0 z-50 flex h-full w-80 max-w-[calc(100%-2rem)] shrink-0 flex-col border-l border-border bg-surface/95 shadow-xl min-[1100px]:relative min-[1100px]:inset-auto min-[1100px]:z-auto min-[1100px]:max-w-none min-[1100px]:shadow-none"
+          className="absolute right-0 top-full z-[90] mt-2 flex h-[min(32rem,calc(100vh-4.5rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl"
           aria-label={i18nService.t('subtasks')}
         >
           <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-3">
@@ -484,7 +509,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => onClose(true)}
                 className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
                 aria-label={i18nService.t('subtaskHide')}
                 title={i18nService.t('subtaskHide')}

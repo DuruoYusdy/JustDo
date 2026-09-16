@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { useState } from 'react';
+import type { BrowserPanelTab } from '@shared/browser';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { type ComponentProps, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import BrowserPanel from './BrowserPanel';
+import BrowserPanel, { type BrowserPanelHandle } from './BrowserPanel';
 
 vi.mock('@/features/cowork/components/composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
@@ -75,15 +76,22 @@ const defineWebviewMethod = (name: string, value: unknown) => {
 };
 
 function BrowserPanelHarness({
+  embedded = false,
   isOpen = true,
+  onTabsChange,
   onRequestBrowserSettings,
+  panelRef,
 }: {
+  embedded?: boolean;
   isOpen?: boolean;
+  onTabsChange?: ComponentProps<typeof BrowserPanel>['onTabsChange'];
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
+  panelRef?: (instance: BrowserPanelHandle | null) => void;
 }) {
   const [activeTargetId, setActiveTargetId] = useState<string | null>(null);
   return (
     <BrowserPanel
+      ref={panelRef}
       draftKey="__home__"
       isOpen={isOpen}
       width={520}
@@ -92,7 +100,9 @@ function BrowserPanelHarness({
       onWidthChange={vi.fn()}
       onActiveTargetChange={setActiveTargetId}
       onAddAnnotation={() => true}
+      onTabsChange={onTabsChange}
       onRequestBrowserSettings={onRequestBrowserSettings}
+      embedded={embedded}
     />
   );
 }
@@ -308,10 +318,15 @@ describe('BrowserPanel embedded webview', () => {
 
     view.rerender(<BrowserPanelHarness isOpen={false} />);
     expect(view.container.querySelector('webview')).toBe(webview);
-    expect(view.container.querySelector('aside')?.className).toContain('hidden');
+    const hiddenPanel = view.container.querySelector('aside');
+    expect(hiddenPanel?.className).toContain('hidden');
+    expect(hiddenPanel?.style.display).toBe('none');
+    expect((webview as HTMLElement | null)?.style.visibility).toBe('hidden');
 
     view.rerender(<BrowserPanelHarness />);
     expect(view.container.querySelector('webview')).toBe(webview);
+    expect(view.container.querySelector('aside')?.style.display).toBe('flex');
+    expect((webview as HTMLElement | null)?.style.visibility).toBe('visible');
   });
 
   it('does not overwrite an address being edited when page metadata changes', async () => {
@@ -718,6 +733,41 @@ describe('BrowserPanel embedded webview', () => {
     expect(tab.textContent).toContain('Example Docs');
   });
 
+  it('publishes page tabs to the shared display bar when embedded', async () => {
+    const onTabsChange = vi.fn();
+    render(<BrowserPanelHarness embedded onTabsChange={onTabsChange} />);
+
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    const lastCall = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1];
+    expect(lastCall?.[0].length).toBeGreaterThan(0);
+    expect(screen.queryByRole('tablist', { name: 'Browser tabs' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Browser address' })).toBeTruthy();
+  });
+
+  it('opens the original tab menu from the shared display bar when embedded', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    render(
+      <BrowserPanelHarness
+        embedded
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={onTabsChange}
+      />,
+    );
+
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    const latestTabs = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0];
+    const targetId = latestTabs?.[0]?.targetId;
+    expect(targetId).toBeTruthy();
+    act(() => panelHandle?.openTabContextMenu(targetId, 40, 40));
+
+    expect(screen.getByRole('menu', { name: 'Tab menu' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+    expect(screen.getByRole('textbox', { name: 'Rename tab' })).toBeTruthy();
+  });
+
   it('offers tab management actions from the tab context menu', async () => {
     const { container } = render(<BrowserPanelHarness />);
     const tab = container.querySelector('[data-browser-tab-id]')!;
@@ -740,5 +790,35 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.contextMenu(tab, { clientX: 40, clientY: 40 });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mute tab' }));
     expect(setAudioMuted).toHaveBeenCalledWith(true);
+  });
+
+  it('keeps the browser empty after closing every tab and remounting the panel', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    const firstView = render(
+      <BrowserPanelHarness
+        embedded
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={onTabsChange}
+      />,
+    );
+
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    const publishedTabs = (onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0] ??
+      []) as BrowserPanelTab[];
+    expect(publishedTabs.length).toBeGreaterThan(0);
+    act(() => publishedTabs.forEach(tab => panelHandle?.closeTab(tab.targetId)));
+    await waitFor(() =>
+      expect(onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0]).toEqual([]),
+    );
+    expect(firstView.container.querySelectorAll('webview')).toHaveLength(0);
+
+    firstView.unmount();
+    const remountTabsChange = vi.fn();
+    const secondView = render(<BrowserPanelHarness embedded onTabsChange={remountTabsChange} />);
+    await waitFor(() => expect(remountTabsChange).toHaveBeenCalledWith([]));
+    expect(secondView.container.querySelectorAll('webview')).toHaveLength(0);
   });
 });

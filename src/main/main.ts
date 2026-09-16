@@ -88,6 +88,7 @@ import {
   registerNetworkHandlers,
   registerShellHandlers,
   registerStoreHandlers,
+  registerTerminalHandlers,
   registerWindowHandlers,
 } from './ipc/app';
 import {
@@ -1165,6 +1166,7 @@ if (!gotTheLock) {
   registerLocalSpeechModelHandlers({ getService: getLocalSpeechModelService });
 
   registerShellHandlers();
+  registerTerminalHandlers();
 
   // 创建主窗口
   const createWindow = () => {

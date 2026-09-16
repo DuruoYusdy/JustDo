@@ -36,6 +36,17 @@
   visibility: hidden;
 }
 
+.file-preview-shell.is-embedded {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+.dark .file-preview-shell.is-embedded {
+  box-shadow: none;
+}
+
 @keyframes file-preview-enter {
   from {
     opacity: 0;

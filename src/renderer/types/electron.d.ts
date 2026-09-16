@@ -16,6 +16,13 @@ type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
 type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
 type SaveTextFileResult = import('../../shared/dialogIpc').SaveTextFileResult;
+type TerminalActionResult = import('../../shared/terminal').TerminalActionResult;
+type TerminalCreateRequest = import('../../shared/terminal').TerminalCreateRequest;
+type TerminalCreateResult = import('../../shared/terminal').TerminalCreateResult;
+type TerminalDataEvent = import('../../shared/terminal').TerminalDataEvent;
+type TerminalExitEvent = import('../../shared/terminal').TerminalExitEvent;
+type TerminalResizeRequest = import('../../shared/terminal').TerminalResizeRequest;
+type TerminalWriteRequest = import('../../shared/terminal').TerminalWriteRequest;
 type ExtensionImportProgress = import('../../shared/openclaw/extensions').ExtensionImportProgress;
 type ExtensionChangedEvent = import('../../shared/openclaw/extensions').ExtensionChangedEvent;
 type ExtensionImportRequest = import('../../shared/openclaw/extensions').ExtensionImportRequest;
@@ -400,6 +407,14 @@ interface IElectronAPI {
     revealDownload: (id: string) => Promise<BrowserActionResult>;
     getClearDataSummary: (range: BrowserClearDataRange) => Promise<BrowserClearDataSummaryResult>;
     clearBrowsingData: (request: BrowserClearDataRequest) => Promise<BrowserClearDataResult>;
+  };
+  terminal: {
+    create: (request: TerminalCreateRequest) => Promise<TerminalCreateResult>;
+    write: (request: TerminalWriteRequest) => Promise<TerminalActionResult>;
+    resize: (request: TerminalResizeRequest) => Promise<TerminalActionResult>;
+    close: (id: string) => Promise<TerminalActionResult>;
+    onData: (callback: (event: TerminalDataEvent) => void) => () => void;
+    onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
   };
   platform: string;
   arch: string;

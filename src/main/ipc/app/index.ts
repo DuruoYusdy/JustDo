@@ -11,4 +11,5 @@ export { registerLogHandlers } from './log';
 export { registerNetworkHandlers } from './network';
 export { registerShellHandlers } from './shell';
 export { registerStoreHandlers } from './store';
+export { registerTerminalHandlers } from './terminal';
 export { registerWindowHandlers } from './window';

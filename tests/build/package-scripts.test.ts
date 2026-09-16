@@ -147,6 +147,8 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   expect(builderHooks).toContain('verifyPackagedWindowsNativeModules(context)');
   expect(builderHooks).toContain("'better_sqlite3.node'");
   expect(builderHooks).toContain('Packaged better-sqlite3 failed Electron ABI verification');
+  expect(builderHooks).toContain("['pty.node', 'conpty.node', 'conpty_console_list.node']");
+  expect(builderHooks).toContain('Packaged node-pty failed Electron ABI verification');
 });
 
 test('keeps build-only dependencies and diagnostics out of the packaged app', () => {
@@ -169,8 +171,11 @@ test('keeps build-only dependencies and diagnostics out of the packaged app', ()
   expect(electronBuilderConfig.files).toContain('!node_modules/npm/docs/**');
   expect(electronBuilderConfig.asarUnpack).toEqual([
     'node_modules/better-sqlite3/build/Release/*.node',
+    'node_modules/node-pty/build/Release/**/*',
+    'node_modules/node-pty/prebuilds/**/*',
   ]);
   expect(packageJson.dependencies).toHaveProperty('better-sqlite3');
+  expect(packageJson.dependencies).toHaveProperty('node-pty');
   expect(packageJson.dependencies).toHaveProperty('npm');
   expect(packageJson.dependencies).toHaveProperty('tar');
   expect(packageJson.dependencies).not.toHaveProperty('mermaid');

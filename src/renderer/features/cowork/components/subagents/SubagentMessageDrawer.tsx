@@ -28,6 +28,8 @@ interface SubagentMessageDrawerProps {
   parentSessionId: string;
   subagent: Subagent | null;
   onClose: () => void;
+  embedded?: boolean;
+  isObscured?: boolean;
 }
 
 const clampDrawerWidth = (width: number): number => {
@@ -39,6 +41,8 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   parentSessionId,
   subagent,
   onClose,
+  embedded = false,
+  isObscured = false,
 }) => {
   const [controller, setController] = useState<ChatController | null>(null);
   const [displaySubagent, setDisplaySubagent] = useState<Subagent | null>(subagent);
@@ -59,12 +63,16 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const subagentRef = useRef(subagent);
   subagentRef.current = subagent;
   const subagentSessionKey = subagent?.sessionKey;
-  const shouldPollStatus =
-    isActiveSubagentStatus(displaySubagent?.status) || hasActiveChildTurn;
+  const shouldPollStatus = isActiveSubagentStatus(displaySubagent?.status) || hasActiveChildTurn;
 
   useEffect(() => {
     setDisplaySubagent(subagent);
   }, [subagent]);
+
+  useEffect(() => {
+    if (!drawerRef.current) return;
+    (drawerRef.current as HTMLElement & { inert: boolean }).inert = isObscured;
+  }, [displaySubagent, isObscured]);
 
   useEffect(() => {
     if (!subagentSessionKey) {
@@ -371,17 +379,24 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     <>
       <aside
         ref={drawerRef}
-        className="absolute right-0 top-2 bottom-4 z-[60] flex max-w-full flex-col overflow-hidden rounded-l-xl border border-r-0 border-border bg-background shadow-2xl"
-        style={{ width: drawerWidth }}
+        className={`absolute flex max-w-full flex-col overflow-hidden bg-background ${
+          embedded
+            ? 'inset-0 min-h-0 min-w-0'
+            : 'right-0 top-2 bottom-4 z-[60] rounded-l-xl border border-r-0 border-border shadow-2xl'
+        } ${isObscured ? 'invisible' : ''}`}
+        style={embedded ? undefined : { width: drawerWidth }}
+        aria-hidden={isObscured || undefined}
       >
-        <div
-          className="absolute left-0 top-0 bottom-0 z-10 w-2 cursor-col-resize transition-colors hover:bg-primary/20"
-          onMouseDown={handleResizeStart}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={i18nService.t('subtaskDrawerResize')}
-          title={i18nService.t('subtaskDrawerResize')}
-        />
+        {!embedded && (
+          <div
+            className="absolute left-0 top-0 bottom-0 z-10 w-2 cursor-col-resize transition-colors hover:bg-primary/20"
+            onMouseDown={handleResizeStart}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={i18nService.t('subtaskDrawerResize')}
+            title={i18nService.t('subtaskDrawerResize')}
+          />
+        )}
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface/80 px-4 py-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
             <span

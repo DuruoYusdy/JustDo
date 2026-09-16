@@ -33,7 +33,14 @@ import {
   resolveBrowserAddressInput,
   resolveBrowserGuestShortcut,
 } from '@shared/browser';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   browserAnnotationDataBytes,
@@ -101,10 +108,9 @@ type LiveWebview = HTMLElement & {
   send: (channel: string, ...args: unknown[]) => void;
 };
 
-let retainedTabs: BrowserPanelTab[] = [];
+let retainedTabs: BrowserPanelTab[] | null = null;
 
 export const BROWSER_PANEL_DEFAULT_WIDTH = 520;
-export const BROWSER_PANEL_OVERLAY_THRESHOLD = 760;
 const BROWSER_PANEL_MIN_WIDTH = 320;
 // Bump this when guest creation preferences change. Besides documenting that those
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests
@@ -153,7 +159,7 @@ const normalizeFaviconUrl = (raw: string): string | null => {
   }
 };
 
-const getTabDisplayTitle = (tab: BrowserPanelTab): string => {
+export const getBrowserTabDisplayTitle = (tab: BrowserPanelTab): string => {
   if (tab.customTitle) return tab.customTitle;
   if (tab.url === 'about:blank' || tab.title === 'about:blank') {
     return i18nService.t('browserPanelNewTab');
@@ -176,17 +182,13 @@ const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
     image.src = dataUrl;
   });
 
-export default function BrowserPanel({
-  draftKey,
-  isOpen,
-  width,
-  activeTargetId,
-  onClose,
-  onWidthChange,
-  onActiveTargetChange,
-  onAddAnnotation,
-  onRequestBrowserSettings,
-}: {
+export interface BrowserPanelHandle {
+  closeTab: (targetId: string) => void;
+  openTabContextMenu: (targetId: string, x: number, y: number) => void;
+  openTab: (url?: string) => void;
+}
+
+interface BrowserPanelProps {
   draftKey: string;
   isOpen: boolean;
   width: number;
@@ -196,9 +198,28 @@ export default function BrowserPanel({
   onActiveTargetChange: (targetId: string | null) => void;
   onAddAnnotation: (annotation: BrowserAnnotationDraft, comment: string) => boolean;
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
-}) {
+  onTabsChange?: (tabs: BrowserPanelTab[]) => void;
+  embedded?: boolean;
+}
+
+const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function BrowserPanel(
+  {
+    draftKey,
+    isOpen,
+    width,
+    activeTargetId,
+    onClose,
+    onWidthChange,
+    onActiveTargetChange,
+    onAddAnnotation,
+    onRequestBrowserSettings,
+    onTabsChange,
+    embedded = false,
+  },
+  ref,
+) {
   const [tabs, setTabs] = useState<BrowserPanelTab[]>(() => {
-    if (!retainedTabs.length) retainedTabs = [createTab()];
+    if (retainedTabs === null) retainedTabs = embedded ? [] : [createTab()];
     return retainedTabs;
   });
   const [urlDraft, setUrlDraft] = useState('');
@@ -319,7 +340,8 @@ export default function BrowserPanel({
   useEffect(() => {
     tabsRef.current = tabs;
     retainedTabs = tabs;
-  }, [tabs]);
+    onTabsChange?.(tabs);
+  }, [onTabsChange, tabs]);
 
   const activeTabTargetId = activeTab?.targetId ?? null;
   useEffect(() => {
@@ -409,12 +431,7 @@ export default function BrowserPanel({
         closedTabUrlsRef.current = [...closedTabUrlsRef.current.slice(-9), closingUrl];
       }
       initialUrlsRef.current.delete(targetId);
-      const remaining = currentTabs.filter(tab => tab.targetId !== targetId);
-      const nextTabs = remaining.length ? remaining : [createTab()];
-      if (!remaining.length) {
-        const blankTab = nextTabs[0]!;
-        initialUrlsRef.current.set(blankTab.targetId, blankTab.url);
-      }
+      const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
       tabsRef.current = nextTabs;
       setTabs(nextTabs);
       setReadyTargets(current => {
@@ -434,13 +451,28 @@ export default function BrowserPanel({
       });
       if (activeTargetRef.current !== targetId) return;
       clearAnnotations();
-      const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)]!;
-      activeTargetRef.current = nextTab.targetId;
-      onActiveTargetChange(nextTab.targetId);
-      setUrlDraft(nextTab.url === 'about:blank' ? '' : nextTab.url);
-      setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
+      const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
+      activeTargetRef.current = nextTab?.targetId ?? null;
+      onActiveTargetChange(nextTab?.targetId ?? null);
+      setUrlDraft(nextTab?.url === 'about:blank' ? '' : (nextTab?.url ?? ''));
+      if (nextTab) setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
     },
     [clearAnnotations, onActiveTargetChange],
+  );
+
+  const openTabContextMenu = useCallback((targetId: string, x: number, y: number) => {
+    if (!tabsRef.current.some(tab => tab.targetId === targetId)) return;
+    setTabMenu({ targetId, x, y });
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      closeTab,
+      openTabContextMenu,
+      openTab,
+    }),
+    [closeTab, openTab, openTabContextMenu],
   );
 
   const runBrowserCommand = useCallback(
@@ -1052,7 +1084,11 @@ export default function BrowserPanel({
       return;
     }
     if (action === 'rename') {
-      setRenameDraft(getTabDisplayTitle(tab));
+      if (embedded && activeTargetRef.current !== targetId) {
+        activeTargetRef.current = targetId;
+        onActiveTargetChange(targetId);
+      }
+      setRenameDraft(getBrowserTabDisplayTitle(tab));
       setRenamingTargetId(targetId);
       return;
     }
@@ -1136,7 +1172,7 @@ export default function BrowserPanel({
         const capture = await activeWebview.capturePage();
         const dataUrl = capture.toDataURL();
         if (!dataUrl.startsWith('data:image/png;base64,')) throw new Error();
-        const title = getTabDisplayTitle(activeTab)
+        const title = getBrowserTabDisplayTitle(activeTab)
           .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
           .slice(0, 80);
         const link = document.createElement('a');
@@ -1248,7 +1284,6 @@ export default function BrowserPanel({
   const menuTabIndex = menuTab
     ? tabs.findIndex(candidate => candidate.targetId === menuTab.targetId)
     : -1;
-  const isWideOverlay = width > BROWSER_PANEL_OVERLAY_THRESHOLD;
   const inspectorCardStyle: React.CSSProperties = inspectorElement
     ? {
         ...(inspectorElement.rect.x > (stageRef.current?.clientWidth ?? 0) * 0.55
@@ -1264,12 +1299,17 @@ export default function BrowserPanel({
   return (
     <aside
       ref={panelRef}
-      className={`${isOpen ? 'flex' : 'hidden'} absolute inset-y-0 right-0 z-50 w-[min(var(--browser-panel-width),calc(100vw-32px))] max-w-[calc(100%-2rem)] flex-col border-l border-border bg-surface shadow-xl ${
-        isWideOverlay
-          ? ''
-          : 'min-[1100px]:relative min-[1100px]:inset-auto min-[1100px]:z-auto min-[1100px]:min-w-[320px] min-[1100px]:max-w-[760px] min-[1100px]:shrink-0 min-[1100px]:shadow-none'
+      className={`${isOpen ? 'flex' : 'hidden'} flex-col bg-surface ${
+        embedded
+          ? 'absolute inset-0 min-h-0 min-w-0'
+          : 'absolute inset-y-0 right-0 z-50 w-[min(var(--browser-panel-width),calc(100vw-32px))] max-w-[calc(100%-2rem)] border-l border-border shadow-xl min-[900px]:relative min-[900px]:inset-auto min-[900px]:z-auto min-[900px]:min-w-[320px] min-[900px]:max-w-[760px] min-[900px]:shrink-0 min-[900px]:shadow-none'
       }`}
-      style={{ '--browser-panel-width': `${width}px` } as React.CSSProperties}
+      style={
+        {
+          display: isOpen ? 'flex' : 'none',
+          ...(embedded ? {} : { '--browser-panel-width': `${width}px` }),
+        } as React.CSSProperties
+      }
       aria-label={i18nService.t('browserPanelTitle')}
       aria-hidden={!isOpen}
       onKeyDownCapture={event => {
@@ -1286,144 +1326,173 @@ export default function BrowserPanel({
         runBrowserCommand(command);
       }}
     >
-      <div
-        className="absolute inset-y-0 left-0 z-30 hidden w-5 -translate-x-1/2 touch-none cursor-col-resize min-[1100px]:block"
-        onPointerDown={beginResize}
-        onKeyDown={event => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-          event.preventDefault();
-          onWidthChange(
-            Math.max(
-              BROWSER_PANEL_MIN_WIDTH,
-              Math.min(
-                getBrowserPanelMaxWidth(panelRef.current?.parentElement?.clientWidth),
-                width + (event.key === 'ArrowLeft' ? 20 : -20),
-              ),
-            ),
-          );
-        }}
-        role="separator"
-        tabIndex={0}
-        aria-orientation="vertical"
-        aria-label={i18nService.t('browserPanelResize')}
-        aria-valuemin={BROWSER_PANEL_MIN_WIDTH}
-        aria-valuemax={getBrowserPanelMaxWidth(panelRef.current?.parentElement?.clientWidth)}
-        aria-valuenow={width}
-      />
-      <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+      {!embedded && (
         <div
-          className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
-          role="tablist"
-          aria-label={i18nService.t('browserPanelTabs')}
-        >
-          {tabs.map(tab => (
-            <div
-              key={tab.id}
-              data-browser-tab-id={tab.targetId}
-              className={`group flex max-w-44 shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs ${tab.targetId === activeTab?.targetId ? 'bg-primary-muted text-primary' : 'bg-surface-raised text-secondary'}`}
-              onContextMenu={event => {
-                event.preventDefault();
-                setTabMenu({ targetId: tab.targetId, x: event.clientX, y: event.clientY });
-              }}
-            >
-              {tab.faviconUrl ? (
-                <img
-                  src={tab.faviconUrl}
-                  alt=""
-                  className="h-4 w-4 shrink-0 rounded-sm object-contain"
-                  onError={() => updateTab(tab.targetId, { faviconUrl: undefined })}
-                />
-              ) : (
-                <GlobeAltIcon className="h-4 w-4 shrink-0 opacity-60" aria-hidden="true" />
-              )}
-              {renamingTargetId === tab.targetId ? (
-                <input
-                  autoFocus
-                  value={renameDraft}
-                  className="min-w-0 flex-1 rounded border border-primary bg-background px-1 py-0.5 text-xs text-foreground outline-none"
-                  aria-label={i18nService.t('browserTabMenuRenameInput')}
-                  onChange={event => setRenameDraft(event.target.value)}
-                  onBlur={() => commitTabRename(tab.targetId)}
-                  onClick={event => event.stopPropagation()}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter') commitTabRename(tab.targetId);
-                    if (event.key === 'Escape') {
-                      setRenamingTargetId(null);
-                      setRenameDraft('');
-                    }
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab.targetId === activeTab?.targetId}
-                  onClick={() => {
-                    onActiveTargetChange(tab.targetId);
-                    activeTargetRef.current = tab.targetId;
-                    setUrlDraft(tab.url === 'about:blank' ? '' : tab.url);
-                    clearAnnotations();
-                    setTimeout(() => webviewsRef.current.get(tab.targetId)?.focus(), 0);
-                  }}
-                  className="min-w-0 flex-1 truncate text-left"
-                  title={getTabDisplayTitle(tab)}
-                >
-                  {getTabDisplayTitle(tab)}
-                </button>
-              )}
-              <Tooltip
-                content={i18nService.t('browserPanelCloseTab')}
-                position="bottom"
-                renderInPortal
-                dismissOnClick
+          className="absolute inset-y-0 left-0 z-30 hidden w-5 -translate-x-1/2 touch-none cursor-col-resize min-[900px]:block"
+          onPointerDown={beginResize}
+          onKeyDown={event => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            onWidthChange(
+              Math.max(
+                BROWSER_PANEL_MIN_WIDTH,
+                Math.min(
+                  getBrowserPanelMaxWidth(panelRef.current?.parentElement?.clientWidth),
+                  width + (event.key === 'ArrowLeft' ? 20 : -20),
+                ),
+              ),
+            );
+          }}
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label={i18nService.t('browserPanelResize')}
+          aria-valuemin={BROWSER_PANEL_MIN_WIDTH}
+          aria-valuemax={getBrowserPanelMaxWidth(panelRef.current?.parentElement?.clientWidth)}
+          aria-valuenow={width}
+        />
+      )}
+      {!embedded && (
+        <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+          <div
+            className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+            role="tablist"
+            aria-label={i18nService.t('browserPanelTabs')}
+          >
+            {tabs.map(tab => (
+              <div
+                key={tab.id}
+                data-browser-tab-id={tab.targetId}
+                className={`group flex max-w-44 shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs ${tab.targetId === activeTab?.targetId ? 'bg-primary-muted text-primary' : 'bg-surface-raised text-secondary'}`}
+                onContextMenu={event => {
+                  event.preventDefault();
+                  setTabMenu({ targetId: tab.targetId, x: event.clientX, y: event.clientY });
+                }}
               >
-                <button
-                  type="button"
-                  className="rounded p-0.5 opacity-0 hover:bg-surface group-hover:opacity-100"
-                  onClick={() => closeTab(tab.targetId)}
-                  aria-label={i18nService.t('browserPanelCloseTab')}
+                {tab.faviconUrl ? (
+                  <img
+                    src={tab.faviconUrl}
+                    alt=""
+                    className="h-4 w-4 shrink-0 rounded-sm object-contain"
+                    onError={() => updateTab(tab.targetId, { faviconUrl: undefined })}
+                  />
+                ) : (
+                  <GlobeAltIcon className="h-4 w-4 shrink-0 opacity-60" aria-hidden="true" />
+                )}
+                {renamingTargetId === tab.targetId ? (
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    className="min-w-0 flex-1 rounded border border-primary bg-background px-1 py-0.5 text-xs text-foreground outline-none"
+                    aria-label={i18nService.t('browserTabMenuRenameInput')}
+                    onChange={event => setRenameDraft(event.target.value)}
+                    onBlur={() => commitTabRename(tab.targetId)}
+                    onClick={event => event.stopPropagation()}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') commitTabRename(tab.targetId);
+                      if (event.key === 'Escape') {
+                        setRenamingTargetId(null);
+                        setRenameDraft('');
+                      }
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab.targetId === activeTab?.targetId}
+                    onClick={() => {
+                      onActiveTargetChange(tab.targetId);
+                      activeTargetRef.current = tab.targetId;
+                      setUrlDraft(tab.url === 'about:blank' ? '' : tab.url);
+                      clearAnnotations();
+                      setTimeout(() => webviewsRef.current.get(tab.targetId)?.focus(), 0);
+                    }}
+                    className="min-w-0 flex-1 truncate text-left"
+                    title={getBrowserTabDisplayTitle(tab)}
+                  >
+                    {getBrowserTabDisplayTitle(tab)}
+                  </button>
+                )}
+                <Tooltip
+                  content={i18nService.t('browserPanelCloseTab')}
+                  position="bottom"
+                  renderInPortal
+                  dismissOnClick
                 >
-                  <XMarkIcon className="h-3 w-3" />
-                </button>
-              </Tooltip>
-            </div>
-          ))}
+                  <button
+                    type="button"
+                    className="rounded p-0.5 opacity-0 hover:bg-surface group-hover:opacity-100"
+                    onClick={() => closeTab(tab.targetId)}
+                    aria-label={i18nService.t('browserPanelCloseTab')}
+                  >
+                    <XMarkIcon className="h-3 w-3" />
+                  </button>
+                </Tooltip>
+              </div>
+            ))}
+          </div>
+          <Tooltip
+            content={i18nService.t('browserPanelNewTab')}
+            position="bottom"
+            renderInPortal
+            dismissOnClick
+          >
+            <button
+              type="button"
+              className={modeButton(false)}
+              disabled={tabs.length >= 8}
+              onClick={() => openTab()}
+              aria-label={i18nService.t('browserPanelNewTab')}
+            >
+              <PlusIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
+          <Tooltip
+            content={i18nService.t('browserPanelClose')}
+            position="bottom"
+            renderInPortal
+            dismissOnClick
+          >
+            <button
+              type="button"
+              className={modeButton(false)}
+              onClick={onClose}
+              aria-label={i18nService.t('browserPanelClose')}
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </div>
-        <Tooltip
-          content={i18nService.t('browserPanelNewTab')}
-          position="bottom"
-          renderInPortal
-          dismissOnClick
+      )}
+
+      {embedded && renamingTargetId && (
+        <form
+          className="flex shrink-0 items-center border-b border-border bg-surface px-2 py-1.5"
+          onSubmit={event => {
+            event.preventDefault();
+            commitTabRename(renamingTargetId);
+          }}
         >
-          <button
-            type="button"
-            className={modeButton(false)}
-            disabled={tabs.length >= 8}
-            onClick={() => openTab()}
-            aria-label={i18nService.t('browserPanelNewTab')}
-          >
-            <PlusIcon className="h-4 w-4" />
-          </button>
-        </Tooltip>
-        <Tooltip
-          content={i18nService.t('browserPanelClose')}
-          position="bottom"
-          renderInPortal
-          dismissOnClick
-        >
-          <button
-            type="button"
-            className={modeButton(false)}
-            onClick={onClose}
-            aria-label={i18nService.t('browserPanelClose')}
-          >
-            <XMarkIcon className="h-4 w-4" />
-          </button>
-        </Tooltip>
-      </div>
+          <input
+            autoFocus
+            value={renameDraft}
+            className="min-w-0 flex-1 rounded-md border border-primary bg-background px-2.5 py-1.5 text-xs text-foreground outline-none"
+            aria-label={i18nService.t('browserTabMenuRenameInput')}
+            onChange={event => setRenameDraft(event.target.value)}
+            onBlur={() => commitTabRename(renamingTargetId)}
+            onKeyDown={event => {
+              if (event.key !== 'Escape') return;
+              event.preventDefault();
+              setRenamingTargetId(null);
+              setRenameDraft('');
+            }}
+          />
+        </form>
+      )}
 
       <form
-        className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border p-2"
+        className="flex h-[35px] shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2"
         onSubmit={event => {
           event.preventDefault();
           void submitUrl();
@@ -1747,6 +1816,9 @@ export default function BrowserPanel({
               // Electron types this as boolean, but the DOM must receive the literal attribute.
               allowpopups={'true' as unknown as boolean}
               className={`absolute inset-0 h-full w-full ${tab.targetId === activeTab?.targetId ? 'visible' : 'invisible'}`}
+              style={{
+                visibility: isOpen && tab.targetId === activeTab?.targetId ? 'visible' : 'hidden',
+              }}
             />
           ))}
           {activeTab?.url === 'about:blank' && (
@@ -1910,4 +1982,8 @@ export default function BrowserPanel({
       )}
     </aside>
   );
-}
+});
+
+BrowserPanel.displayName = 'BrowserPanel';
+
+export default BrowserPanel;

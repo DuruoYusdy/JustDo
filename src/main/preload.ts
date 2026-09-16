@@ -145,6 +145,16 @@ import {
 } from '../shared/sessionGoal';
 import { SlashCommandIpc } from '../shared/slashCommands';
 import { SpeechSynthesisIpc } from '../shared/speechSynthesis';
+import {
+  type TerminalActionResult,
+  type TerminalCreateRequest,
+  type TerminalCreateResult,
+  type TerminalDataEvent,
+  type TerminalExitEvent,
+  TerminalIpc,
+  type TerminalResizeRequest,
+  type TerminalWriteRequest,
+} from '../shared/terminal';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -290,6 +300,27 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserIpc.GetClearDataSummary, range),
     clearBrowsingData: (request: BrowserClearDataRequest): Promise<BrowserClearDataResult> =>
       ipcRenderer.invoke(BrowserIpc.ClearBrowsingData, request),
+  },
+  terminal: {
+    create: (request: TerminalCreateRequest): Promise<TerminalCreateResult> =>
+      ipcRenderer.invoke(TerminalIpc.Create, request),
+    write: (request: TerminalWriteRequest): Promise<TerminalActionResult> =>
+      ipcRenderer.invoke(TerminalIpc.Write, request),
+    resize: (request: TerminalResizeRequest): Promise<TerminalActionResult> =>
+      ipcRenderer.invoke(TerminalIpc.Resize, request),
+    close: (id: string): Promise<TerminalActionResult> => ipcRenderer.invoke(TerminalIpc.Close, id),
+    onData: (callback: (event: TerminalDataEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalDataEvent) =>
+        callback(data);
+      ipcRenderer.on(TerminalIpc.Data, handler);
+      return () => ipcRenderer.removeListener(TerminalIpc.Data, handler);
+    },
+    onExit: (callback: (event: TerminalExitEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalExitEvent) =>
+        callback(data);
+      ipcRenderer.on(TerminalIpc.Exit, handler);
+      return () => ipcRenderer.removeListener(TerminalIpc.Exit, handler);
+    },
   },
   api: {
     // 普通 API 请求（非流式）

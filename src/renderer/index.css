@@ -93,6 +93,33 @@ blockquote {
   min-width: min(320px, calc(100% - 32px));
 }
 
+.cowork-display-host {
+  container-type: inline-size;
+}
+
+.cowork-workspace-header {
+  height: 2.1875rem;
+}
+
+.cowork-window-header {
+  height: 1.875rem;
+}
+
+@container (min-width: 760px) {
+  .cowork-display-panel {
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    max-width: none;
+    flex-shrink: 0;
+    box-shadow: none;
+  }
+
+  .cowork-display-panel-resizer {
+    display: block;
+  }
+}
+
 /* Theme colors are driven by CSS variables from themes.css.
  * color-scheme is set by the [data-theme] selectors. */
 body,

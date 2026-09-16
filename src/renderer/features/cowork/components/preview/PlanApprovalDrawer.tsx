@@ -17,6 +17,8 @@ interface PlanApprovalDrawerProps {
   onRespond?: (result: CoworkInteractionResult) => Promise<boolean>;
   readOnly?: boolean;
   onClose?: () => void;
+  embedded?: boolean;
+  isObscured?: boolean;
 }
 
 const DRAWER_DEFAULT_WIDTH = 820;
@@ -34,6 +36,8 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
   onRespond,
   readOnly = false,
   onClose,
+  embedded = false,
+  isObscured = false,
 }) => {
   const [drawerWidth, setDrawerWidth] = useState(() => clampDrawerWidth(DRAWER_DEFAULT_WIDTH));
   const [showFeedback, setShowFeedback] = useState(false);
@@ -68,8 +72,13 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
   }, []);
 
   useEffect(() => {
-    drawerRef.current?.focus();
-  }, [interaction.requestId]);
+    if (!isObscured) drawerRef.current?.focus();
+  }, [interaction.requestId, isObscured]);
+
+  useEffect(() => {
+    if (!drawerRef.current) return;
+    (drawerRef.current as HTMLElement & { inert: boolean }).inert = isObscured;
+  }, [isObscured]);
 
   useEffect(
     () => () => {
@@ -126,28 +135,35 @@ const PlanApprovalDrawer: React.FC<PlanApprovalDrawerProps> = ({
   return (
     <aside
       ref={drawerRef}
-      className="file-preview-shell plan-approval-drawer absolute bottom-3 right-3 top-3 z-[80] flex max-w-full flex-col overflow-hidden"
-      style={{ width: drawerWidth }}
+      className={`file-preview-shell plan-approval-drawer flex max-w-full flex-col overflow-hidden ${
+        embedded
+          ? 'is-embedded absolute inset-0 min-h-0 min-w-0'
+          : 'absolute bottom-3 right-3 top-3 z-[80]'
+      } ${isObscured ? 'is-obscured' : ''}`}
+      style={embedded ? undefined : { width: drawerWidth }}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
       aria-busy={submitting}
+      aria-hidden={isObscured || undefined}
       tabIndex={-1}
     >
-      <div
-        className="file-preview-resize-handle"
-        onMouseDown={handleResizeStart}
-        onKeyDown={handleResizeKeyDown}
-        role="separator"
-        tabIndex={0}
-        aria-orientation="vertical"
-        aria-valuemin={DRAWER_MIN_WIDTH}
-        aria-valuemax={Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN)}
-        aria-valuenow={Math.round(drawerWidth)}
-        aria-label={i18nService.t('coworkFilePreviewResize')}
-        title={i18nService.t('coworkFilePreviewResize')}
-      >
-        <span />
-      </div>
+      {!embedded && (
+        <div
+          className="file-preview-resize-handle"
+          onMouseDown={handleResizeStart}
+          onKeyDown={handleResizeKeyDown}
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-valuemin={DRAWER_MIN_WIDTH}
+          aria-valuemax={Math.max(DRAWER_MIN_WIDTH, window.innerWidth - DRAWER_WINDOW_MARGIN)}
+          aria-valuenow={Math.round(drawerWidth)}
+          aria-label={i18nService.t('coworkFilePreviewResize')}
+          title={i18nService.t('coworkFilePreviewResize')}
+        >
+          <span />
+        </div>
+      )}
 
       <header className="file-preview-header">
         <div className="file-preview-titlebar">

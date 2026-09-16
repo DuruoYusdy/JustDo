@@ -3,6 +3,8 @@ import {
   ArrowPathIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
+  CommandLineIcon,
+  DocumentTextIcon,
   GlobeAltIcon,
   QueueListIcon,
   StopCircleIcon,
@@ -12,6 +14,7 @@ import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/sol
 import {
   BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH,
   type BrowserAnnotationDraft,
+  type BrowserPanelTab,
   serializeBrowserAnnotationContext,
 } from '@shared/browser';
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
@@ -29,6 +32,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -43,7 +47,8 @@ import {
 } from '@/features/browser/browserAnnotation';
 import BrowserPanel, {
   BROWSER_PANEL_DEFAULT_WIDTH,
-  BROWSER_PANEL_OVERLAY_THRESHOLD,
+  type BrowserPanelHandle,
+  getBrowserTabDisplayTitle,
 } from '@/features/browser/BrowserPanel';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
@@ -55,17 +60,24 @@ import CoworkPromptInput, {
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import { inferInitialGoalObjective } from '@/features/cowork/components/goals/goalPendingObjective';
 import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
+import CoworkDisplayPanel, {
+  type CoworkDisplayTab,
+} from '@/features/cowork/components/preview/CoworkDisplayPanel';
+import DisplayPanelLauncher from '@/features/cowork/components/preview/DisplayPanelLauncher';
+import { getAdjacentDisplayTabId } from '@/features/cowork/components/preview/displayTabSelection';
 import FilePreviewDrawer, {
   type FilePreview,
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
 import { isCurrentFilePreviewRequest } from '@/features/cowork/components/preview/filePreviewNavigation';
+import NewDisplayTabMenu from '@/features/cowork/components/preview/NewDisplayTabMenu';
 import PlanApprovalDrawer from '@/features/cowork/components/preview/PlanApprovalDrawer';
 import {
   initialPlanPreviewState,
   planPreviewReducer,
   retainedPlanForSession,
 } from '@/features/cowork/components/preview/planPreviewState';
+import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
@@ -119,6 +131,7 @@ import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetin
 import BrainIcon from '@/shared/components/icons/BrainIcon';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import FolderIcon from '@/shared/components/icons/FolderIcon';
+import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import { type RootState, store } from '@/store';
@@ -141,6 +154,22 @@ const BACKGROUND_SESSION_POLL_MS = 30_000;
 const BACKGROUND_DISCOVERY_POLL_MS = 60_000;
 const HIDDEN_DISCOVERY_POLL_MS = 120_000;
 const HIDDEN_WINDOW_POLL_MS = 60_000;
+const BROWSER_DISPLAY_TAB_PREFIX = 'browser:';
+const FILE_DISPLAY_TAB_PREFIX = 'file:';
+const TERMINAL_DISPLAY_TAB_PREFIX = 'terminal:';
+const PLAN_DISPLAY_TAB_ID = 'plan';
+const SUBAGENT_DISPLAY_TAB_ID = 'subagent';
+
+const browserDisplayTabId = (targetId: string): string =>
+  `${BROWSER_DISPLAY_TAB_PREFIX}${targetId}`;
+const fileDisplayTabId = (filePath: string): string =>
+  `${FILE_DISPLAY_TAB_PREFIX}${filePath.replace(/\\/g, '/')}`;
+
+interface CoworkTerminalTab {
+  cwd: string;
+  id: string;
+  label: string;
+}
 function resolveProgressCardRunState(
   card: ProgressCard,
   runtimeRunning: boolean,
@@ -194,7 +223,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     onPlanRespond,
   } = props;
   const dispatch = useDispatch();
-  const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
     getGreetingPeriod(new Date().getHours()),
@@ -213,13 +241,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [selectedSubagent, setSelectedSubagent] = useState<Subtask | null>(null);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [isSubtaskListOpen, setIsSubtaskListOpen] = useState(false);
+  const [isDisplayPanelOpen, setIsDisplayPanelOpen] = useState(false);
   const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
   const [hasBrowserPanelOpened, setHasBrowserPanelOpened] = useState(false);
   const [browserPanelWidth, setBrowserPanelWidth] = useState(BROWSER_PANEL_DEFAULT_WIDTH);
   const [browserPanelTargetId, setBrowserPanelTargetId] = useState<string | null>(null);
+  const [browserTabs, setBrowserTabs] = useState<BrowserPanelTab[]>([]);
+  const [browserTabCreationSequence, setBrowserTabCreationSequence] = useState(0);
+  const [terminalTabs, setTerminalTabs] = useState<CoworkTerminalTab[]>([]);
+  const [preferredDisplayTabId, setPreferredDisplayTabId] = useState<string | null>(null);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
-  const browserPanelToggleRef = useRef<HTMLButtonElement>(null);
-  const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
+  const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
   const [planPreviewState, dispatchPlanPreview] = useReducer(
     planPreviewReducer,
     initialPlanPreviewState,
@@ -241,7 +274,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }>({ token: 0, direction: 1 });
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
-  const filePreviewDrawerRef = useRef<FilePreviewDrawerHandle>(null);
+  const browserPanelRef = useRef<BrowserPanelHandle>(null);
+  const terminalSequenceRef = useRef(0);
+  const filePreviewDrawerRefs = useRef(new Map<string, FilePreviewDrawerHandle>());
+  const filePreviewsRef = useRef(filePreviews);
+  filePreviewsRef.current = filePreviews;
   const filePreviewRequestIdRef = useRef(0);
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
@@ -271,12 +308,54 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const retainedPlanInteraction = retainedPlanForSession(planPreviewState, currentSessionId);
   const visiblePlanInteraction = planInteraction ?? retainedPlanInteraction;
   const planPreviewReadOnly = planInteraction === null && visiblePlanInteraction !== null;
+  const availableDisplayTabIds = useMemo(
+    () => [
+      ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
+      ...terminalTabs.map(tab => tab.id),
+      ...filePreviews.map(preview => fileDisplayTabId(preview.filePath)),
+      ...(visiblePlanInteraction ? [PLAN_DISPLAY_TAB_ID] : []),
+      ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
+    ],
+    [
+      browserTabs,
+      filePreviews,
+      isBrowserPanelOpen,
+      selectedSubagent,
+      terminalTabs,
+      visiblePlanInteraction,
+    ],
+  );
+  const activeDisplayTabId =
+    preferredDisplayTabId && availableDisplayTabIds.includes(preferredDisplayTabId)
+      ? preferredDisplayTabId
+      : (availableDisplayTabIds[availableDisplayTabIds.length - 1] ?? null);
+  const activeBrowserTab = browserTabs.find(
+    tab => browserDisplayTabId(tab.targetId) === activeDisplayTabId,
+  );
+  const activeFilePreview = filePreviews.find(
+    preview => fileDisplayTabId(preview.filePath) === activeDisplayTabId,
+  );
+  const activeTerminalTab = terminalTabs.find(tab => tab.id === activeDisplayTabId);
+  const isBrowserDisplayActive = Boolean(
+    activeDisplayTabId?.startsWith(BROWSER_DISPLAY_TAB_PREFIX),
+  );
+  const isBrowserPanelVisible = isBrowserPanelOpen && isBrowserDisplayActive;
   const pendingPlanRequestId = planInteraction?.requestId ?? null;
   const pendingPlanSessionId = planInteraction?.sessionId ?? null;
+
+  const selectAdjacentDisplayTabAfterClose = useCallback(
+    (closingId: string) => {
+      const adjacentId = getAdjacentDisplayTabId(availableDisplayTabIds, closingId);
+      setPreferredDisplayTabId(current => (current === closingId ? adjacentId : current));
+    },
+    [availableDisplayTabIds],
+  );
 
   useEffect(() => {
     if (!pendingPlanRequestId || !pendingPlanSessionId) return;
     dispatchPlanPreview({ type: 'pending-shown', sessionId: pendingPlanSessionId });
+    setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID);
+    setIsDisplayPanelOpen(true);
   }, [pendingPlanRequestId, pendingPlanSessionId]);
 
   const handlePlanRespond = useCallback(
@@ -715,31 +794,40 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     });
   }, []);
 
-  const closeSubtaskList = useCallback(() => {
+  const closeSubtaskList = useCallback((restoreFocus = true) => {
     setIsSubtaskListOpen(false);
-    requestAnimationFrame(() => subtaskListToggleRef.current?.focus());
+    if (restoreFocus) requestAnimationFrame(() => subtaskListToggleRef.current?.focus());
   }, []);
 
   const closeBrowserPanel = useCallback(() => {
     setIsBrowserPanelOpen(false);
-    requestAnimationFrame(() => browserPanelToggleRef.current?.focus());
+    setPreferredDisplayTabId(current =>
+      current?.startsWith(BROWSER_DISPLAY_TAB_PREFIX) ? null : current,
+    );
+    requestAnimationFrame(() => displayPanelToggleRef.current?.focus());
   }, []);
 
-  const toggleBrowserPanel = useCallback(() => {
-    setIsSubtaskListOpen(false);
-    if (isBrowserPanelOpen && browserPanelWidth > BROWSER_PANEL_OVERLAY_THRESHOLD) {
-      setBrowserPanelWidth(BROWSER_PANEL_DEFAULT_WIDTH);
-      return;
-    }
-    if (!isBrowserPanelOpen) setHasBrowserPanelOpened(true);
-    setIsBrowserPanelOpen(open => !open);
-  }, [browserPanelWidth, isBrowserPanelOpen]);
+  const handleBrowserTargetChange = useCallback((targetId: string | null) => {
+    setBrowserPanelTargetId(targetId);
+    if (targetId) setPreferredDisplayTabId(browserDisplayTabId(targetId));
+  }, []);
 
-  const browserPanelToggleLabel = isBrowserPanelOpen
-    ? browserPanelWidth > BROWSER_PANEL_OVERLAY_THRESHOLD
-      ? 'browserPanelRestoreWidth'
-      : 'browserPanelClose'
-    : 'browserPanelOpen';
+  const openSubtask = useCallback((subtask: Subtask) => {
+    setSelectedSubagent(subtask);
+    setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
+    setIsDisplayPanelOpen(true);
+    setIsSubtaskListOpen(false);
+  }, []);
+
+  const openDisplayPanel = useCallback(() => {
+    setIsSubtaskListOpen(false);
+    setIsDisplayPanelOpen(true);
+  }, []);
+
+  const closeDisplayPanel = useCallback(() => {
+    setIsDisplayPanelOpen(false);
+    requestAnimationFrame(() => displayPanelToggleRef.current?.focus());
+  }, []);
 
   const activeSubtaskCount = subtasks.filter(subtask => isActiveSubtask(subtask.status)).length;
 
@@ -891,17 +979,38 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   useEffect(() => {
     setSelectedSubagent(null);
     setGoalRunProgress(null);
-    setFilePreview(null);
+    setFilePreviews([]);
+    setPreferredDisplayTabId(current =>
+      current?.startsWith(BROWSER_DISPLAY_TAB_PREFIX) ||
+      current?.startsWith(TERMINAL_DISPLAY_TAB_PREFIX)
+        ? current
+        : null,
+    );
   }, [currentSession?.id]);
 
   const requestFilePreviewTransition = useCallback(async (): Promise<boolean> => {
-    const canClose = (await filePreviewDrawerRef.current?.requestTransition()) ?? true;
-    if (canClose) {
-      filePreviewRequestIdRef.current += 1;
-      setFilePreview(null);
+    for (const drawer of filePreviewDrawerRefs.current.values()) {
+      if (!(await drawer.requestTransition())) return false;
     }
-    return canClose;
+    filePreviewRequestIdRef.current += 1;
+    setFilePreviews([]);
+    setPreferredDisplayTabId(current =>
+      current?.startsWith(FILE_DISPLAY_TAB_PREFIX) ? null : current,
+    );
+    return true;
   }, []);
+
+  const closeFilePreview = useCallback(
+    async (filePath: string): Promise<void> => {
+      const tabId = fileDisplayTabId(filePath);
+      const canClose =
+        (await filePreviewDrawerRefs.current.get(tabId)?.requestTransition()) ?? true;
+      if (!canClose) return;
+      setFilePreviews(current => current.filter(preview => preview.filePath !== filePath));
+      selectAdjacentDisplayTabAfterClose(tabId);
+    },
+    [selectAdjacentDisplayTabAfterClose],
+  );
 
   useImperativeHandle(ref, () => ({ requestFilePreviewTransition }), [
     requestFilePreviewTransition,
@@ -919,21 +1028,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>)
         .detail;
       if (!detail?.filePath) return;
-      const sourceSessionId = currentSessionIdRef.current;
-      const activeRequestId = ++filePreviewRequestIdRef.current;
-      const canReplace = (await filePreviewDrawerRef.current?.requestTransition()) ?? true;
-      if (!canReplace) return;
-      if (
-        !isCurrentFilePreviewRequest(
-          activeRequestId,
-          filePreviewRequestIdRef.current,
-          sourceSessionId,
-          currentSessionIdRef.current,
-        )
-      ) {
+      const requestedTabId = fileDisplayTabId(detail.filePath);
+      const existingPreview = filePreviewsRef.current.find(
+        preview => fileDisplayTabId(preview.filePath) === requestedTabId,
+      );
+      if (existingPreview) {
+        setPreferredDisplayTabId(fileDisplayTabId(existingPreview.filePath));
+        setIsDisplayPanelOpen(true);
         return;
       }
-      setFilePreview(null);
+      const sourceSessionId = currentSessionIdRef.current;
+      const activeRequestId = ++filePreviewRequestIdRef.current;
       let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
       try {
         result = await window.electron.shell.readPreviewFile(
@@ -973,13 +1078,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         return;
       }
       if (result.success) {
-        setSelectedSubagent(null);
-        setFilePreview({
+        const resolvedTabId = fileDisplayTabId(result.filePath);
+        const duplicate = filePreviewsRef.current.find(
+          preview => fileDisplayTabId(preview.filePath) === resolvedTabId,
+        );
+        if (duplicate) {
+          void window.electron.shell
+            .revokePreviewFileEdit(result.editToken)
+            .catch((): undefined => undefined);
+          setPreferredDisplayTabId(resolvedTabId);
+          setIsDisplayPanelOpen(true);
+          return;
+        }
+        const preview: FilePreview = {
           content: result.content,
           editToken: result.editToken,
           filePath: result.filePath,
           version: result.version,
-        });
+        };
+        setFilePreviews(current => [...current, preview]);
+        setPreferredDisplayTabId(resolvedTabId);
+        setIsDisplayPanelOpen(true);
         return;
       }
       window.dispatchEvent(
@@ -1013,7 +1132,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         },
       };
       dispatchPlanPreview({ type: 'preview-opened', interaction });
-      setSelectedSubagent(null);
+      setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID);
+      setIsDisplayPanelOpen(true);
     };
     window.addEventListener(COWORK_PLAN_PREVIEW_EVENT, handlePreviewPlan);
     return () => window.removeEventListener(COWORK_PLAN_PREVIEW_EVENT, handlePreviewPlan);
@@ -1080,6 +1200,51 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentSessionFolderName = currentSessionFolderPath
     ? getCompactFolderName(currentSessionFolderPath, 32)
     : '';
+  const terminalWorkingDirectory = currentSessionFolderPath || config.workingDirectory.trim();
+
+  const handleCreateBrowserTab = useCallback(() => {
+    setIsDisplayPanelOpen(true);
+    setHasBrowserPanelOpened(true);
+    setIsBrowserPanelOpen(true);
+    setBrowserTabCreationSequence(sequence => sequence + 1);
+  }, []);
+
+  useEffect(() => {
+    if (browserTabCreationSequence === 0) return;
+    browserPanelRef.current?.openTab();
+  }, [browserTabCreationSequence]);
+
+  const handleCreateTerminalTab = useCallback(() => {
+    if (!terminalWorkingDirectory) {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', {
+          detail: i18nService.t('coworkTerminalCreateFailed'),
+        }),
+      );
+      return;
+    }
+    terminalSequenceRef.current += 1;
+    const number = terminalSequenceRef.current;
+    const id = `${TERMINAL_DISPLAY_TAB_PREFIX}${crypto.randomUUID()}`;
+    setTerminalTabs(current => [
+      ...current,
+      {
+        id,
+        cwd: terminalWorkingDirectory,
+        label: i18nService.t('coworkTerminalTitle').replace('{number}', String(number)),
+      },
+    ]);
+    setPreferredDisplayTabId(id);
+    setIsDisplayPanelOpen(true);
+  }, [terminalWorkingDirectory]);
+
+  const closeTerminalTab = useCallback(
+    (id: string) => {
+      setTerminalTabs(current => current.filter(tab => tab.id !== id));
+      selectAdjacentDisplayTabAfterClose(id);
+    },
+    [selectAdjacentDisplayTabAfterClose],
+  );
 
   const handleOpenCurrentSessionFolder = useCallback(async () => {
     if (!currentSessionFolderPath) return;
@@ -1121,8 +1286,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   if (!isInitialized) {
     return (
       <div className="flex-1 h-full flex flex-col bg-background">
-        <div className="draggable flex h-12 items-center justify-end px-4 border-b border-border shrink-0">
-          <WindowTitleBar inline />
+        <div className="cowork-window-header draggable flex shrink-0 items-center justify-end border-b border-border px-4">
+          <WindowTitleBar inline compact />
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-secondary">{i18nService.t('loading')}</div>
@@ -1135,22 +1300,28 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // cannot force the chat transcript and prompt tree to re-render.
   const isEngineReady = true;
 
-  const homeHeader = (
-    <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
-      <div className="non-draggable h-8 flex items-center">
+  const windowHeader = (
+    <div className="cowork-window-header draggable flex shrink-0 items-center justify-end border-b border-border px-4">
+      <WindowTitleBar inline compact />
+    </div>
+  );
+
+  const homeConversationHeader = (
+    <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
+      <div className="non-draggable flex h-7 items-center">
         {isSidebarCollapsed && (
-          <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
+          <div className="mr-2 flex items-center gap-1">
             <button
               type="button"
               onClick={onToggleSidebar}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
             >
               <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
             </button>
             <button
               type="button"
               onClick={onNewChat}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
             >
               <ComposeIcon className="h-4 w-4" />
             </button>
@@ -1158,22 +1329,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         )}
       </div>
       <div className="non-draggable flex items-center gap-1">
-        <button
-          ref={browserPanelToggleRef}
-          type="button"
-          onClick={toggleBrowserPanel}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-            isBrowserPanelOpen
-              ? 'bg-surface-raised text-primary'
-              : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-          }`}
-          title={i18nService.t(browserPanelToggleLabel)}
-          aria-label={i18nService.t(browserPanelToggleLabel)}
-          aria-expanded={isBrowserPanelOpen}
-        >
-          <GlobeAltIcon className="h-[18px] w-[18px]" />
-        </button>
-        <WindowTitleBar inline />
+        {!isDisplayPanelOpen && (
+          <button
+            ref={displayPanelToggleRef}
+            type="button"
+            onClick={openDisplayPanel}
+            className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            title={i18nService.t('coworkDisplayPanelOpen')}
+            aria-label={i18nService.t('coworkDisplayPanelOpen')}
+            aria-expanded={false}
+            aria-controls="cowork-display-panel"
+          >
+            <RightSidebarIcon className="h-[18px] w-[18px]" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1338,271 +1507,354 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       }
     };
 
+    const planPreviewLabel = visiblePlanInteraction
+      ? typeof visiblePlanInteraction.toolInput.title === 'string' &&
+        visiblePlanInteraction.toolInput.title.trim()
+        ? visiblePlanInteraction.toolInput.title.trim()
+        : i18nService.t('planReviewTitle')
+      : '';
+    const displayTabs: CoworkDisplayTab[] = [
+      ...(isBrowserPanelOpen
+        ? browserTabs.map(tab => ({
+            id: browserDisplayTabId(tab.targetId),
+            label: getBrowserTabDisplayTitle(tab),
+            icon: tab.faviconUrl ? (
+              <img src={tab.faviconUrl} alt="" className="h-4 w-4 rounded-sm object-contain" />
+            ) : (
+              <GlobeAltIcon className="h-4 w-4" />
+            ),
+            onSelect: () => handleBrowserTargetChange(tab.targetId),
+            onClose: () => browserPanelRef.current?.closeTab(tab.targetId),
+            onContextMenu: ({ x, y }: { x: number; y: number }) =>
+              browserPanelRef.current?.openTabContextMenu(tab.targetId, x, y),
+          }))
+        : []),
+      ...terminalTabs.map(tab => ({
+        id: tab.id,
+        label: tab.label,
+        icon: <CommandLineIcon className="h-4 w-4" />,
+        onSelect: () => setPreferredDisplayTabId(tab.id),
+        onClose: () => closeTerminalTab(tab.id),
+      })),
+      ...filePreviews.map(preview => ({
+        id: fileDisplayTabId(preview.filePath),
+        label: preview.filePath.split(/[\\/]/).pop() || preview.filePath,
+        icon: <DocumentTextIcon className="h-4 w-4" />,
+        onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
+        onClose: () => void closeFilePreview(preview.filePath),
+      })),
+      ...(visiblePlanInteraction
+        ? [
+            {
+              id: PLAN_DISPLAY_TAB_ID,
+              label: planPreviewLabel,
+              icon: <ClipboardDocumentCheckIcon className="h-4 w-4" />,
+              onSelect: () => setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID),
+              ...(planPreviewReadOnly
+                ? {
+                    onClose: () => {
+                      dispatchPlanPreview({ type: 'closed' });
+                      selectAdjacentDisplayTabAfterClose(PLAN_DISPLAY_TAB_ID);
+                    },
+                  }
+                : {}),
+            },
+          ]
+        : []),
+      ...(selectedSubagent
+        ? [
+            {
+              id: SUBAGENT_DISPLAY_TAB_ID,
+              label: selectedSubagent.label,
+              icon: <QueueListIcon className="h-4 w-4" />,
+              onSelect: () => setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID),
+              onClose: () => {
+                setSelectedSubagent(null);
+                selectAdjacentDisplayTabAfterClose(SUBAGENT_DISPLAY_TAB_ID);
+              },
+            },
+          ]
+        : []),
+    ];
+
     return (
       <div className="relative flex-1 flex flex-col h-full">
-        {/* Header */}
-        <div className="draggable relative flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
-          <div className="non-draggable h-8 flex items-center">
-            {isSidebarCollapsed && (
-              <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
-                <button
-                  type="button"
-                  onClick={onToggleSidebar}
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                >
-                  <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
-                </button>
-                <button
-                  type="button"
-                  onClick={onNewChat}
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
-                >
-                  <ComposeIcon className="h-4 w-4" />
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="non-draggable flex min-w-0 items-center gap-1">
-            {currentSessionFolderPath && currentSessionFolderName && (
-              <button
-                type="button"
-                onClick={handleOpenCurrentSessionFolder}
-                className="inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-lg px-2.5 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
-                title={`${i18nService.t('coworkOpenFolder')}: ${currentSessionFolderPath}`}
-                aria-label={`${i18nService.t('coworkOpenFolder')}: ${currentSessionFolderName}`}
-              >
-                <FolderIcon className="h-4 w-4 shrink-0" />
-                <span className="truncate">{currentSessionFolderName}</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onMouseDown={event => event.stopPropagation()}
-              onClick={event => {
-                event.stopPropagation();
-                setAreProcessSummariesExpanded(expanded => !expanded);
-              }}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                areProcessSummariesExpanded
-                  ? 'bg-surface-raised text-primary'
-                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-              }`}
-              title={i18nService.t(
-                areProcessSummariesExpanded
-                  ? 'coworkCollapseAllProcessDetails'
-                  : 'coworkExpandAllProcessDetails',
-              )}
-              aria-label={i18nService.t(
-                areProcessSummariesExpanded
-                  ? 'coworkCollapseAllProcessDetails'
-                  : 'coworkExpandAllProcessDetails',
-              )}
-              aria-pressed={areProcessSummariesExpanded}
-            >
-              <BrainIcon className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onMouseDown={event => event.stopPropagation()}
-              onClick={event => {
-                event.stopPropagation();
-                setIsSessionSearchOpen(open => !open);
-              }}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                isSessionSearchOpen
-                  ? 'text-primary hover:bg-surface-raised'
-                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-              }`}
-              title={i18nService.t('coworkSearchInSession')}
-              aria-label={i18nService.t('coworkSearchInSession')}
-            >
-              <SearchIcon className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onMouseDown={event => event.stopPropagation()}
-              onClick={event => {
-                event.stopPropagation();
-                handleOpenSessionExport();
-              }}
-              disabled={currentSessionRuntimeRunning}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
-              title={i18nService.t(
-                currentSessionRuntimeRunning
-                  ? 'coworkExportWaitForCompletion'
-                  : 'coworkExportSession',
-              )}
-              aria-label={i18nService.t(
-                currentSessionRuntimeRunning
-                  ? 'coworkExportWaitForCompletion'
-                  : 'coworkExportSession',
-              )}
-            >
-              <ArrowDownTrayIcon className="h-4 w-4" />
-            </button>
-            {progressCard && (
-              <button
-                type="button"
-                onMouseDown={event => event.stopPropagation()}
-                onClick={event => {
-                  event.stopPropagation();
-                  if (progressCardVisibility.visible) {
-                    progressCardVisibility.hide();
-                  } else {
-                    progressCardVisibility.show();
-                  }
-                }}
-                className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                  progressCardVisibility.visible
-                    ? 'bg-surface-raised text-primary'
-                    : progressCardComplete
-                      ? 'text-green-500 hover:bg-surface-raised'
-                      : progressCardRunState === 'failed'
-                        ? 'text-destructive hover:bg-surface-raised'
-                        : progressCardPaused
-                          ? 'text-amber-500 hover:bg-surface-raised'
-                          : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                }`}
-                title={i18nService.t(
-                  progressCardVisibility.visible
-                    ? 'coworkProgressCardHide'
-                    : 'coworkProgressCardShow',
-                )}
-                aria-label={i18nService.t(
-                  progressCardVisibility.visible
-                    ? 'coworkProgressCardHide'
-                    : 'coworkProgressCardShow',
-                )}
-                aria-expanded={progressCardVisibility.visible}
-                aria-controls="cowork-progress-card-overlay"
-              >
-                {progressCardComplete ? (
-                  <CheckCircleIcon className="h-[18px] w-[18px]" />
-                ) : progressCardRunState === 'running' ? (
-                  <ArrowPathIcon className="h-[18px] w-[18px] animate-spin" />
-                ) : progressCardRunState === 'failed' ? (
-                  <XCircleIcon className="h-[18px] w-[18px]" />
-                ) : progressCardRunState === 'aborted' ? (
-                  <StopCircleIcon className="h-[18px] w-[18px]" />
-                ) : progressCardPaused ? (
-                  <PauseCircleSolidIcon className="h-[18px] w-[18px]" />
-                ) : (
-                  <ClipboardDocumentCheckIcon className="h-[18px] w-[18px]" />
-                )}
-                {!progressCardVisibility.visible && !progressCardComplete && (
-                  <span
-                    className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
-                    aria-hidden="true"
-                  />
-                )}
-              </button>
-            )}
-            <button
-              ref={browserPanelToggleRef}
-              type="button"
-              disabled={currentSession.id.startsWith('temp-')}
-              onMouseDown={event => event.stopPropagation()}
-              onClick={event => {
-                event.stopPropagation();
-                toggleBrowserPanel();
-              }}
-              className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                isBrowserPanelOpen
-                  ? 'bg-surface-raised text-primary'
-                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-              }`}
-              title={i18nService.t(browserPanelToggleLabel)}
-              aria-label={i18nService.t(browserPanelToggleLabel)}
-              aria-expanded={isBrowserPanelOpen}
-            >
-              <GlobeAltIcon className="h-[18px] w-[18px]" />
-            </button>
-            <button
-              ref={subtaskListToggleRef}
-              type="button"
-              onMouseDown={event => event.stopPropagation()}
-              onClick={event => {
-                event.stopPropagation();
-                setIsSubtaskListOpen(open => !open);
-                setIsBrowserPanelOpen(false);
-              }}
-              className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                isSubtaskListOpen
-                  ? 'bg-surface-raised text-primary'
-                  : 'text-secondary hover:bg-surface-raised hover:text-foreground'
-              }`}
-              title={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
-              aria-label={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
-              aria-expanded={isSubtaskListOpen}
-              aria-controls="cowork-subtask-list"
-            >
-              <QueueListIcon className="h-[18px] w-[18px]" />
-              {!isSubtaskListOpen && activeSubtaskCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-white">
-                  {activeSubtaskCount}
-                </span>
-              )}
-            </button>
-            <WindowTitleBar inline />
-          </div>
-          {isSessionSearchOpen && (
-            <div
-              ref={sessionSearchPanelRef}
-              className="non-draggable absolute right-16 top-full z-40 mt-2 flex min-h-9 max-w-[calc(100vw-5rem)] items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 shadow-popover"
-            >
-              <SearchIcon className="h-4 w-4 shrink-0 text-muted" />
-              <input
-                ref={sessionSearchInputRef}
-                value={sessionSearchQuery}
-                onChange={event => {
-                  setSessionSearchQuery(event.target.value);
-                  setSessionSearchActiveIndex(-1);
-                }}
-                onKeyDown={event => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    navigateSessionSearch(event.shiftKey ? -1 : 1);
-                  }
-                }}
-                className="h-7 w-48 bg-transparent text-sm text-foreground placeholder:text-muted focus:outline-none"
-                placeholder={i18nService.t('coworkSearchInSessionPlaceholder')}
-              />
-              <label className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised">
-                <input
-                  type="checkbox"
-                  checked={sessionSearchIgnoreCase}
-                  onChange={event => {
-                    setSessionSearchIgnoreCase(event.target.checked);
-                    setSessionSearchActiveIndex(-1);
-                  }}
-                  className="h-3.5 w-3.5 rounded border-border accent-primary"
-                />
-                <span className="whitespace-nowrap">{i18nService.t('ignoreCase')}</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => navigateSessionSearch(-1)}
-                disabled={sessionSearchMatchCount === 0}
-                className="h-7 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
-              >
-                {i18nService.t('previous')}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigateSessionSearch(1)}
-                disabled={sessionSearchMatchCount === 0}
-                className="h-7 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
-              >
-                {i18nService.t('next')}
-              </button>
-              <span className="min-w-[88px] text-center text-xs tabular-nums text-muted">
-                {sessionSearchMatchCountText}
-              </span>
-            </div>
-          )}
-        </div>
-        <div className="relative flex min-h-0 flex-1">
+        {windowHeader}
+        <div className="cowork-display-host relative flex min-h-0 flex-1">
           <div className="relative flex min-w-0 flex-1 flex-col">
+            <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
+              <div className="non-draggable flex h-7 items-center">
+                {isSidebarCollapsed && (
+                  <div className="mr-2 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={onToggleSidebar}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
+                    >
+                      <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onNewChat}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised"
+                    >
+                      <ComposeIcon className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+                <h1
+                  className="cowork-session-title max-w-[min(34vw,28rem)] truncate text-sm font-semibold text-foreground"
+                  title={currentSession.title}
+                >
+                  {currentSession.title}
+                </h1>
+              </div>
+              <div className="non-draggable flex min-w-0 items-center gap-1">
+                {currentSessionFolderPath && currentSessionFolderName && (
+                  <button
+                    type="button"
+                    onClick={handleOpenCurrentSessionFolder}
+                    className="inline-flex h-7 max-w-[220px] items-center gap-1.5 rounded-lg px-2.5 text-sm text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
+                    title={`${i18nService.t('coworkOpenFolder')}: ${currentSessionFolderPath}`}
+                    aria-label={`${i18nService.t('coworkOpenFolder')}: ${currentSessionFolderName}`}
+                  >
+                    <FolderIcon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{currentSessionFolderName}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onMouseDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    setAreProcessSummariesExpanded(expanded => !expanded);
+                  }}
+                  className={`inline-flex h-7 w-8 items-center justify-center rounded-lg transition-colors ${
+                    areProcessSummariesExpanded
+                      ? 'bg-surface-raised text-primary'
+                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
+                  title={i18nService.t(
+                    areProcessSummariesExpanded
+                      ? 'coworkCollapseAllProcessDetails'
+                      : 'coworkExpandAllProcessDetails',
+                  )}
+                  aria-label={i18nService.t(
+                    areProcessSummariesExpanded
+                      ? 'coworkCollapseAllProcessDetails'
+                      : 'coworkExpandAllProcessDetails',
+                  )}
+                  aria-pressed={areProcessSummariesExpanded}
+                >
+                  <BrainIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    setIsSessionSearchOpen(open => !open);
+                  }}
+                  className={`inline-flex h-7 w-8 items-center justify-center rounded-lg transition-colors ${
+                    isSessionSearchOpen
+                      ? 'text-primary hover:bg-surface-raised'
+                      : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                  }`}
+                  title={i18nService.t('coworkSearchInSession')}
+                  aria-label={i18nService.t('coworkSearchInSession')}
+                >
+                  <SearchIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    handleOpenSessionExport();
+                  }}
+                  disabled={currentSessionRuntimeRunning}
+                  className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+                  title={i18nService.t(
+                    currentSessionRuntimeRunning
+                      ? 'coworkExportWaitForCompletion'
+                      : 'coworkExportSession',
+                  )}
+                  aria-label={i18nService.t(
+                    currentSessionRuntimeRunning
+                      ? 'coworkExportWaitForCompletion'
+                      : 'coworkExportSession',
+                  )}
+                >
+                  <ArrowDownTrayIcon className="h-4 w-4" />
+                </button>
+                {progressCard && (
+                  <button
+                    type="button"
+                    onMouseDown={event => event.stopPropagation()}
+                    onClick={event => {
+                      event.stopPropagation();
+                      if (progressCardVisibility.visible) {
+                        progressCardVisibility.hide();
+                      } else {
+                        progressCardVisibility.show();
+                      }
+                    }}
+                    className={`relative inline-flex h-7 w-8 items-center justify-center rounded-lg transition-colors ${
+                      progressCardVisibility.visible
+                        ? 'bg-surface-raised text-primary'
+                        : progressCardComplete
+                          ? 'text-green-500 hover:bg-surface-raised'
+                          : progressCardRunState === 'failed'
+                            ? 'text-destructive hover:bg-surface-raised'
+                            : progressCardPaused
+                              ? 'text-amber-500 hover:bg-surface-raised'
+                              : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                    }`}
+                    title={i18nService.t(
+                      progressCardVisibility.visible
+                        ? 'coworkProgressCardHide'
+                        : 'coworkProgressCardShow',
+                    )}
+                    aria-label={i18nService.t(
+                      progressCardVisibility.visible
+                        ? 'coworkProgressCardHide'
+                        : 'coworkProgressCardShow',
+                    )}
+                    aria-expanded={progressCardVisibility.visible}
+                    aria-controls="cowork-progress-card-overlay"
+                  >
+                    {progressCardComplete ? (
+                      <CheckCircleIcon className="h-[18px] w-[18px]" />
+                    ) : progressCardRunState === 'running' ? (
+                      <ArrowPathIcon className="h-[18px] w-[18px] animate-spin" />
+                    ) : progressCardRunState === 'failed' ? (
+                      <XCircleIcon className="h-[18px] w-[18px]" />
+                    ) : progressCardRunState === 'aborted' ? (
+                      <StopCircleIcon className="h-[18px] w-[18px]" />
+                    ) : progressCardPaused ? (
+                      <PauseCircleSolidIcon className="h-[18px] w-[18px]" />
+                    ) : (
+                      <ClipboardDocumentCheckIcon className="h-[18px] w-[18px]" />
+                    )}
+                    {!progressCardVisibility.visible && !progressCardComplete && (
+                      <span
+                        className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </button>
+                )}
+                <div className="relative">
+                  <button
+                    ref={subtaskListToggleRef}
+                    type="button"
+                    onMouseDown={event => event.stopPropagation()}
+                    onClick={event => {
+                      event.stopPropagation();
+                      setIsSubtaskListOpen(open => !open);
+                    }}
+                    className={`relative inline-flex h-7 w-8 items-center justify-center rounded-lg transition-colors ${
+                      isSubtaskListOpen
+                        ? 'bg-surface-raised text-primary'
+                        : 'text-secondary hover:bg-surface-raised hover:text-foreground'
+                    }`}
+                    title={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
+                    aria-label={i18nService.t(isSubtaskListOpen ? 'subtaskHide' : 'subtaskShow')}
+                    aria-expanded={isSubtaskListOpen}
+                    aria-controls="cowork-subtask-list"
+                  >
+                    <QueueListIcon className="h-[18px] w-[18px]" />
+                    {!isSubtaskListOpen && activeSubtaskCount > 0 && (
+                      <span className="absolute -right-0.5 -top-0.5 inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-white">
+                        {activeSubtaskCount}
+                      </span>
+                    )}
+                  </button>
+                  <SubtaskListPanel
+                    sessionId={currentSession.id}
+                    isOpen={isSubtaskListOpen}
+                    parentRunning={currentSessionRuntimeRunning}
+                    anchorRef={subtaskListToggleRef}
+                    onClose={closeSubtaskList}
+                    onOpenSubtask={openSubtask}
+                    onSubtasksChange={handleSubtasksChange}
+                  />
+                </div>
+                {!isDisplayPanelOpen && (
+                  <button
+                    ref={displayPanelToggleRef}
+                    type="button"
+                    onMouseDown={event => event.stopPropagation()}
+                    onClick={event => {
+                      event.stopPropagation();
+                      openDisplayPanel();
+                    }}
+                    className="relative inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                    title={i18nService.t('coworkDisplayPanelOpen')}
+                    aria-label={i18nService.t('coworkDisplayPanelOpen')}
+                    aria-expanded={false}
+                    aria-controls="cowork-display-panel"
+                  >
+                    <RightSidebarIcon className="h-[18px] w-[18px]" />
+                  </button>
+                )}
+              </div>
+              {isSessionSearchOpen && (
+                <div
+                  ref={sessionSearchPanelRef}
+                  className="non-draggable absolute right-2 top-full z-40 mt-2 flex min-h-9 max-w-[calc(100vw-5rem)] items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 shadow-popover"
+                >
+                  <SearchIcon className="h-4 w-4 shrink-0 text-muted" />
+                  <input
+                    ref={sessionSearchInputRef}
+                    value={sessionSearchQuery}
+                    onChange={event => {
+                      setSessionSearchQuery(event.target.value);
+                      setSessionSearchActiveIndex(-1);
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        navigateSessionSearch(event.shiftKey ? -1 : 1);
+                      }
+                    }}
+                    className="h-7 w-48 bg-transparent text-sm text-foreground placeholder:text-muted focus:outline-none"
+                    placeholder={i18nService.t('coworkSearchInSessionPlaceholder')}
+                  />
+                  <label className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised">
+                    <input
+                      type="checkbox"
+                      checked={sessionSearchIgnoreCase}
+                      onChange={event => {
+                        setSessionSearchIgnoreCase(event.target.checked);
+                        setSessionSearchActiveIndex(-1);
+                      }}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary"
+                    />
+                    <span className="whitespace-nowrap">{i18nService.t('ignoreCase')}</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => navigateSessionSearch(-1)}
+                    disabled={sessionSearchMatchCount === 0}
+                    className="h-7 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+                  >
+                    {i18nService.t('previous')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigateSessionSearch(1)}
+                    disabled={sessionSearchMatchCount === 0}
+                    className="h-7 rounded-md px-2 text-xs text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-secondary"
+                  >
+                    {i18nService.t('next')}
+                  </button>
+                  <span className="min-w-[88px] text-center text-xs tabular-nums text-muted">
+                    {sessionSearchMatchCountText}
+                  </span>
+                </div>
+              )}
+            </div>
             {/* Messages */}
             <JustDoChatWrapper
               ref={chatWrapperRef}
@@ -1685,53 +1937,99 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               </div>
             )}
           </div>
-          <SubtaskListPanel
-            sessionId={currentSession.id}
-            isOpen={isSubtaskListOpen}
-            parentRunning={currentSessionRuntimeRunning}
-            onClose={closeSubtaskList}
-            onOpenSubtask={setSelectedSubagent}
-            onSubtasksChange={handleSubtasksChange}
-          />
-          {hasBrowserPanelOpened && (
-            <BrowserPanel
-              key="persistent-browser-panel"
-              draftKey={currentSession.id}
-              isOpen={isBrowserPanelOpen && !currentSession.id.startsWith('temp-')}
-              width={browserPanelWidth}
-              activeTargetId={browserPanelTargetId}
-              onClose={closeBrowserPanel}
-              onWidthChange={setBrowserPanelWidth}
-              onActiveTargetChange={setBrowserPanelTargetId}
-              onAddAnnotation={handleAddBrowserAnnotation}
-              onRequestBrowserSettings={browserPage =>
-                onRequestAppSettings?.({ initialTab: 'browser', browserPage })
+          {(isDisplayPanelOpen || hasBrowserPanelOpened || displayTabs.length > 0) && (
+            <CoworkDisplayPanel
+              activeTabId={activeDisplayTabId ?? ''}
+              isOpen={isDisplayPanelOpen}
+              onClose={closeDisplayPanel}
+              tabs={displayTabs}
+              emptyState={
+                <DisplayPanelLauncher
+                  browserDisabled={currentSession.id.startsWith('temp-') || browserTabs.length >= 8}
+                  onCreateBrowser={handleCreateBrowserTab}
+                  onCreateTerminal={handleCreateTerminalTab}
+                  terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+                />
               }
-            />
-          )}
-          <SubagentMessageDrawer
-            parentSessionId={currentSession.id}
-            subagent={visiblePlanInteraction ? null : selectedSubagent}
-            onClose={() => setSelectedSubagent(null)}
-          />
-          {filePreview && (
-            <FilePreviewDrawer
-              ref={filePreviewDrawerRef}
-              preview={filePreview}
-              onClose={() => setFilePreview(null)}
-              isObscured={visiblePlanInteraction !== null}
-            />
-          )}
-          {visiblePlanInteraction && (
-            <PlanApprovalDrawer
-              key={`${visiblePlanInteraction.requestId}:${planPreviewReadOnly ? 'readonly' : 'approval'}`}
-              interaction={visiblePlanInteraction}
-              onRespond={planPreviewReadOnly ? undefined : handlePlanRespond}
-              readOnly={planPreviewReadOnly}
-              onClose={
-                planPreviewReadOnly ? () => dispatchPlanPreview({ type: 'closed' }) : undefined
+              actions={
+                <NewDisplayTabMenu
+                  browserDisabled={currentSession.id.startsWith('temp-') || browserTabs.length >= 8}
+                  onCreateBrowser={handleCreateBrowserTab}
+                  onCreateTerminal={handleCreateTerminalTab}
+                  terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+                />
               }
-            />
+            >
+              {hasBrowserPanelOpened && (
+                <BrowserPanel
+                  ref={browserPanelRef}
+                  key="persistent-browser-panel"
+                  draftKey={currentSession.id}
+                  isOpen={isBrowserPanelVisible && !currentSession.id.startsWith('temp-')}
+                  width={browserPanelWidth}
+                  activeTargetId={activeBrowserTab?.targetId ?? browserPanelTargetId}
+                  onClose={closeBrowserPanel}
+                  onWidthChange={setBrowserPanelWidth}
+                  onActiveTargetChange={handleBrowserTargetChange}
+                  onTabsChange={setBrowserTabs}
+                  onAddAnnotation={handleAddBrowserAnnotation}
+                  onRequestBrowserSettings={browserPage =>
+                    onRequestAppSettings?.({ initialTab: 'browser', browserPage })
+                  }
+                  embedded
+                />
+              )}
+              {terminalTabs.map(tab => (
+                <TerminalPanel
+                  key={tab.id}
+                  terminalId={tab.id}
+                  cwd={tab.cwd}
+                  isObscured={activeTerminalTab?.id !== tab.id}
+                />
+              ))}
+              <SubagentMessageDrawer
+                parentSessionId={currentSession.id}
+                subagent={selectedSubagent}
+                onClose={() => {
+                  setSelectedSubagent(null);
+                  selectAdjacentDisplayTabAfterClose(SUBAGENT_DISPLAY_TAB_ID);
+                }}
+                embedded
+                isObscured={activeDisplayTabId !== SUBAGENT_DISPLAY_TAB_ID}
+              />
+              {filePreviews.map(preview => (
+                <FilePreviewDrawer
+                  key={fileDisplayTabId(preview.filePath)}
+                  ref={drawer => {
+                    const tabId = fileDisplayTabId(preview.filePath);
+                    if (drawer) filePreviewDrawerRefs.current.set(tabId, drawer);
+                    else filePreviewDrawerRefs.current.delete(tabId);
+                  }}
+                  preview={preview}
+                  onClose={() => void closeFilePreview(preview.filePath)}
+                  isObscured={activeFilePreview?.filePath !== preview.filePath}
+                  embedded
+                />
+              ))}
+              {visiblePlanInteraction && (
+                <PlanApprovalDrawer
+                  key={`${visiblePlanInteraction.requestId}:${planPreviewReadOnly ? 'readonly' : 'approval'}`}
+                  interaction={visiblePlanInteraction}
+                  onRespond={planPreviewReadOnly ? undefined : handlePlanRespond}
+                  readOnly={planPreviewReadOnly}
+                  onClose={
+                    planPreviewReadOnly
+                      ? () => {
+                          dispatchPlanPreview({ type: 'closed' });
+                          selectAdjacentDisplayTabAfterClose(PLAN_DISPLAY_TAB_ID);
+                        }
+                      : undefined
+                  }
+                  embedded
+                  isObscured={activeDisplayTabId !== PLAN_DISPLAY_TAB_ID}
+                />
+              )}
+            </CoworkDisplayPanel>
           )}
           <ExportSessionModal
             isOpen={isSessionExportOpen}
@@ -1745,66 +2043,127 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     );
   }
 
+  const homeDisplayTabs: CoworkDisplayTab[] = [
+    ...(isBrowserPanelOpen
+      ? browserTabs.map(tab => ({
+          id: browserDisplayTabId(tab.targetId),
+          label: getBrowserTabDisplayTitle(tab),
+          icon: tab.faviconUrl ? (
+            <img src={tab.faviconUrl} alt="" className="h-4 w-4 rounded-sm object-contain" />
+          ) : (
+            <GlobeAltIcon className="h-4 w-4" />
+          ),
+          onSelect: () => handleBrowserTargetChange(tab.targetId),
+          onClose: () => browserPanelRef.current?.closeTab(tab.targetId),
+          onContextMenu: ({ x, y }: { x: number; y: number }) =>
+            browserPanelRef.current?.openTabContextMenu(tab.targetId, x, y),
+        }))
+      : []),
+    ...terminalTabs.map(tab => ({
+      id: tab.id,
+      label: tab.label,
+      icon: <CommandLineIcon className="h-4 w-4" />,
+      onSelect: () => setPreferredDisplayTabId(tab.id),
+      onClose: () => closeTerminalTab(tab.id),
+    })),
+  ];
+
   // Home view - no current session
   return (
     <div className="cowork-home flex-1 flex flex-col h-full">
-      {/* Header */}
-      {homeHeader}
+      {windowHeader}
+      <div className="cowork-display-host relative flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          {homeConversationHeader}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
+              <div className="space-y-12">
+                {/* Welcome Section */}
+                <div className="text-center space-y-5">
+                  <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
+                  <h2 className="text-3xl font-bold tracking-tight text-foreground">
+                    {i18nService.t(greetingKey)}
+                  </h2>
+                  <p className="text-sm text-secondary max-w-md mx-auto">
+                    {i18nService.t('coworkGreetingSupport')}
+                  </p>
+                </div>
 
-      {/* Main Content */}
-      <div className="relative flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
-            <div className="space-y-12">
-              {/* Welcome Section */}
-              <div className="text-center space-y-5">
-                <img src={logoUrl} alt="logo" className="mx-auto h-[5.333rem] w-[5.333rem]" />
-                <h2 className="text-3xl font-bold tracking-tight text-foreground">
-                  {i18nService.t(greetingKey)}
-                </h2>
-                <p className="text-sm text-secondary max-w-md mx-auto">
-                  {i18nService.t('coworkGreetingSupport')}
-                </p>
-              </div>
-
-              {/* Prompt Input Area - Large version with folder selector */}
-              <div className="space-y-3">
-                <div className="shadow-glow-accent rounded-2xl">
-                  <CoworkPromptInput
-                    ref={promptInputRef}
-                    onSubmit={handleStartSession}
-                    onStop={handleStopSession}
-                    isStreaming={isStreaming}
-                    disabled={!isEngineReady}
-                    placeholder={i18nService.t('coworkPlaceholder')}
-                    size="large"
-                    workingDirectory={config.workingDirectory}
-                    onWorkingDirectoryChange={async (dir: string) => {
-                      await coworkService.updateConfig({ workingDirectory: dir });
-                    }}
-                    showFolderSelector={true}
-                    showModelSelector={true}
-                  />
+                {/* Prompt Input Area - Large version with folder selector */}
+                <div className="space-y-3">
+                  <div className="shadow-glow-accent rounded-2xl">
+                    <CoworkPromptInput
+                      ref={promptInputRef}
+                      onSubmit={handleStartSession}
+                      onStop={handleStopSession}
+                      isStreaming={isStreaming}
+                      disabled={!isEngineReady}
+                      placeholder={i18nService.t('coworkPlaceholder')}
+                      size="large"
+                      workingDirectory={config.workingDirectory}
+                      onWorkingDirectoryChange={async (dir: string) => {
+                        await coworkService.updateConfig({ workingDirectory: dir });
+                      }}
+                      showFolderSelector={true}
+                      showModelSelector={true}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-        {hasBrowserPanelOpened && (
-          <BrowserPanel
-            key="persistent-browser-panel"
-            draftKey="__home__"
-            isOpen={isBrowserPanelOpen}
-            width={browserPanelWidth}
-            activeTargetId={browserPanelTargetId}
-            onClose={closeBrowserPanel}
-            onWidthChange={setBrowserPanelWidth}
-            onActiveTargetChange={setBrowserPanelTargetId}
-            onAddAnnotation={handleAddBrowserAnnotation}
-            onRequestBrowserSettings={browserPage =>
-              onRequestAppSettings?.({ initialTab: 'browser', browserPage })
+        {(isDisplayPanelOpen || hasBrowserPanelOpened || terminalTabs.length > 0) && (
+          <CoworkDisplayPanel
+            activeTabId={activeDisplayTabId ?? ''}
+            isOpen={isDisplayPanelOpen}
+            onClose={closeDisplayPanel}
+            tabs={homeDisplayTabs}
+            emptyState={
+              <DisplayPanelLauncher
+                browserDisabled={browserTabs.length >= 8}
+                onCreateBrowser={handleCreateBrowserTab}
+                onCreateTerminal={handleCreateTerminalTab}
+                terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+              />
             }
-          />
+            actions={
+              <NewDisplayTabMenu
+                browserDisabled={browserTabs.length >= 8}
+                onCreateBrowser={handleCreateBrowserTab}
+                onCreateTerminal={handleCreateTerminalTab}
+                terminalDisabled={!terminalWorkingDirectory || terminalTabs.length >= 16}
+              />
+            }
+          >
+            {hasBrowserPanelOpened && (
+              <BrowserPanel
+                ref={browserPanelRef}
+                key="persistent-browser-panel"
+                draftKey="__home__"
+                isOpen={isBrowserPanelVisible}
+                width={browserPanelWidth}
+                activeTargetId={activeBrowserTab?.targetId ?? browserPanelTargetId}
+                onClose={closeBrowserPanel}
+                onWidthChange={setBrowserPanelWidth}
+                onActiveTargetChange={handleBrowserTargetChange}
+                onTabsChange={setBrowserTabs}
+                onAddAnnotation={handleAddBrowserAnnotation}
+                onRequestBrowserSettings={browserPage =>
+                  onRequestAppSettings?.({ initialTab: 'browser', browserPage })
+                }
+                embedded
+              />
+            )}
+            {terminalTabs.map(tab => (
+              <TerminalPanel
+                key={tab.id}
+                terminalId={tab.id}
+                cwd={tab.cwd}
+                isObscured={activeTerminalTab?.id !== tab.id}
+              />
+            ))}
+          </CoworkDisplayPanel>
         )}
       </div>
     </div>

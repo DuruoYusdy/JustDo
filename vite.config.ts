@@ -43,6 +43,7 @@ export default defineConfig({
                   'electron',
                   'electron-updater',
                   'better-sqlite3',
+                  'node-pty',
                   'discord.js',
                   'zlib-sync',
                   '@discordjs/opus',

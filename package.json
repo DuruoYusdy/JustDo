@@ -81,9 +81,12 @@
     "fix:mac-icon": "bash scripts/mac-icon.sh fix-display"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^12.11.1",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.9",
+    "node-pty": "^1.1.0",
     "npm": "^11.18.0",
     "opencc-js": "^1.4.2",
     "tar": "^7.5.11"

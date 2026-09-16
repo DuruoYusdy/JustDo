@@ -51,6 +51,7 @@ interface FilePreviewDrawerProps {
   preview: FilePreview;
   onClose: () => void;
   isObscured?: boolean;
+  embedded?: boolean;
 }
 
 type PreviewMode = 'preview' | 'edit';
@@ -146,7 +147,7 @@ const showToast = (message: string): void => {
 };
 
 const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerProps>(
-  ({ preview, onClose, isObscured = false }, ref) => {
+  ({ preview, onClose, isObscured = false, embedded = false }, ref) => {
     const [drawerWidth, setDrawerWidth] = useState(() => clampDrawerWidth(DRAWER_DEFAULT_WIDTH));
     const [mode, setMode] = useState<PreviewMode>('preview');
     const [savedContent, setSavedContent] = useState(preview.content);
@@ -472,20 +473,26 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
       <>
         <aside
           ref={drawerRef}
-          className={`file-preview-shell absolute bottom-3 right-3 top-3 z-[70] flex max-w-full flex-col overflow-hidden ${isObscured ? 'is-obscured' : ''}`}
-          style={{ width: drawerWidth }}
+          className={`file-preview-shell flex max-w-full flex-col overflow-hidden ${
+            embedded
+              ? 'is-embedded absolute inset-0 min-h-0 min-w-0'
+              : 'absolute bottom-3 right-3 top-3 z-[70]'
+          } ${isObscured ? 'is-obscured' : ''}`}
+          style={embedded ? undefined : { width: drawerWidth }}
           aria-hidden={isObscured || undefined}
         >
-          <div
-            className="file-preview-resize-handle"
-            onMouseDown={handleResizeStart}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={i18nService.t('coworkFilePreviewResize')}
-            title={i18nService.t('coworkFilePreviewResize')}
-          >
-            <span />
-          </div>
+          {!embedded && (
+            <div
+              className="file-preview-resize-handle"
+              onMouseDown={handleResizeStart}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={i18nService.t('coworkFilePreviewResize')}
+              title={i18nService.t('coworkFilePreviewResize')}
+            >
+              <span />
+            </div>
+          )}
 
           <header className="file-preview-header">
             <div className="file-preview-titlebar">

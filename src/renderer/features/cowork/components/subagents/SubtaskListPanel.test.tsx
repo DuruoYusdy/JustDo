@@ -62,7 +62,10 @@ describe('SubtaskListPanel', () => {
       <SubtaskListPanel sessionId="parent-1" isOpen onClose={vi.fn()} onOpenSubtask={vi.fn()} />,
     );
 
-    expect(await screen.findByRole('complementary', { name: '子任务列表' })).toBeTruthy();
+    const panel = await screen.findByRole('complementary', { name: '子任务列表' });
+    expect(panel).toBeTruthy();
+    expect(panel.className).toContain('top-full');
+    expect(panel.className).not.toContain('min-[1100px]:relative');
     expect(await screen.findByText('检索资料')).toBeTruthy();
     expect(screen.getByText('进行中 1')).toBeTruthy();
     const finishedToggle = screen.getByRole('button', { name: '已结束 1' });
@@ -83,6 +86,32 @@ describe('SubtaskListPanel', () => {
     fireEvent.click(finishedToggle);
     expect(finishedToggle.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('整理结论')).toBeNull();
+  });
+
+  it('closes the floating list with Escape or a pointer press outside', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    installElectron(vi.fn().mockResolvedValue({ success: true, subagents: [] }));
+    const onClose = vi.fn();
+
+    const view = render(
+      <div>
+        <button type="button">Outside</button>
+        <SubtaskListPanel sessionId="parent-1" isOpen onClose={onClose} />
+      </div>,
+    );
+    await screen.findByRole('complementary', { name: 'Subtasks' });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenNthCalledWith(1, true);
+
+    view.rerender(
+      <div>
+        <button type="button">Outside</button>
+        <SubtaskListPanel sessionId="parent-1" isOpen onClose={onClose} />
+      </div>,
+    );
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Outside' }));
+    expect(onClose).toHaveBeenNthCalledWith(2, false);
   });
 
   it('shows current-instance model-request usage in the subtask detail dialog', async () => {

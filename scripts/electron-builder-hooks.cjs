@@ -969,6 +969,39 @@ function verifyPackagedWindowsNativeModules(context) {
   console.log(
     `[electron-builder-hooks] Verified packaged better-sqlite3 with Electron ABI ${result.stdout.trim()}.`,
   );
+
+  const nodePtyPrebuildDirectory = path.join(
+    context.appOutDir,
+    'resources',
+    'app.asar.unpacked',
+    'node_modules',
+    'node-pty',
+    'prebuilds',
+    `win32-${targetArch}`,
+  );
+  const nodePtyBindings = ['pty.node', 'conpty.node', 'conpty_console_list.node'].map(name =>
+    path.join(nodePtyPrebuildDirectory, name),
+  );
+  const nodePtyVerificationScript = [
+    ...nodePtyBindings.map(modulePath => `require(${JSON.stringify(modulePath)});`),
+    "process.stdout.write(process.versions.modules || 'unknown');",
+  ].join('');
+  const nodePtyResult = spawnSync(electronExecutable, ['-e', nodePtyVerificationScript], {
+    encoding: 'utf8',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  if (nodePtyResult.status !== 0) {
+    const detail = String(
+      nodePtyResult.stderr || nodePtyResult.stdout || nodePtyResult.error || '',
+    ).trim();
+    throw new Error(
+      '[electron-builder-hooks] Packaged node-pty failed Electron ABI verification' +
+        (detail ? `: ${detail}` : '.'),
+    );
+  }
+  console.log(
+    `[electron-builder-hooks] Verified packaged node-pty with Electron ABI ${nodePtyResult.stdout.trim()}.`,
+  );
 }
 
 function normalizeUpdateVersion(packageVersion) {

@@ -67,6 +67,7 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | `mcp`                         | CRUD、enable、sync、probe、resource read、extension servers 与 sync 事件 |
 | `permissions`                 | macOS Calendar check/request                                             |
 | `browser`                     | OpenClaw browser mode/status、连接诊断与设置动作                         |
+| `terminal`                    | 创建/输入/缩放/关闭窗口所有的 PTY，并订阅输出与退出事件                  |
 | `api`                         | Main 受控 fetch 与 request cancellation                                  |
 | `window`                      | 最小化/最大化/关闭/系统菜单与状态订阅                                    |
 | 顶层 config                   | provider config read/check/save、title generation、recent cwd            |
@@ -172,6 +173,8 @@ Renderer 的 provider 检测使用 `api.fetch` 进入 Main，支持 request id �
 Handler 在获得 single-instance lock 后统一注册。它们使用 getter 延迟取得 store/runtime，因此注册早于 `app.whenReady` 不意味着可提前调用。窗口只在核心初始化后创建，正常情况下 Renderer 不会撞上未初始化服务；handler 仍要在异常情况下返回清晰错误。
 
 事件发送前必须检查 BrowserWindow/WebContents 未销毁。多窗口语义应明确：全局 engine/update/result 事件广播，窗口局部 UI 事件发送给拥有者。图片查看器是无 parent 的独立 `BrowserWindow`，使用单独 HTML 入口和最小权限 preload；Main 只向该窗口返回经过协议、类型和长度校验的当前图片文档，不向其暴露完整 `window.electron` 能力面。
+
+右侧嵌入式终端由 Main 使用 PTY 启动，Windows 默认运行 PowerShell（优先 PowerShell 7，回退系统 Windows PowerShell），Renderer 只持有随机终端 id 并渲染字符流。创建请求绑定发起请求的 WebContents 和经过验证的工作目录；输入、resize、close 只能操作同一 owner 的终端。关闭标签或销毁 owner 时先请求 shell 正常退出，超时后再强制终止对应进程，避免后台遗留 shell；开发模式的 React effect 检查复用同一 PTY，不能误杀刚创建的终端。
 
 ## 10. 输入验证与返回契约
 
