@@ -409,6 +409,12 @@
   scrollbar-gutter: stable;
 }
 
+.file-preview-preview-scroll:not(.is-preformatted) {
+  /* Let long Markdown size the document card instead of overflowing a card
+   * stretched to the preview viewport's height. */
+  align-items: flex-start;
+}
+
 .file-preview-preview-scroll.is-preformatted {
   display: flex;
   min-height: 0;
