@@ -1,5 +1,15 @@
 # 安全模型
 
+Extension 的 outbound-header 能力只能通过根目录 `outbound-header-policy.json` 声明。Main 对文件
+位置、大小、schema、HTTPS target、loopback、Header 名称和 `user-info` 引用做 fail-closed
+校验；安装前检查用于尽早拒绝无效包，安装后以 canonical installed path 的严格 readback 为
+运行时权威。声明只保存在 Extension 目录中，Header 值仍来自受管 user-info。Extension、Hook
+与 Gateway runtime 都不能写永久
+保留的手工 `outbound-header-proxy/config.json`。Proxy capability 不通过 Renderer/Extension API
+下发，但 Gateway 同进程内的 Node Extension 可以读取 Gateway 环境变量，因此 sidecar 是协作式
+配置声明，不是恶意插件的进程级网络沙箱。安装并启用 Extension 后规则自动生效，不另建审批
+token、授权记录或 SQLite 表；本地与 Marketplace 来源使用相同校验。
+
 本文按 `v2026.8.12` 的 Electron window、preload/IPC、权限 coordinator、文件/网络服务、plugin import、Gateway manager 和测试重写。它记录当前防线，也明确仍需关注的风险。
 
 ## 1. 资产与攻击面
@@ -28,6 +38,10 @@ flowchart LR
 ```
 
 Gateway 是受管组件但其 event/payload 仍需运行时验证；extension/Marketplace/MCP 更不能默认可信。
+
+Renderer 的通用 fetch IPC 不具备 outbound-header 注入能力。模型 discovery/test 通过显式 purpose
+进入 Main，且必须匹配允许的 method、endpoint、header 与 body；连接测试的固定消息和 token 上限
+由 Main 校验并重建，不能借此发送任意模型请求。标题生成和 MCP probe 走各自的 Main 内部入口。
 
 ## 3. Electron 防线
 

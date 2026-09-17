@@ -112,6 +112,7 @@ interface OpenClawEngineManagerEvents {
 
 export type OpenClawEngineManagerOptions = {
   beginNetworkGeneration?: () => void;
+  prepareNetworkGeneration?: () => Promise<void>;
   buildNetworkEnvironment?: (baseEnv: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
 };
 
@@ -312,6 +313,7 @@ export class OpenClawEngineManager extends EventEmitter {
     baseEnv: NodeJS.ProcessEnv,
   ) => NodeJS.ProcessEnv;
   private readonly beginNetworkGeneration: () => void;
+  private readonly prepareNetworkGeneration: () => Promise<void>;
 
   constructor(options: OpenClawEngineManagerOptions = {}) {
     super();
@@ -319,6 +321,7 @@ export class OpenClawEngineManager extends EventEmitter {
     this.buildNetworkEnvironment =
       options.buildNetworkEnvironment ?? (baseEnv => ({ ...baseEnv }));
     this.beginNetworkGeneration = options.beginNetworkGeneration ?? (() => undefined);
+    this.prepareNetworkGeneration = options.prepareNetworkGeneration ?? (async () => undefined);
 
     const userDataPath = app.getPath('userData');
     this.baseDir = path.join(userDataPath, 'openclaw');
@@ -970,6 +973,17 @@ export class OpenClawEngineManager extends EventEmitter {
       return this.getStatus();
     }
 
+    try {
+      await this.prepareNetworkGeneration();
+    } catch (error) {
+      this.setStatus({
+        phase: 'error',
+        version: runtime.version,
+        message: `OpenClaw network generation preparation failed: ${String(error)}`,
+        canRetry: true,
+      });
+      return this.getStatus();
+    }
     this.beginNetworkGeneration();
     const cliEnvironment = await this.buildCliEnvironment();
     try {

@@ -8,7 +8,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
-import type { ApiFetchOptions } from '@shared/network';
+import { type ApiFetchOptions, NetworkFetchPurpose } from '@shared/network';
 import { normalizeOpenClawProviderId, validateCustomProviderDisplayName } from '@shared/providers';
 import { parseProviderModelsResponse } from '@shared/providers/modelDiscovery';
 import React, { useEffect, useRef, useState } from 'react';
@@ -514,7 +514,12 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
       let lastError = '';
       try {
         const response = await fetchWithDiscoveryTimeout(
-          { url: buildNonLanguageModelModelsUrl(kind, baseUrl), method: 'GET', headers },
+          {
+            url: buildNonLanguageModelModelsUrl(kind, baseUrl),
+            method: 'GET',
+            headers,
+            purpose: NetworkFetchPurpose.NonLanguageModelDiscovery,
+          },
           modelDetectionRequestsRef,
         );
         if (generation !== modelDetectionGenerationRef.current) return;
@@ -531,7 +536,12 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
       if (discovered.length === 0) {
         try {
           const response = await fetchWithDiscoveryTimeout(
-            { url: buildNonLanguageModelOpenApiUrl(kind, baseUrl), method: 'GET', headers },
+            {
+              url: buildNonLanguageModelOpenApiUrl(kind, baseUrl),
+              method: 'GET',
+              headers,
+              purpose: NetworkFetchPurpose.NonLanguageModelDiscovery,
+            },
             modelDetectionRequestsRef,
           );
           if (generation !== modelDetectionGenerationRef.current) return;
@@ -614,7 +624,12 @@ const NonLanguageModelSettings: React.FC<NonLanguageModelSettingsProps> = ({
       for (const url of buildVoiceDiscoveryUrls(baseUrl)) {
         try {
           const response = await fetchWithDiscoveryTimeout(
-            { url, method: 'GET', headers },
+            {
+              url,
+              method: 'GET',
+              headers,
+              purpose: NetworkFetchPurpose.NonLanguageModelDiscovery,
+            },
             voiceDetectionRequestsRef,
           );
           if (

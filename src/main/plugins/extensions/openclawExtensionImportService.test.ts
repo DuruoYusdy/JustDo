@@ -52,7 +52,8 @@ describe('OpenClawExtensionImportService', () => {
   it('protects managed permission extensions from user mutation', async () => {
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
       getManagedPluginIds: () => ['automation-permission'],
       runCommand,
     });
@@ -105,6 +106,7 @@ describe('OpenClawExtensionImportService', () => {
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () =>
         ({
+          getStatus: () => ({ phase: 'ready' }),
           getStateDir: () => stateDir,
           getBaseDir: () => path.join(fixtureRoot, 'openclaw-home'),
           getConfigPath: () => path.join(stateDir, 'openclaw.json'),
@@ -140,6 +142,7 @@ describe('OpenClawExtensionImportService', () => {
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () =>
         ({
+          getStatus: () => ({ phase: 'ready' }),
           getStateDir: () => stateDir,
           getRuntimeRoot: () => runtimeRoot,
           getConfigPath: () => path.join(stateDir, 'openclaw.json'),
@@ -483,7 +486,8 @@ describe('OpenClawExtensionImportService', () => {
       })
       .mockResolvedValueOnce({ ok: true, restartRequired: false, warnings: ['Reviewed'] });
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
       requestGateway,
     });
 
@@ -504,6 +508,246 @@ describe('OpenClawExtensionImportService', () => {
       enabled: true,
       acknowledgeCapabilities: { reviewToken },
     });
+  });
+
+  it('enables a network sidecar without an outbound-header capability review', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'network-extension');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'network-extension', name: 'Network Extension' }),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { entries: { 'network-extension': { enabled: false } } } }),
+    );
+    const requestGateway = vi.fn(async () => {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { 'network-extension': { enabled: true } } } }),
+      );
+      return { ok: true, restartRequired: false };
+    });
+    const reconcile = vi
+      .fn()
+      .mockReturnValueOnce({
+        overwrite: false,
+        enabled: true,
+        groups: [],
+        digest: 'before-enable',
+      })
+      .mockReturnValue({
+        overwrite: false,
+        enabled: true,
+        groups: [],
+        digest: 'after-enable',
+      });
+    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase: 'ready' }),
+          getStateDir: () => stateDir,
+          getBaseDir: () => fixtureRoot,
+          getConfigPath: () => configPath,
+        }) as OpenClawEngineManager,
+      requestGateway,
+      restartGatewayAfterMutation,
+      outboundHeaderPolicy: {
+        inspectExtension: vi.fn(),
+        reconcile,
+      },
+    });
+
+    await expect(service.setEnabled('network-extension', true)).resolves.toEqual({
+      success: true,
+      warnings: undefined,
+    });
+    expect(requestGateway).toHaveBeenLastCalledWith('plugins.setEnabled', {
+      pluginId: 'network-extension',
+      enabled: true,
+    });
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-status-change');
+  });
+
+  it('converges policy and restores Gateway when an enable response is lost after commit', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'response-lost-extension');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'response-lost-extension' }),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { entries: { 'response-lost-extension': { enabled: false } } } }),
+    );
+    let phase = 'running';
+    const requestGateway = vi.fn(async () => {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { entries: { 'response-lost-extension': { enabled: true } } } }),
+      );
+      phase = 'ready';
+      throw Object.assign(new Error('Gateway response was lost'), { code: 'CLIENT_CLOSED' });
+    });
+    const reconcile = vi
+      .fn()
+      .mockReturnValueOnce({ overwrite: false, enabled: false, groups: [], digest: 'before' })
+      .mockReturnValue({ overwrite: false, enabled: true, groups: [], digest: 'after' });
+    const restartGatewayAfterMutation = vi.fn(async () => {
+      phase = 'running';
+      return { phase: 'running' };
+    });
+    const runCommand = vi.fn();
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase }),
+          getStateDir: () => stateDir,
+          getBaseDir: () => fixtureRoot,
+          getConfigPath: () => configPath,
+        }) as OpenClawEngineManager,
+      requestGateway,
+      runCommand,
+      restartGatewayAfterMutation,
+      outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+    });
+
+    await expect(service.setEnabled('response-lost-extension', true)).resolves.toEqual({
+      success: true,
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-status-change');
+    expect(phase).toBe('running');
+  });
+
+  it('removes a partially disabled extension policy even when cold uninstall fails', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'partially-disabled-extension');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'partially-disabled-extension' }),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugins: { entries: { 'partially-disabled-extension': { enabled: true } } },
+      }),
+    );
+    const requestGateway = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify({
+            plugins: { entries: { 'partially-disabled-extension': { enabled: false } } },
+          }),
+        );
+        throw Object.assign(new Error(`Failed to remove plugin directory ${installedDir}`), {
+          code: 'UNAVAILABLE',
+        });
+      })
+      .mockResolvedValueOnce({
+        plugins: [{ id: 'partially-disabled-extension', installed: true }],
+      });
+    const reconcile = vi
+      .fn()
+      .mockReturnValueOnce({ overwrite: false, enabled: true, groups: [], digest: 'before' })
+      .mockReturnValue({ overwrite: false, enabled: false, groups: [], digest: 'after' });
+    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase: 'running' }),
+          getStateDir: () => stateDir,
+          getBaseDir: () => fixtureRoot,
+          getConfigPath: () => configPath,
+          buildCliEnvironment: async () => ({
+            env: { OPENCLAW_STATE_DIR: stateDir },
+            runtimeRoot: fixtureRoot,
+            openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+          }),
+        }) as OpenClawEngineManager,
+      requestGateway,
+      runCommand: vi.fn().mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'locked' }),
+      restartGatewayAfterMutation,
+      outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+      directoryOperations: new ManagedDirectoryOperationCoordinator({
+        findLockingProcesses: vi.fn(async () => ({ available: true, processes: [] })),
+      }),
+    });
+
+    await expect(service.delete('partially-disabled-extension')).resolves.toMatchObject({
+      success: false,
+    });
+    expect(reconcile).toHaveBeenCalled();
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-delete');
+  });
+
+  it('still disables an extension when its installed network sidecar is invalid', async () => {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const installedDir = path.join(stateDir, 'extensions', 'invalid-network-extension');
+    const configPath = path.join(stateDir, 'openclaw.json');
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedDir, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'invalid-network-extension' }),
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        plugins: { entries: { 'invalid-network-extension': { enabled: true } } },
+      }),
+    );
+    const requestGateway = vi.fn(async (method: string) => {
+      expect(method).toBe('plugins.setEnabled');
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          plugins: { entries: { 'invalid-network-extension': { enabled: false } } },
+        }),
+      );
+      return { ok: true, restartRequired: false };
+    });
+    const reconcile = vi.fn(() => ({
+      overwrite: false,
+      enabled: false,
+      groups: [],
+      digest: 'disabled',
+    }));
+    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () =>
+        ({
+          getStatus: () => ({ phase: 'ready' }),
+          getStateDir: () => stateDir,
+          getBaseDir: () => fixtureRoot,
+          getConfigPath: () => configPath,
+        }) as OpenClawEngineManager,
+      requestGateway,
+      restartGatewayAfterMutation,
+      outboundHeaderPolicy: {
+        inspectExtension: () => {
+          throw new Error('Invalid network sidecar');
+        },
+        reconcile,
+      },
+    });
+
+    await expect(service.setEnabled('invalid-network-extension', false)).resolves.toEqual({
+      success: true,
+      warnings: undefined,
+    });
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
   });
 
   it('uses local inventory only when the Gateway transport is unavailable', async () => {
@@ -548,7 +792,8 @@ describe('OpenClawExtensionImportService', () => {
     );
     const runCommand = vi.fn();
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getOpenClawEngineManager: () =>
+        ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
       requestGateway,
       runCommand,
     });
@@ -792,7 +1037,7 @@ describe('OpenClawExtensionImportService', () => {
     );
   });
 
-  it('releases a Gateway-owned extension lock before starting the CLI transaction', async () => {
+  it('activates an imported network sidecar after a locked directory mutation', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const sourceDir = path.join(fixtureRoot, 'locked-extension');
     const stateDir = path.join(fixtureRoot, 'state');
@@ -801,6 +1046,20 @@ describe('OpenClawExtensionImportService', () => {
       path.join(sourceDir, 'openclaw.plugin.json'),
       JSON.stringify({ id: 'locked-extension' }),
     );
+    fs.writeFileSync(
+      path.join(sourceDir, 'outbound-header-policy.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        groups: [
+          {
+            baseUrlWhitelist: ['https://locked.example/v1/'],
+            headerNames: ['X-Locked-Token'],
+          },
+        ],
+      }),
+    );
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'openclaw.json'), JSON.stringify({ plugins: {} }));
     let phase = 'running';
     const stopGateway = vi.fn(async () => {
       phase = 'ready';
@@ -814,6 +1073,7 @@ describe('OpenClawExtensionImportService', () => {
       getStatus: vi.fn(() => ({ phase })),
       getStateDir: vi.fn(() => stateDir),
       getBaseDir: vi.fn(() => path.join(fixtureRoot, 'openclaw-home')),
+      getConfigPath: vi.fn(() => path.join(stateDir, 'openclaw.json')),
       buildCliEnvironment: vi.fn().mockResolvedValue({
         env: { OPENCLAW_STATE_DIR: stateDir },
         runtimeRoot: path.join(fixtureRoot, 'runtime'),
@@ -825,11 +1085,51 @@ describe('OpenClawExtensionImportService', () => {
     } as unknown as OpenClawEngineManager;
     const runCommand = vi.fn(async () => {
       expect(phase).toBe('ready');
+      const installedDir = path.join(stateDir, 'extensions', 'locked-extension');
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.copyFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        path.join(installedDir, 'openclaw.plugin.json'),
+      );
+      fs.copyFileSync(
+        path.join(sourceDir, 'outbound-header-policy.json'),
+        path.join(installedDir, 'outbound-header-policy.json'),
+      );
       return { exitCode: 0, stdout: '', stderr: '' };
     });
+    const restartGatewayAfterMutation = vi.fn().mockResolvedValue({ phase: 'running' });
+    const reconcile = vi
+      .fn()
+      .mockReturnValueOnce({
+        overwrite: false,
+        enabled: true,
+        groups: [],
+        digest: 'before-import',
+      })
+      .mockReturnValue({
+        overwrite: false,
+        enabled: true,
+        groups: [],
+        digest: 'after-import',
+      });
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () => manager,
       runCommand,
+      restartGatewayAfterMutation,
+      outboundHeaderPolicy: {
+        inspectExtension: () => ({
+          manifest: {
+            schemaVersion: 1,
+            groups: [
+              {
+                baseUrlWhitelist: ['https://locked.example/v1/'],
+                headerNames: ['X-Locked-Token'],
+              },
+            ],
+          },
+        }),
+        reconcile,
+      },
       directoryOperations: new ManagedDirectoryOperationCoordinator({
         runtime: {
           isRunning: () => phase === 'running' || phase === 'starting',
@@ -856,6 +1156,8 @@ describe('OpenClawExtensionImportService', () => {
     expect(stopGateway).toHaveBeenCalledOnce();
     expect(startGateway).toHaveBeenCalledOnce();
     expect(restartGateway).not.toHaveBeenCalled();
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-import');
   });
 
   it('reports an external owner before deleting any extension files', async () => {
@@ -1203,79 +1505,83 @@ describe('OpenClawExtensionImportService', () => {
     expect(service.listInstalled()[0].missingRequirements).toEqual([]);
   });
 
-  it.each([true, false])('updates declared extension configuration with native reload result %s', async (reloaded) => {
-    const stateDir = path.join(fixtureRoot, 'state');
-    const configPath = path.join(stateDir, 'openclaw.json');
-    const installedDir = path.join(stateDir, 'extensions', 'brave');
-    fs.mkdirSync(installedDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(installedDir, 'openclaw.plugin.json'),
-      JSON.stringify({
-        id: 'brave',
-        name: 'Brave',
-        setup: {
-          providers: [{ id: 'brave', envVars: ['JUSTDO_TEST_EDIT_EXTENSION_KEY'] }],
-        },
-        uiHints: {
-          'webSearch.apiKey': {
-            label: 'Brave Search API Key',
-            help: 'Key used for Brave Search.',
-            sensitive: true,
+  it.each([true, false])(
+    'updates declared extension configuration with native reload result %s',
+    async reloaded => {
+      const stateDir = path.join(fixtureRoot, 'state');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const installedDir = path.join(stateDir, 'extensions', 'brave');
+      fs.mkdirSync(installedDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(installedDir, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'brave',
+          name: 'Brave',
+          setup: {
+            providers: [{ id: 'brave', envVars: ['JUSTDO_TEST_EDIT_EXTENSION_KEY'] }],
           },
-          'constructor.prototype.polluted': { sensitive: true },
-        },
-      }),
-    );
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        gateway: { mode: 'local' },
-        plugins: { entries: { brave: { enabled: true } } },
-      }),
-    );
-    const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
-    const manager = {
-      getStateDir: vi.fn().mockReturnValue(stateDir),
-      getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
-      getConfigPath: vi.fn().mockReturnValue(configPath),
-      getGatewayConfigReloadGeneration: vi.fn(() => 7),
-      waitForGatewayConfigReload: vi.fn(async () => reloaded),
-      getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
-      restartGateway,
-    } as unknown as OpenClawEngineManager;
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => manager,
-      restartGatewayAfterMutation: () => restartGateway(),
-    });
+          uiHints: {
+            'webSearch.apiKey': {
+              label: 'Brave Search API Key',
+              help: 'Key used for Brave Search.',
+              sensitive: true,
+            },
+            'constructor.prototype.polluted': { sensitive: true },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          gateway: { mode: 'local' },
+          plugins: { entries: { brave: { enabled: true } } },
+        }),
+      );
+      const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+      const manager = {
+        getStateDir: vi.fn().mockReturnValue(stateDir),
+        getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
+        getConfigPath: vi.fn().mockReturnValue(configPath),
+        getGatewayConfigReloadGeneration: vi.fn(() => 7),
+        waitForGatewayConfigReload: vi.fn(async () => reloaded),
+        getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
+        restartGateway,
+      } as unknown as OpenClawEngineManager;
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        restartGatewayAfterMutation: () => restartGateway(),
+      });
 
-    await expect(
-      service.updateConfiguration('brave', {
-        'webSearch.apiKey': 'secret-key',
-        'unsupported.path': 'must-not-be-written',
-        'constructor.prototype.polluted': 'must-not-be-written',
-      }),
-    ).resolves.toEqual({ success: true });
+      await expect(
+        service.updateConfiguration('brave', {
+          'webSearch.apiKey': 'secret-key',
+          'unsupported.path': 'must-not-be-written',
+          'constructor.prototype.polluted': 'must-not-be-written',
+        }),
+      ).resolves.toEqual({ success: true });
 
-    const savedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(savedConfig.gateway).toEqual({ mode: 'local' });
-    expect(savedConfig.plugins.entries.brave).toEqual({
-      enabled: true,
-      config: { webSearch: { apiKey: 'secret-key' } },
-    });
-    expect(service.listInstalled()[0]).toMatchObject({
-      missingRequirements: [],
-      configurationFields: [
-        expect.objectContaining({ path: 'webSearch.apiKey', configured: true }),
-      ],
-    });
-    expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
-    expect(manager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
-    expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
-    await expect(service.updateConfiguration('brave', { 'webSearch.apiKey': 'secret-key' }))
-      .resolves.toEqual({ success: true });
-    expect(manager.waitForGatewayConfigReload).toHaveBeenCalledTimes(1);
-    expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
-  });
+      const savedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      expect(savedConfig.gateway).toEqual({ mode: 'local' });
+      expect(savedConfig.plugins.entries.brave).toEqual({
+        enabled: true,
+        config: { webSearch: { apiKey: 'secret-key' } },
+      });
+      expect(service.listInstalled()[0]).toMatchObject({
+        missingRequirements: [],
+        configurationFields: [
+          expect.objectContaining({ path: 'webSearch.apiKey', configured: true }),
+        ],
+      });
+      expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
+      expect(manager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
+      expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
+      await expect(
+        service.updateConfiguration('brave', { 'webSearch.apiKey': 'secret-key' }),
+      ).resolves.toEqual({ success: true });
+      expect(manager.waitForGatewayConfigReload).toHaveBeenCalledTimes(1);
+      expect(restartGateway).toHaveBeenCalledTimes(reloaded ? 0 : 1);
+    },
+  );
 
   it('uninstalls an extension and restarts a Gateway that was still starting', async () => {
     const stateDir = path.join(fixtureRoot, 'state');

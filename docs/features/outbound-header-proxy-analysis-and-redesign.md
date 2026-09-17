@@ -19,6 +19,8 @@ OpenClaw Gateway、其支持的 tool 子进程，以及显式 opt-in 的 OpenCla
 - 不匹配 URL 白名单的请求 Header 注入。
 
 Main 中少量确需相同 Header 的确定性调用（当前包括模型测试、会话标题生成与 MCP“测试”探测）应在调用点基于白名单显式注入，不得通过全局 `fetch` monkey patch。MCP 探测只为 probe transport 注入，普通 resource 读取不因此扩大策略范围；probe fetch 拒绝自动重定向，避免已注入 Header 被带到未重新匹配白名单的目标。
+Renderer 的通用 fetch IPC 默认不注入；模型 discovery/test 必须携带受限 purpose，Main 校验 HTTP
+method、允许的模型 endpoint、header 与 body，并重建固定的连接测试请求后才应用策略。
 
 ## 2. 安全不变量
 
@@ -33,34 +35,37 @@ Main 中少量确需相同 Header 的确定性调用（当前包括模型测试�
 
 ## 3. 当前组件
 
-| 组件                | 代码                                                            | 职责                                              |
-| ------------------- | --------------------------------------------------------------- | ------------------------------------------------- |
-| 配置解析            | `src/main/core/outboundHeaderPolicyConfig.ts`、`systemProxy.ts` | 白名单、Header 名、系统/自定义代理与 bypass       |
-| 本地代理            | `src/main/core/outboundHeaderProxy.ts`                          | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
-| OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                    | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
-| Embedding transport | `runtime-services` extension                                    | 让 guarded fetch 使用 eligible env proxy          |
-| Manual reindex      | runtime patch `009` + 原生 forced CLI rebuild intent            | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
-| Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                          | 先起代理、再 spawn Gateway；退出时反序停止        |
-| 用户值来源          | outbound header user-info 文件/cache                            | 只按允许的 headerNames 读取值                     |
+| 组件                | 代码                                                               | 职责                                              |
+| ------------------- | ------------------------------------------------------------------ | ------------------------------------------------- |
+| 配置解析            | `outboundHeaderPolicyConfig.ts` / `outboundHeaderPolicyService.ts` | 合并手工配置与已启用 Extension 声明               |
+| 本地代理            | `src/main/core/outboundHeaderProxy.ts`                             | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
+| OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                       | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
+| Embedding transport | `runtime-services` extension                                       | 让 guarded fetch 使用 eligible env proxy          |
+| Manual reindex      | runtime patch `009` + 原生 forced CLI rebuild intent               | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
+| Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                             | 先起代理、再 spawn Gateway；退出时反序停止        |
+| 用户值来源          | outbound header user-info 文件/cache                               | 只按允许的 headerNames 读取值                     |
 
 `OutboundHeaderProxy` 使用 `http-mitm-proxy`，并针对库的连接错误和内部行为做有限适配。依赖私有 hook 是维护风险，升级库时必须跑真实 TLS 集成测试。
 
 策略文件使用 `groups` 数组表达多组映射；每组的 `baseUrlWhitelist[]` 只对应本组的
 `headerNames[]`。请求只注入所有命中组的 Header；同一请求命中多组时按组顺序合并，并按
 HTTP Header 大小写不敏感语义去重，保留最先出现的名称。
-旧的顶层 `baseUrlWhitelist` / `headerNames` 格式不再接受，因为该文件本来就由启动流程按
-`overwrite` 规则覆写。
+旧的顶层 `baseUrlWhitelist` / `headerNames` 格式不再接受。`config.json` 是永久支持的手工策略
+入口；`overwrite` 仅作为废弃兼容字段解析，不再触发启动覆写。Extension 贡献来自各自根目录的
+`outbound-header-policy.json`，在内存中合并，绝不写回手工文件。
 
 ## 4. 启动与环境隔离
 
 ```mermaid
 sequenceDiagram
   participant M as Electron Main
+  participant D as SQLite/Extension inventory
   participant P as Local Proxy
   participant E as Gateway Env Builder
   participant G as OpenClaw Gateway
 
-  M->>P: start if policy active
+  M->>D: reconcile manual + enabled Extension policy
+  M->>P: start if effective policy active
   P->>P: create/load CA + random capability
   P-->>M: loopback URL + CA bundle
   M->>E: build from base env

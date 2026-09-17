@@ -120,6 +120,8 @@ Main 启动时延迟创建重型服务，主要对象关系如下：
 - `SessionPermissionModeCoordinator` 串行写入并验证原生 session mode/root，成功后更新本地投影。
 - `ManagedDirectoryOperationCoordinator` 在插件目录变更前识别/停止相关进程，完成后恢复。
 - `CronJobService`、result store/sync service 共享 Gateway adapter 与 SQLite。
+- `OutboundHeaderPolicyService` 合并永久手工配置与已启用且校验通过的 Extension sidecar；
+  canonical digest 只用于变化检测，不写入 SQLite。
 - `OutboundHeaderProxy` 向 Gateway generation 及显式 opt-in 的 OpenClaw one-shot CLI
   构造网络环境；Memory 搜索使用 Gateway 原生 `memory.search`，手动 index CLI 会复用该环境，
   但它不应成为 Renderer 的通用网络层。
@@ -138,9 +140,10 @@ sequenceDiagram
   participant W as Window
   E->>M: acquire single-instance lock
   M->>E: app.whenReady
+  M->>D: open DB, schema/migrations
+  M->>M: reconcile manual + Extension network policy
   M->>M: start outbound-header proxy
   M->>M: create default workspace/localfile protocol
-  M->>D: open DB, schema/migrations
   M->>D: reset stale session/run state
   M->>M: restore system proxy and built-in provider
   M->>C: sync OpenClaw config
@@ -156,8 +159,10 @@ sequenceDiagram
 
 1. 在 module initialization 阶段设置 userData 路径、依赖管理器环境、日志和系统 CA。
 2. IPC handler 可以提前注册，但所有 store getter 在数据库 ready 前会抛错，防止静默使用空状态。
-3. DB 打开后重置上次强退遗留的 running session；open run 的计时从本次启动重新计算，离线时间不计入。
-4. 先恢复代理，再刷新 built-in provider，否则模型发现可能使用错误网络路径。
+3. DB 打开后先用冷态 Extension inventory 和手工文件构造 effective outbound policy，再启动
+   Proxy；随后重置上次强退遗留的 running session。
+4. 先恢复代理，再刷新 built-in provider，否则模型发现可能使用错误网络路径。Gateway 每次
+   start/restart 都会先核对 policy digest，并在构造新进程环境前完成必要的 Proxy generation 切换。
 5. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
 6. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
 

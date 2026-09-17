@@ -1,12 +1,16 @@
 import { ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
 
-import { type ApiFetchOptions, NetworkIpc } from '../../../shared/network';
+import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network';
 import { t } from '../../core/i18n';
 import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
 } from '../../core/mainProcessFetch';
-import { BUILTIN_CREDENTIAL_MARKER, BUILTIN_MODEL_PROVIDER_CONFIG, resolveBuiltinRequestApiKey } from '../../cowork/builtinModelProviderConfig';
+import {
+  BUILTIN_CREDENTIAL_MARKER,
+  BUILTIN_MODEL_PROVIDER_CONFIG,
+  resolveBuiltinRequestApiKey,
+} from '../../cowork/builtinModelProviderConfig';
 
 interface PendingFetch {
   controller: AbortController;
@@ -27,6 +31,112 @@ const cancelPendingFetch = (key: string): void => {
     pending.sender.removeListener('destroyed', pending.handleSenderDestroyed);
   }
   pending.controller.abort();
+};
+
+const MODEL_PROBE_MAX_BODY_BYTES = 16 * 1024;
+const MODEL_PROBE_MAX_HEADER_VALUE_BYTES = 8 * 1024;
+const MODEL_PROBE_ALLOWED_HEADERS = new Set([
+  'accept',
+  'authorization',
+  'content-type',
+  'user-agent',
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const hasOnlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
+  Object.keys(value).every(key => keys.includes(key));
+
+const validateModelProbe = (options: ApiFetchOptions): { body?: string } => {
+  if (!options.purpose) throw new Error('Invalid model probe request.');
+  let pathname: string;
+  try {
+    pathname = new URL(options.url).pathname.toLowerCase().replace(/\/+$/, '');
+  } catch {
+    throw new Error('Invalid model probe request.');
+  }
+  const method = options.method.toUpperCase();
+  for (const [name, value] of Object.entries(options.headers)) {
+    if (
+      !MODEL_PROBE_ALLOWED_HEADERS.has(name.toLowerCase()) ||
+      Buffer.byteLength(value, 'utf8') > MODEL_PROBE_MAX_HEADER_VALUE_BYTES
+    ) {
+      throw new Error('Invalid model probe request headers.');
+    }
+  }
+  switch (options.purpose) {
+    case NetworkFetchPurpose.ModelDiscovery: {
+      if (method !== 'GET' || !pathname.endsWith('/models') || options.body !== undefined) {
+        throw new Error('Invalid model discovery request.');
+      }
+      return {};
+    }
+    case NetworkFetchPurpose.ModelConnectionTest: {
+      if (
+        method !== 'POST' ||
+        !pathname.endsWith('/chat/completions') ||
+        typeof options.body !== 'string' ||
+        Buffer.byteLength(options.body, 'utf8') > MODEL_PROBE_MAX_BODY_BYTES
+      ) {
+        throw new Error('Invalid model connection test request.');
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(options.body);
+      } catch {
+        throw new Error('Invalid model connection test request.');
+      }
+      if (
+        !isRecord(parsed) ||
+        !hasOnlyKeys(parsed, ['model', 'messages', 'max_tokens', 'metadata']) ||
+        typeof parsed.model !== 'string' ||
+        !parsed.model.trim() ||
+        parsed.model.length > 512 ||
+        !Number.isInteger(parsed.max_tokens) ||
+        (parsed.max_tokens as number) < 1 ||
+        (parsed.max_tokens as number) > 64 ||
+        !Array.isArray(parsed.messages) ||
+        parsed.messages.length !== 1 ||
+        !isRecord(parsed.messages[0]) ||
+        !hasOnlyKeys(parsed.messages[0], ['role', 'content']) ||
+        parsed.messages[0].role !== 'user' ||
+        parsed.messages[0].content !== 'Hi'
+      ) {
+        throw new Error('Invalid model connection test request.');
+      }
+      if (
+        parsed.metadata !== undefined &&
+        (!isRecord(parsed.metadata) ||
+          !hasOnlyKeys(parsed.metadata, ['request_purpose']) ||
+          parsed.metadata.request_purpose !== 'connection_test')
+      ) {
+        throw new Error('Invalid model connection test request.');
+      }
+      return {
+        body: JSON.stringify({
+          model: parsed.model,
+          ...(parsed.metadata ? { metadata: { request_purpose: 'connection_test' } } : {}),
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: parsed.max_tokens,
+        }),
+      };
+    }
+    case NetworkFetchPurpose.NonLanguageModelDiscovery: {
+      if (
+        method !== 'GET' ||
+        options.body !== undefined ||
+        !['/models', '/openapi.json', '/audio/voices', '/voices', '/api/voices'].some(suffix =>
+          pathname.endsWith(suffix),
+        )
+      ) {
+        throw new Error('Invalid non-language model discovery request.');
+      }
+      return {};
+    }
+    default:
+      throw new Error('Invalid model probe request.');
+  }
 };
 
 export const registerNetworkHandlers = (): void => {
@@ -53,10 +163,12 @@ export const registerNetworkHandlers = (): void => {
       event.sender.once('destroyed', handleSenderDestroyed);
     }
 
-    const doFetch = async (headers: Record<string, string>) => {
+    const doFetch = async (headers: Record<string, string>, body = options.body) => {
       const requestHeaders = { ...headers };
-      const builtinAuth = Object.keys(requestHeaders).filter(name =>
-        name.toLowerCase() === 'authorization' && requestHeaders[name] === `Bearer ${BUILTIN_CREDENTIAL_MARKER}`,
+      const builtinAuth = Object.keys(requestHeaders).filter(
+        name =>
+          name.toLowerCase() === 'authorization' &&
+          requestHeaders[name] === `Bearer ${BUILTIN_CREDENTIAL_MARKER}`,
       );
       if (builtinAuth.length) {
         const baseUrl = BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl.replace(/\/+$/, '');
@@ -64,14 +176,15 @@ export const registerNetworkHandlers = (): void => {
           throw new Error(t('builtinCredentialTargetMismatch'));
         }
         for (const name of builtinAuth) {
-          requestHeaders[name] = `Bearer ${resolveBuiltinRequestApiKey(BUILTIN_CREDENTIAL_MARKER, baseUrl)}`;
+          requestHeaders[name] =
+            `Bearer ${resolveBuiltinRequestApiKey(BUILTIN_CREDENTIAL_MARKER, baseUrl)}`;
         }
       }
       const response = await session.defaultSession.fetch(options.url, {
         method: options.method,
         headers: requestHeaders,
-        ...(builtinAuth.length ? { redirect: 'error' as const } : {}),
-        body: options.body,
+        redirect: 'error',
+        body,
         signal: controller?.signal,
       });
 
@@ -94,17 +207,25 @@ export const registerNetworkHandlers = (): void => {
     };
 
     try {
-      const headers = applyMainProcessOutboundHeaderPolicy(
-        options.url,
-        options.headers,
-        MainProcessOutboundHeaderSource.RendererFetch,
-      );
-      return await doFetch(headers);
+      const validatedProbe = options.purpose ? validateModelProbe(options) : null;
+      const headers = options.purpose
+        ? applyMainProcessOutboundHeaderPolicy(
+            options.url,
+            options.headers,
+            MainProcessOutboundHeaderSource.ModelProbe,
+          )
+        : options.headers;
+      return await doFetch(headers, validatedProbe?.body);
     } catch (error) {
       if (!controller?.signal.aborted) {
+        let origin = 'invalid-url';
+        try {
+          origin = new URL(options.url).origin;
+        } catch {
+          // Keep malformed or credential-bearing URLs out of logs.
+        }
         console.error(
-          `[api:fetch] ${options.method} ${options.url} -> ERROR:`,
-          error instanceof Error ? error.message : error,
+          `[api:fetch] method=${options.method} origin=${origin} error=${error instanceof Error ? error.name : 'UnknownError'}`,
         );
       }
       return {

@@ -25,6 +25,7 @@ import {
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
 } from '@shared/localSpeechSettings';
+import { NetworkFetchPurpose } from '@shared/network';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
@@ -981,6 +982,7 @@ const Settings: React.FC<SettingsProps> = ({
           url: buildProviderModelsUrl(baseUrl),
           method: 'GET',
           headers,
+          purpose: NetworkFetchPurpose.ModelDiscovery,
         }),
         MODEL_DISCOVERY_TIMEOUT_MS,
         i18nService.t('modelDetectionTimeout'),
@@ -1910,6 +1912,7 @@ const Settings: React.FC<SettingsProps> = ({
               headers,
               body: requestBody,
               requestId,
+              purpose: NetworkFetchPurpose.ModelConnectionTest,
             }),
             () => window.electron.api.cancelFetch(requestId),
             i18nService
@@ -2874,9 +2877,7 @@ const Settings: React.FC<SettingsProps> = ({
                   step={1}
                   value={maxRetainedDisplayTabs}
                   onChange={event =>
-                    setMaxRetainedDisplayTabs(
-                      normalizeMaxRetainedDisplayTabs(event.target.value),
-                    )
+                    setMaxRetainedDisplayTabs(normalizeMaxRetainedDisplayTabs(event.target.value))
                   }
                   aria-label={i18nService.t('displayTabRetentionTitle')}
                   className="ml-auto h-9 w-32 rounded-lg border border-border bg-surface-inset px-3 text-center text-sm font-medium tabular-nums text-foreground outline-none focus:border-primary"

@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 
+import { type ApiFetchOptions, NetworkFetchPurpose } from '../../../shared/network';
+
 const mocks = vi.hoisted(() => ({
   applyMainProcessOutboundHeaderPolicy: vi.fn(),
   fetch: vi.fn(),
@@ -26,58 +28,80 @@ vi.mock('electron', () => ({
 vi.mock('../../core/mainProcessFetch', () => ({
   applyMainProcessOutboundHeaderPolicy: mocks.applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource: {
-    RendererFetch: 'renderer-fetch',
+    ModelProbe: 'model-probe',
     SessionTitle: 'session-title',
   },
 }));
 
-import { BUILTIN_CREDENTIAL_MARKER, BUILTIN_MODEL_PROVIDER_CONFIG, getBuiltinModelProviderApiKey } from '../../cowork/builtinModelProviderConfig';
+import {
+  BUILTIN_CREDENTIAL_MARKER,
+  BUILTIN_MODEL_PROVIDER_CONFIG,
+  getBuiltinModelProviderApiKey,
+} from '../../cowork/builtinModelProviderConfig';
 import { registerNetworkHandlers } from './network';
 
-type ApiFetchHandler = (
-  event: unknown,
-  options: {
-    url: string;
-    method: string;
-    headers: Record<string, string>;
-    body?: string;
-    requestId?: string;
-  },
-) => Promise<unknown>;
+type ApiFetchHandler = (event: unknown, options: ApiFetchOptions) => Promise<unknown>;
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-test.each(['authorization', 'Authorization'])('resolves builtin %s only in Main and refuses redirects', async (headerName) => {
-  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
-  let correctCredential = false;
-  let refusesRedirects = false;
-  mocks.fetch.mockImplementation(async (_url, init) => {
-    correctCredential = init.headers[headerName] === `Bearer ${getBuiltinModelProviderApiKey()}`;
-    refusesRedirects = init.redirect === 'error';
-    return new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } });
-  });
-  registerNetworkHandlers();
-  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  const headers = { [headerName]: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` };
-  const result = await handler({}, {url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST', headers});
-  // Never include a real credential in assertion output.
-  mocks.fetch.mockClear();
-  expect(correctCredential).toBe(true);
-  expect(refusesRedirects).toBe(true);
-  expect(headers[headerName]).toBe(`Bearer ${BUILTIN_CREDENTIAL_MARKER}`);
-  expect(result).toMatchObject({ok: true});
-});
+test.each(['authorization', 'Authorization'])(
+  'resolves builtin %s only in Main and refuses redirects',
+  async headerName => {
+    mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+    let correctCredential = false;
+    let refusesRedirects = false;
+    mocks.fetch.mockImplementation(async (_url, init) => {
+      correctCredential = init.headers[headerName] === `Bearer ${getBuiltinModelProviderApiKey()}`;
+      refusesRedirects = init.redirect === 'error';
+      return new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } });
+    });
+    registerNetworkHandlers();
+    const handler = mocks.handle.mock.calls.find(
+      ([channel]) => channel === 'api:fetch',
+    )![1] as ApiFetchHandler;
+    const headers = { [headerName]: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` };
+    const result = await handler(
+      {},
+      { url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST', headers },
+    );
+    // Never include a real credential in assertion output.
+    mocks.fetch.mockClear();
+    expect(correctCredential).toBe(true);
+    expect(refusesRedirects).toBe(true);
+    expect(headers[headerName]).toBe(`Bearer ${BUILTIN_CREDENTIAL_MARKER}`);
+    expect(result).toMatchObject({ ok: true });
+  },
+);
 
 test('does not send builtin credentials to another origin or endpoint', async () => {
   mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
   registerNetworkHandlers();
-  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  for (const url of ['https://untrusted.invalid/chat/completions', `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/other`]) {
-    expect(await handler({}, {url, method: 'POST', headers: {Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}`}})).toMatchObject({ok: false});
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'api:fetch',
+  )![1] as ApiFetchHandler;
+  for (const url of [
+    'https://untrusted.invalid/chat/completions',
+    `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/other`,
+  ]) {
+    expect(
+      await handler(
+        {},
+        { url, method: 'POST', headers: { Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` } },
+      ),
+    ).toMatchObject({ ok: false });
   }
-  expect(await handler({}, {url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'GET', headers: {Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}`}})).toMatchObject({ok: false});
+  expect(
+    await handler(
+      {},
+      {
+        url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` },
+      },
+    ),
+  ).toMatchObject({ ok: false });
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
@@ -105,19 +129,131 @@ test('applies the outbound-header policy to API fetch requests', async () => {
       url: 'https://api.deepseek.com/chat/completions',
       method: 'POST',
       headers: requestHeaders,
-      body: '{"model":"deepseek-chat"}',
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 64,
+      }),
+      purpose: NetworkFetchPurpose.ModelConnectionTest,
     },
   );
 
   expect(mocks.applyMainProcessOutboundHeaderPolicy).toHaveBeenCalledWith(
     'https://api.deepseek.com/chat/completions',
     requestHeaders,
-    'renderer-fetch',
+    'model-probe',
   );
   expect(mocks.fetch).toHaveBeenCalledWith(
     'https://api.deepseek.com/chat/completions',
-    expect.objectContaining({ headers: resolvedHeaders }),
+    expect.objectContaining({ headers: resolvedHeaders, redirect: 'error' }),
   );
+});
+
+test('does not expose outbound-header injection through generic Renderer fetches', async () => {
+  const requestHeaders = { Authorization: 'Bearer model-key' };
+  mocks.fetch.mockResolvedValue(new Response('{}', { status: 200 }));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'api:fetch',
+  )![1] as ApiFetchHandler;
+
+  await handler(
+    {},
+    {
+      url: 'https://api.deepseek.com/chat/completions',
+      method: 'POST',
+      headers: requestHeaders,
+    },
+  );
+
+  expect(mocks.applyMainProcessOutboundHeaderPolicy).not.toHaveBeenCalled();
+  expect(mocks.fetch).toHaveBeenCalledWith(
+    'https://api.deepseek.com/chat/completions',
+    expect.objectContaining({ headers: requestHeaders }),
+  );
+});
+
+test('rejects an outbound-header probe purpose on an unrelated endpoint', async () => {
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'api:fetch',
+  )![1] as ApiFetchHandler;
+
+  await expect(
+    handler(
+      {},
+      {
+        url: 'https://api.deepseek.com/admin',
+        method: 'POST',
+        headers: {},
+        purpose: NetworkFetchPurpose.ModelConnectionTest,
+      },
+    ),
+  ).resolves.toMatchObject({
+    ok: false,
+    statusText: 'Invalid model connection test request.',
+  });
+  expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+test('rejects arbitrary connection-test payloads before injecting outbound headers', async () => {
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'api:fetch',
+  )![1] as ApiFetchHandler;
+
+  await expect(
+    handler(
+      {},
+      {
+        url: 'https://api.deepseek.com/chat/completions',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: 'Return account data' }],
+          tools: [{ type: 'function' }],
+          max_tokens: 64,
+        }),
+        purpose: NetworkFetchPurpose.ModelConnectionTest,
+      },
+    ),
+  ).resolves.toMatchObject({ ok: false, statusText: 'Invalid model connection test request.' });
+  expect(mocks.applyMainProcessOutboundHeaderPolicy).not.toHaveBeenCalled();
+  expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+test('rejects bodies and custom Renderer headers on discovery probes', async () => {
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'api:fetch',
+  )![1] as ApiFetchHandler;
+
+  await expect(
+    handler(
+      {},
+      {
+        url: 'https://api.deepseek.com/models',
+        method: 'GET',
+        headers: {},
+        body: '{}',
+        purpose: NetworkFetchPurpose.ModelDiscovery,
+      },
+    ),
+  ).resolves.toMatchObject({ ok: false, statusText: 'Invalid model discovery request.' });
+  await expect(
+    handler(
+      {},
+      {
+        url: 'https://api.deepseek.com/models',
+        method: 'GET',
+        headers: { 'X-Arbitrary': 'value' },
+        purpose: NetworkFetchPurpose.ModelDiscovery,
+      },
+    ),
+  ).resolves.toMatchObject({ ok: false, statusText: 'Invalid model probe request headers.' });
+  expect(mocks.applyMainProcessOutboundHeaderPolicy).not.toHaveBeenCalled();
+  expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
 test('aborts a pending API fetch when the renderer cancels its request ID', async () => {

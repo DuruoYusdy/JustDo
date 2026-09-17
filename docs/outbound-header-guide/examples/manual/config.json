@@ -1,0 +1,10 @@
+{
+  "overwrite": false,
+  "enabled": true,
+  "groups": [
+    {
+      "baseUrlWhitelist": ["https://api.example.com/v1/"],
+      "headerNames": ["X-User-Account", "X-Access-Token"]
+    }
+  ]
+}

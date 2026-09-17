@@ -166,7 +166,7 @@ Gateway job/run 是执行权威；SQLite receipt 是应用内阅读状态。IPC 
 
 ### 8.2 网络
 
-Renderer 的 provider 检测使用 `api.fetch` 进入 Main，支持 request id 取消。Main 应限制 method/header/body/redirect/response size，并通过系统/custom/direct proxy 策略发起请求。Gateway 的出站 Header 注入通过独立 proxy environment 管理，不应复用通用 fetch IPC。
+Renderer 的 provider 检测使用 `api.fetch` 进入 Main，支持 request id 取消。Main 应限制 method/header/body/redirect/response size，并通过系统/custom/direct proxy 策略发起请求。通用 `api.fetch` 不注入 outbound Header；只有显式标记为模型发现、模型连通性测试或非语言模型发现的请求，且 method/path/header/body 通过 Main 白名单校验后，才复用同一套 Header matcher。模型连通性测试的 body 由 Main 按受限字段重建，不能携带任意 prompt 或 tools。Gateway 的出站 Header 注入仍由独立 proxy environment 管理。
 
 ## 9. 注册与生命周期
 

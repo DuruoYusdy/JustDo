@@ -16,8 +16,6 @@ import {
   mainProcessTitleFetch,
 } from './mainProcessFetch';
 import {
-  captureOutboundHeaderStartupEnabled,
-  DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   updateOutboundHeaderUserInfoCache,
@@ -94,6 +92,24 @@ test('sends Main requests through the configured transport without outbound head
     const { setFixedProxyUrl } = await import('./systemProxy');
     setFixedProxyUrl(null);
     await new Promise<void>(resolve => proxyServer.close(() => resolve()));
+  }
+});
+
+test('refuses redirects for title requests after applying outbound headers', async () => {
+  const fetchSpy = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValue(new Response('{}', { headers: { 'content-type': 'application/json' } }));
+  try {
+    await mainProcessTitleFetch('https://model.example/v1/title', {
+      method: 'POST',
+      redirect: 'follow',
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://model.example/v1/title',
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  } finally {
+    fetchSpy.mockRestore();
   }
 });
 
@@ -554,11 +570,25 @@ test.each([
 test('matches only configured origins and path prefixes', () => {
   const baseUrlWhitelist = ['https://example.com/api/'];
 
+  expect(shouldInjectOutboundHeaders('https://example.com/api', baseUrlWhitelist)).toBe(true);
   expect(shouldInjectOutboundHeaders('https://example.com/api/users', baseUrlWhitelist)).toBe(true);
+  expect(shouldInjectOutboundHeaders('https://example.com/apis', baseUrlWhitelist)).toBe(false);
   expect(shouldInjectOutboundHeaders('https://example.com/other', baseUrlWhitelist)).toBe(false);
   expect(shouldInjectOutboundHeaders('https://other.example/api/users', baseUrlWhitelist)).toBe(
     false,
   );
+});
+
+test('treats a base URL without a trailing slash as a path boundary', () => {
+  const baseUrlWhitelist = ['https://example.com/v1'];
+
+  expect(shouldInjectOutboundHeaders('https://example.com/v1', baseUrlWhitelist)).toBe(true);
+  expect(
+    shouldInjectOutboundHeaders('https://example.com/v1/chat/completions', baseUrlWhitelist),
+  ).toBe(true);
+  expect(
+    shouldInjectOutboundHeaders('https://example.com/v10/chat/completions', baseUrlWhitelist),
+  ).toBe(false);
 });
 
 test('applies outbound headers only when enabled and the URL is whitelisted', () => {
@@ -726,20 +756,21 @@ test('does not accept the old ungrouped policy format', () => {
   const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
   try {
-    expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
-      [HEADER_NAMES.USER_ACCOUNT]: '',
-      [HEADER_NAMES.COOKIE]: '',
+    expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({});
+    expect(getOutboundHeaderPolicyConfig()).toEqual({
+      overwrite: false,
+      enabled: false,
+      groups: [],
     });
-    expect(getOutboundHeaderPolicyConfig()).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
     expect(warningSpy).toHaveBeenCalledWith(
-      '[OutboundHeaderPolicy] Invalid outbound header policy config; using defaults',
+      '[OutboundHeaderPolicy] Invalid outbound header policy config; disabling policy',
     );
   } finally {
     warningSpy.mockRestore();
   }
 });
 
-test('rewrites policy config with defaults when overwrite is missing', () => {
+test('preserves manual policy config when overwrite is missing', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ [HEADER_NAMES.USER_ACCOUNT]: 'user-123' }));
   const configPath = writePolicyConfig({
     enabled: false,
@@ -753,15 +784,21 @@ test('rewrites policy config with defaults when overwrite is missing', () => {
 
   expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
     [HEADER_NAMES.USER_ACCOUNT]: 'user-123',
-    [HEADER_NAMES.COOKIE]: '',
   });
-  expect(getOutboundHeaderPolicyConfig()).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
-  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(
-    DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
-  );
+  expect(getOutboundHeaderPolicyConfig()).toEqual({
+    overwrite: false,
+    enabled: false,
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: [HEADER_NAMES.USER_ACCOUNT],
+      },
+    ],
+  });
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).not.toHaveProperty('overwrite');
 });
 
-test('rewrites policy config with defaults when overwrite is true', () => {
+test('treats overwrite as a deprecated field without rewriting manual policy', () => {
   const userInfoPath = writeUserInfo(JSON.stringify({ custom_header: 'custom-value' }));
   const configPath = writePolicyConfig({
     overwrite: true,
@@ -775,13 +812,19 @@ test('rewrites policy config with defaults when overwrite is true', () => {
   });
 
   expect(updateOutboundHeaderUserInfoCache(userInfoPath, undefined, configPath)).toEqual({
-    [HEADER_NAMES.USER_ACCOUNT]: '',
-    [HEADER_NAMES.COOKIE]: '',
+    custom_header: 'custom-value',
   });
-  expect(getOutboundHeaderPolicyConfig()).toEqual(DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG);
-  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(
-    DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
-  );
+  expect(getOutboundHeaderPolicyConfig()).toEqual({
+    overwrite: false,
+    enabled: false,
+    groups: [
+      {
+        baseUrlWhitelist: ['https://example.com/api/'],
+        headerNames: ['custom_header'],
+      },
+    ],
+  });
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toHaveProperty('overwrite', true);
 });
 
 test('adds only configured header values and replaces names case-insensitively', () => {
@@ -1243,9 +1286,8 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
   },
 );
 
-test('keeps the startup enabled state while refreshing the runtime policy', () => {
+test('refreshes the enabled state as part of the effective policy generation', () => {
   const startupEnabled = getOutboundHeaderPolicyConfig().enabled;
-  captureOutboundHeaderStartupEnabled();
   const userInfoPath = writeUserInfo(JSON.stringify({ refreshed_header: 'refreshed-value' }));
   const configPath = writePolicyConfig({
     overwrite: false,
@@ -1262,7 +1304,7 @@ test('keeps the startup enabled state while refreshing the runtime policy', () =
 
   expect(getOutboundHeaderPolicyConfig()).toEqual({
     overwrite: false,
-    enabled: startupEnabled,
+    enabled: !startupEnabled,
     groups: [
       {
         baseUrlWhitelist: ['https://refreshed.example/api/'],

@@ -48,6 +48,7 @@ import { mainProcessFetch, mainProcessTitleFetch } from './core/mainProcessFetch
 import { createMainWindow } from './core/mainWindowFactory';
 import { ManagedDirectoryOperationCoordinator } from './core/managedDirectoryOperations';
 import { resolveOutboundHeaderUserInfoPath } from './core/outboundHeaderPolicyConfig';
+import { OutboundHeaderPolicyService } from './core/outboundHeaderPolicyService';
 import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
 import { ensurePythonRuntimeReady } from './core/pythonRuntime';
 import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/systemProxy';
@@ -387,6 +388,9 @@ let customerRegistrationService: CustomerRegistrationService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
+let outboundHeaderPolicyService: OutboundHeaderPolicyService | null = null;
+let openClawExtensionImportService: OpenClawExtensionImportService | null = null;
+let activeOutboundHeaderPolicyDigest: string | null = null;
 let openClawStatusForwarderBound = false;
 let openClawGatewayPortProxyBypassBound = false;
 let preventSleepBlockerId: number | null = null;
@@ -408,10 +412,28 @@ const getStore = (): SqliteStore => {
   return store;
 };
 
+const getOutboundHeaderPolicyService = (): OutboundHeaderPolicyService => {
+  outboundHeaderPolicyService ??= new OutboundHeaderPolicyService({
+    listInstalledExtensions: () =>
+      openClawExtensionImportService?.listInstalled() ??
+      new OpenClawExtensionImportService({ getOpenClawEngineManager }).listInstalled(),
+  });
+  return outboundHeaderPolicyService;
+};
+
+const prepareOutboundHeaderNetworkGeneration = async (): Promise<void> => {
+  const snapshot = getOutboundHeaderPolicyService().reconcile();
+  if (activeOutboundHeaderPolicyDigest === snapshot.digest) return;
+  outboundHeaderProxy.stop();
+  await outboundHeaderProxy.start();
+  activeOutboundHeaderPolicyDigest = snapshot.digest;
+};
+
 const getOpenClawEngineManager = (): OpenClawEngineManager => {
   if (!openClawEngineManager) {
     openClawEngineManager = new OpenClawEngineManager({
       beginNetworkGeneration: () => outboundHeaderProxy.rotateGatewayCapability(),
+      prepareNetworkGeneration: prepareOutboundHeaderNetworkGeneration,
       buildNetworkEnvironment: baseEnv => outboundHeaderProxy.buildGatewayEnvironment(baseEnv),
     });
   }
@@ -438,6 +460,32 @@ const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator 
     });
   }
   return openClawDirectoryOperations;
+};
+
+const getOpenClawExtensionImportService = (): OpenClawExtensionImportService => {
+  openClawExtensionImportService ??= new OpenClawExtensionImportService({
+    getOpenClawEngineManager,
+    getManagedPluginIds: listManagedOpenClawPluginIds,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+    runConfigMutationExclusive: operation =>
+      getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+    restartGatewayAfterMutation: reason => {
+      const desiredDigest = getOutboundHeaderPolicyService().getSnapshot().digest;
+      return getOpenClawConfigSyncService().restartGatewayAfterExclusiveMutation(
+        activeOutboundHeaderPolicyDigest !== desiredDigest
+          ? 'extension-network-policy-change'
+          : reason,
+      );
+    },
+    directoryOperations: getOpenClawDirectoryOperations(),
+    outboundHeaderPolicy: {
+      inspectExtension: extensionRoot =>
+        getOutboundHeaderPolicyService().inspectExtension(extensionRoot),
+      reconcile: () => getOutboundHeaderPolicyService().reconcile(),
+    },
+  });
+  return openClawExtensionImportService;
 };
 
 const forwardOpenClawStatus = (status: OpenClawEngineStatus): void => {
@@ -992,17 +1040,7 @@ if (!gotTheLock) {
   });
   registerMarketplaceHandlers(pluginManager);
   registerExtensionHandlers({
-    extensionImportService: new OpenClawExtensionImportService({
-      getOpenClawEngineManager,
-      getManagedPluginIds: listManagedOpenClawPluginIds,
-      requestGateway: <T>(method: string, params?: unknown) =>
-        getCoworkEngineService().requestGateway<T>(method, params),
-      runConfigMutationExclusive: operation =>
-        getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
-      restartGatewayAfterMutation: reason =>
-        getOpenClawConfigSyncService().restartGatewayAfterExclusiveMutation(reason),
-      directoryOperations: getOpenClawDirectoryOperations(),
-    }),
+    extensionImportService: getOpenClawExtensionImportService(),
     installationService: pluginInstallationService,
     onMarketplacePluginDeleted: (kind, runtimeId) =>
       pluginManager.forgetMarketplaceInstallation(kind, runtimeId),
@@ -1331,7 +1369,10 @@ if (!gotTheLock) {
   const initApp = async () => {
     await app.whenReady();
 
+    store = await initStore();
+    const initialOutboundHeaderPolicy = getOutboundHeaderPolicyService().reconcile();
     await outboundHeaderProxy.start();
+    activeOutboundHeaderPolicyDigest = initialOutboundHeaderPolicy.digest;
 
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
       customerRegistrationService = new CustomerRegistrationService({
@@ -1357,7 +1398,6 @@ if (!gotTheLock) {
     // 注册 localfile:// 自定义协议，用于安全加载本地文件（图片等）
     registerLocalFileProtocol();
 
-    store = await initStore();
     // Open receipts belong to the previous app process. Checkpoint them as
     // interrupted so startup does not present stale work as running. Runtime
     // reconciliation reopens a checkpoint if Gateway still reports active work.

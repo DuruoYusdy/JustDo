@@ -22,7 +22,9 @@ import {
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
 } from '../../core/managedDirectoryOperations';
+import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
 
 const OPENCLAW_PLUGIN_MANIFEST = 'openclaw.plugin.json';
 const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
@@ -89,6 +91,10 @@ type OpenClawExtensionImportServiceDeps = {
     sourcePath: string;
     extensionId?: string;
   }) => Promise<{ extensionId: string; review: OpenClawPluginCapabilityReview }>;
+  outboundHeaderPolicy?: {
+    inspectExtension: (extensionRoot: string) => ExtensionNetworkPolicyInspection | null;
+    reconcile: () => EffectiveOutboundHeaderPolicySnapshot;
+  };
 };
 
 const CAPABILITY_REVIEW_OUTPUT_PREFIX = 'JUSTDO_PLUGIN_CAPABILITY_REVIEW=';
@@ -788,7 +794,9 @@ export class OpenClawExtensionImportService {
     sourcePath: string;
     extensionId?: string;
   }): Promise<{ extensionId: string; review: OpenClawPluginCapabilityReview }> {
-    if (this.deps.inspectCapabilityReview) return this.deps.inspectCapabilityReview(params);
+    if (this.deps.inspectCapabilityReview) {
+      return this.deps.inspectCapabilityReview(params);
+    }
 
     const manager = this.deps.getOpenClawEngineManager();
     const configPath = manager.getConfigPath();
@@ -908,8 +916,7 @@ export class OpenClawExtensionImportService {
                 typeof manifest.name === 'string' && manifest.name.trim()
                   ? manifest.name.trim()
                   : id,
-              description:
-                resolveExtensionDescription(manifest, packageJson),
+              description: resolveExtensionDescription(manifest, packageJson),
               version:
                 typeof manifest.version === 'string'
                   ? manifest.version
@@ -1130,6 +1137,24 @@ export class OpenClawExtensionImportService {
     const manager = this.deps.getOpenClawEngineManager();
     const initialPhase = manager.getStatus().phase;
     const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
+    const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
+    const convergePolicy = async (forceRestart = false): Promise<string | undefined> => {
+      const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
+      if (!forceRestart && (!wasRuntimeActive || policyDigestAfter === policyDigestBefore)) {
+        return undefined;
+      }
+      try {
+        const status = await this.restartGatewayAfterMutation('extension-delete');
+        return status.phase === 'running'
+          ? undefined
+          : status.message ||
+              'Extension state changed, but the OpenClaw Gateway failed to restart.';
+      } catch (error) {
+        return error instanceof Error
+          ? error.message
+          : 'Extension state changed, but the OpenClaw Gateway failed to restart.';
+      }
+    };
     // Capture the verified local path before the Gateway mutates anything. A failed
     // recursive removal can delete the manifest before reporting a Windows lock,
     // making a post-failure inventory scan unable to locate the retry target.
@@ -1144,15 +1169,9 @@ export class OpenClawExtensionImportService {
           restartRequired: true;
           warnings?: string[];
         }>('plugins.uninstall', { pluginId: extensionId });
-        if (result.restartRequired) {
-          const status = await this.restartGatewayAfterMutation('extension-delete');
-          if (status.phase !== 'running') {
-            return {
-              success: false,
-              error:
-                status.message || 'Plugin removed, but the OpenClaw Gateway failed to restart.',
-            };
-          }
+        const convergenceError = await convergePolicy(result.restartRequired);
+        if (convergenceError) {
+          return { success: false, error: convergenceError };
         }
         return { success: true, warnings: result.warnings };
       } catch (error) {
@@ -1177,14 +1196,8 @@ export class OpenClawExtensionImportService {
             try {
               // The uninstall committed and only its response was lost. Do not
               // repeat the destructive mutation; only converge the live runtime.
-              const status = await this.restartGatewayAfterMutation('extension-delete');
-              if (status.phase !== 'running') {
-                return {
-                  success: false,
-                  error:
-                    status.message || 'Plugin removed, but the OpenClaw Gateway failed to restart.',
-                };
-              }
+              const convergenceError = await convergePolicy(true);
+              if (convergenceError) return { success: false, error: convergenceError };
               return { success: true };
             } catch (restartError) {
               return {
@@ -1200,16 +1213,30 @@ export class OpenClawExtensionImportService {
           // A broken plugin can prevent the Gateway from starting. Continue to
           // the cold CLI path so the plugin page remains a recovery surface.
         } else {
+          const convergenceError = await convergePolicy();
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Failed to delete plugin',
+            error:
+              convergenceError ??
+              (error instanceof Error ? error.message : 'Failed to delete plugin'),
           };
         }
       }
     }
-    const installed =
-      installedBeforeGateway ??
-      this.listInstalled().find(extension => extension.id === extensionId);
+    const installedAfterGateway = this.listInstalled().find(
+      extension => extension.id === extensionId,
+    );
+    const gatewayMayNeedRestore =
+      wasRuntimeActive && !!gatewayMutationError && isGatewayUnavailableError(gatewayMutationError);
+    if (
+      gatewayMutationError &&
+      isGatewayUnavailableError(gatewayMutationError) &&
+      (!installedAfterGateway || !fs.existsSync(installedAfterGateway.installPath))
+    ) {
+      const convergenceError = await convergePolicy(wasRuntimeActive);
+      return convergenceError ? { success: false, error: convergenceError } : { success: true };
+    }
+    const installed = installedBeforeGateway ?? installedAfterGateway;
     if (!installed) {
       return {
         success: false,
@@ -1253,25 +1280,22 @@ export class OpenClawExtensionImportService {
       if (result.exitCode !== 0) {
         const error = command.error ?? formatCommandError(result);
         console.error('[OpenClawExtensionImportService] OpenClaw uninstaller failed:', error);
-        return { success: false, error };
+        const convergenceError = await convergePolicy(gatewayMayNeedRestore);
+        return { success: false, error: convergenceError ?? error };
       }
 
       if (this.listInstalled().some(extension => extension.id === extensionId)) {
+        const convergenceError = await convergePolicy(gatewayMayNeedRestore);
         return {
           success: false,
-          error: 'OpenClaw reported success, but the extension is still installed.',
+          error:
+            convergenceError ?? 'OpenClaw reported success, but the extension is still installed.',
         };
       }
 
-      if (wasRuntimeActive && !command.runtimeRestarted) {
-        const status = await this.restartGatewayAfterMutation('extension-delete');
-        if (status.phase !== 'running') {
-          return {
-            success: false,
-            error:
-              status.message || 'Extension removed, but the OpenClaw Gateway failed to restart.',
-          };
-        }
+      const convergenceError = await convergePolicy(wasRuntimeActive && !command.runtimeRestarted);
+      if (convergenceError) {
+        return { success: false, error: convergenceError };
       }
       if (allowlistError) {
         return {
@@ -1281,9 +1305,12 @@ export class OpenClawExtensionImportService {
       }
       return { success: true };
     } catch (error) {
+      const convergenceError = await convergePolicy(gatewayMayNeedRestore);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to delete extension',
+        error:
+          convergenceError ??
+          (error instanceof Error ? error.message : 'Failed to delete extension'),
       };
     }
   }
@@ -1306,6 +1333,28 @@ export class OpenClawExtensionImportService {
     if (!enabled && this.deps.getManagedPluginIds?.().includes(extensionId)) {
       return { success: false, error: 'Managed extensions cannot be disabled.' };
     }
+    const manager = this.deps.getOpenClawEngineManager();
+    const initialPhase = manager.getStatus().phase;
+    const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
+    const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
+    let gatewayMayNeedRestore = false;
+    const convergeColdState = async (forceRestart = false): Promise<string | undefined> => {
+      const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
+      if (!wasRuntimeActive || (!forceRestart && policyDigestAfter === policyDigestBefore)) {
+        return undefined;
+      }
+      try {
+        const status = await this.restartGatewayAfterMutation('extension-status-change');
+        return status.phase === 'running'
+          ? undefined
+          : status.message ||
+              'Extension status changed, but the OpenClaw Gateway failed to restart.';
+      } catch (error) {
+        return error instanceof Error
+          ? error.message
+          : 'Extension status changed, but the OpenClaw Gateway failed to restart.';
+      }
+    };
     if (this.deps.requestGateway) {
       try {
         const result = await this.deps.requestGateway<{
@@ -1317,7 +1366,8 @@ export class OpenClawExtensionImportService {
           enabled,
           ...(reviewToken ? { acknowledgeCapabilities: { reviewToken } } : {}),
         });
-        if (result.restartRequired) {
+        const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
+        if (result.restartRequired || policyDigestAfter !== policyDigestBefore) {
           const status = await this.restartGatewayAfterMutation('extension-status-change');
           if (status.phase !== 'running') {
             return {
@@ -1332,6 +1382,7 @@ export class OpenClawExtensionImportService {
       } catch (error) {
         if (isGatewayUnavailableError(error)) {
           // Fall through to the cold CLI path for offline recovery only.
+          gatewayMayNeedRestore = wasRuntimeActive;
         } else {
           const consent = enabled ? readCapabilityConsentDetails(error) : null;
           if (consent) {
@@ -1369,11 +1420,10 @@ export class OpenClawExtensionImportService {
     }
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
-    if (installed.enabled === enabled) return { success: true };
-
-    const manager = this.deps.getOpenClawEngineManager();
-    const initialPhase = manager.getStatus().phase;
-    const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
+    if (installed.enabled === enabled) {
+      const convergenceError = await convergeColdState(gatewayMayNeedRestore);
+      return convergenceError ? { success: false, error: convergenceError } : { success: true };
+    }
     try {
       const cli = await manager.buildCliEnvironment();
       if (enabled) {
@@ -1401,33 +1451,30 @@ export class OpenClawExtensionImportService {
       if (result.exitCode !== 0) {
         const error = formatCommandError(result);
         console.error('[OpenClawExtensionImportService] Plugin status update failed:', error);
-        return { success: false, error };
+        const convergenceError = await convergeColdState(gatewayMayNeedRestore);
+        return { success: false, error: convergenceError ?? error };
       }
 
       const updated = this.listInstalled().find(extension => extension.id === extensionId);
       if (!updated || updated.enabled !== enabled) {
+        const convergenceError = await convergeColdState(gatewayMayNeedRestore);
         return {
           success: false,
-          error: `OpenClaw did not ${enabled ? 'enable' : 'disable'} the extension. Check the global plugin policy, allowlist, and denylist.`,
+          error:
+            convergenceError ??
+            `OpenClaw did not ${enabled ? 'enable' : 'disable'} the extension. Check the global plugin policy, allowlist, and denylist.`,
         };
       }
 
-      if (wasRuntimeActive) {
-        const status = await this.restartGatewayAfterMutation('extension-status-change');
-        if (status.phase !== 'running') {
-          return {
-            success: false,
-            error:
-              status.message ||
-              'Extension status changed, but the OpenClaw Gateway failed to restart.',
-          };
-        }
-      }
-      return { success: true };
+      const convergenceError = await convergeColdState(wasRuntimeActive);
+      return convergenceError ? { success: false, error: convergenceError } : { success: true };
     } catch (error) {
+      const convergenceError = await convergeColdState(gatewayMayNeedRestore);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to update extension status',
+        error:
+          convergenceError ??
+          (error instanceof Error ? error.message : 'Failed to update extension status'),
       };
     }
   }
@@ -1493,10 +1540,26 @@ export class OpenClawExtensionImportService {
         };
       }
 
+      this.deps.outboundHeaderPolicy?.inspectExtension(pluginDirectory);
+
       reportProgress('preparing_runtime', 35);
       const manager = this.deps.getOpenClawEngineManager();
       const initialPhase = manager.getStatus().phase;
       const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
+      const networkPolicyDigestBeforeInstall = this.deps.outboundHeaderPolicy?.reconcile().digest;
+      const convergeNetworkPolicyFailClosed = async (): Promise<void> => {
+        if (!this.deps.outboundHeaderPolicy) return;
+        const snapshot = this.deps.outboundHeaderPolicy.reconcile();
+        if (wasRuntimeActive && snapshot.digest !== networkPolicyDigestBeforeInstall) {
+          const status = await this.restartGatewayAfterMutation('extension-network-policy-change');
+          if (status.phase !== 'running') {
+            throw new Error(
+              status.message ||
+                'Extension network policy changed, but the Gateway failed to restart.',
+            );
+          }
+        }
+      };
       const cli = await manager.buildCliEnvironment();
       if (this.deps.requestGateway && !options?.trustMarketplaceSource) {
         const inspected = await this.inspectCapabilityReview({
@@ -1596,6 +1659,7 @@ export class OpenClawExtensionImportService {
       });
       const result = command.result;
       if (result.exitCode !== 0) {
+        await convergeNetworkPolicyFailClosed();
         const failedStage = inferInstallerFailureStage(result, currentStage);
         console.error(
           '[OpenClawExtensionImportService] OpenClaw installer failed:',
@@ -1608,7 +1672,37 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      if (wasRuntimeActive && !command.runtimeRestarted) {
+      let networkPolicyChanged = false;
+      if (extensionId && this.deps.outboundHeaderPolicy) {
+        const installed = this.listInstalled().find(extension => extension.id === extensionId);
+        if (!installed?.installPath) {
+          await convergeNetworkPolicyFailClosed();
+          return {
+            success: false,
+            extensionId,
+            error: 'Extension installed, but its canonical install path could not be verified.',
+            failedStage: currentStage,
+          };
+        }
+        try {
+          this.deps.outboundHeaderPolicy.inspectExtension(installed.installPath);
+        } catch (error) {
+          await convergeNetworkPolicyFailClosed();
+          return {
+            success: false,
+            extensionId,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'The installed Extension network policy is invalid.',
+            failedStage: currentStage,
+          };
+        }
+        const snapshot = this.deps.outboundHeaderPolicy.reconcile();
+        networkPolicyChanged = snapshot.digest !== networkPolicyDigestBeforeInstall;
+      }
+
+      if (wasRuntimeActive && (!command.runtimeRestarted || networkPolicyChanged)) {
         reportProgress('restarting_gateway', 90);
         const status = await this.restartGatewayAfterMutation('extension-import');
         if (status.phase !== 'running') {

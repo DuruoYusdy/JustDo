@@ -1,5 +1,19 @@
 # Plugin 系统
 
+OpenClaw Extension 可以在根目录携带 `outbound-header-policy.json`，声明由 JustDo 托管的
+outbound-header 规则。该文件只能包含 HTTPS 目标、Header 名称和同名 `user-info` 引用，不能
+包含凭据字面值或可执行 Hook。已安装、已启用且 sidecar 校验通过的 Extension 自动贡献
+effective policy；本功能没有独立权限弹窗、审批 token 或 SQLite 状态。
+
+Main 将产品默认、永久保留的手工 `outbound-header-proxy/config.json` 和 Extension 贡献
+合并为统一策略；Extension 永远不能写手工配置文件。Gateway generation 通过本地 Proxy 获得
+策略，标题生成、模型测试和 MCP 测试继续通过 Main 的共享 matcher 显式 opt-in。手工文件的
+`enabled: false` 是保留的全局 kill switch，会同时停用 manual 与 Extension 贡献。
+
+安装前校验来源 sidecar，安装后从最终目录重新读取；最终安装目录是运行时权威。effective policy
+digest 只用于判断是否刷新运行时，不是来源完整性或授权凭据。本地导入与 Marketplace 安装遵守
+同一规则。
+
 本文按 OpenClaw `v2026.9.2` 的 Gateway plugin control plane、plugin installed index、plugin bundle contract、plugin IPC/UI、shared contracts、OpenClaw config sync 和内置 manifest 重写。JustDo 中“Plugin”是产品聚合概念，包含 Skill、MCP、Hook、Extension 与 Marketplace；它们没有统一的数据权威或安装方式。
 
 Plugin Hub 的统一信息架构、权限模型、推荐策略和同名 Skill 交互依据见

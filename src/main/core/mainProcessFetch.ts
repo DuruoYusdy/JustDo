@@ -24,7 +24,7 @@ const resolveConfiguredProxy = async (requestUrl: string): Promise<string | null
 };
 
 export const MainProcessOutboundHeaderSource = {
-  RendererFetch: 'renderer-fetch',
+  ModelProbe: 'model-probe',
   SessionTitle: 'session-title',
   McpProbe: 'mcp-probe',
 } as const;
@@ -151,7 +151,7 @@ const mainProcessStreamingFetch = async (
         if (init?.redirect === 'error' && status >= 300 && status < 400) {
           response.resume();
           settled = true;
-          reject(new Error(`Redirect response is not allowed for ${requestUrl}.`));
+          reject(new Error('Redirect response is not allowed for this request.'));
           return;
         }
 
@@ -220,7 +220,7 @@ export const mainProcessTitleFetch = async (
     init?.headers,
     MainProcessOutboundHeaderSource.SessionTitle,
   );
-  return mainProcessFetch(requestUrl, { ...init, headers });
+  return mainProcessFetch(requestUrl, { ...init, headers, redirect: 'error' });
 };
 
 /** MCP probe fetch with outbound-header policy support and streaming responses. */

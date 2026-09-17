@@ -12,11 +12,9 @@ import type { Duplex } from 'stream';
 import { buildGatewayNetworkEnvironment } from './gatewayNetworkEnvironment';
 import { prepareOutboundHeaderCertificateStore } from './outboundHeaderCertificateStore';
 import {
-  captureOutboundHeaderStartupEnabled,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   resolveOutboundHeaderUserInfoPath,
-  updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import {
   getFixedProxyUrl,
@@ -132,11 +130,16 @@ export const shouldInjectOutboundHeaders = (
     }
     return baseUrlWhitelist.some(baseUrl => {
       const base = new URL(baseUrl);
+      const basePath = base.pathname.endsWith('/') ? base.pathname.slice(0, -1) : base.pathname;
+      const pathMatches =
+        basePath === '' ||
+        request.pathname === basePath ||
+        request.pathname.startsWith(`${basePath}/`);
       return (
         request.protocol === base.protocol &&
         request.hostname === base.hostname &&
         request.port === base.port &&
-        request.pathname.startsWith(base.pathname)
+        pathMatches
       );
     });
   } catch {
@@ -665,10 +668,6 @@ export class OutboundHeaderProxy {
     this.resolveUpstreamProxy = resolveUpstreamProxy;
     this.userInfoPath = userInfoPath;
     this.caDirectory = caDirectory;
-    if (!config) {
-      updateOutboundHeaderUserInfoCache(this.userInfoPath);
-      captureOutboundHeaderStartupEnabled();
-    }
   }
 
   private getConfig(): OutboundHeaderProxyConfig {
@@ -688,12 +687,13 @@ export class OutboundHeaderProxy {
     policy: OutboundHeaderProxyConfig,
     requestUrl: string,
   ): Readonly<Record<string, string>> {
+    const headerNames = resolveOutboundHeaderNamesForRequest(policy, requestUrl);
     const values = this.configuredPolicy
       ? this.activeHeaderValues
-      : getOutboundHeaderUserInfo(this.userInfoPath, policy.headerNames);
-    const headerNames = new Set(resolveOutboundHeaderNamesForRequest(policy, requestUrl));
+      : getOutboundHeaderUserInfo(this.userInfoPath, headerNames);
+    const exactHeaderNames = new Set(headerNames);
     return Object.fromEntries(
-      Object.entries(values).filter(([headerName]) => headerNames.has(headerName)),
+      Object.entries(values).filter(([headerName]) => exactHeaderNames.has(headerName)),
     );
   }
 
@@ -715,9 +715,6 @@ export class OutboundHeaderProxy {
       return this.info;
     }
 
-    if (!this.configuredPolicy) {
-      updateOutboundHeaderUserInfoCache(this.userInfoPath);
-    }
     const config = excludeLoopbackWhitelistEntries(this.getConfig());
     if (!isOutboundHeaderProxyActive(config)) {
       return null;
@@ -748,7 +745,10 @@ export class OutboundHeaderProxy {
       headerNames: Object.freeze([...config.headerNames]),
     });
     this.activeHeaderValues = Object.freeze({
-      ...getOutboundHeaderUserInfo(this.userInfoPath, config.headerNames),
+      ...getOutboundHeaderUserInfo(
+        this.userInfoPath,
+        config.groups.flatMap(group => group.headerNames),
+      ),
     });
     this.capability = crypto.randomBytes(32).toString('base64url');
 
@@ -875,7 +875,7 @@ export class OutboundHeaderProxy {
         }
 
         if (!upstreamHeaders || Array.isArray(upstreamHeaders)) {
-          callback(new Error(`Upstream request headers are unavailable for ${requestUrl}`));
+          callback(new Error('Upstream request headers are unavailable.'));
           return;
         }
         const injectedHeaderCount = applyOutboundHeaders(
