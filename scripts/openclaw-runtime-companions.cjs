@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const RUNTIME_COMPANION_CHECKS = [
   {
     marker: 'subagent-registry.runtime',
@@ -53,6 +56,18 @@ const RUNTIME_COMPANION_CHECKS = [
     marker: 'service-child-windows-job-anchor.js',
     path: 'dist/process/supervisor/service-child-windows-job-anchor.js',
   },
+  {
+    marker: 'web-tree-sitter.wasm',
+    path: 'web-tree-sitter.wasm',
+  },
+];
+
+const RUNTIME_BUNDLED_ASSET_COPIES = [
+  {
+    marker: 'web-tree-sitter.wasm',
+    source: 'node_modules/web-tree-sitter/web-tree-sitter.wasm',
+    target: 'web-tree-sitter.wasm',
+  },
 ];
 
 const STALE_RUNTIME_WORKER_URL_PATTERNS = [
@@ -85,8 +100,31 @@ function getRuntimeCompanionPathsReferencedByBundle(bundle) {
   );
 }
 
+function syncRuntimeBundledAssets(runtimeRoot, bundle) {
+  const copied = [];
+
+  for (const asset of RUNTIME_BUNDLED_ASSET_COPIES) {
+    if (!bundle.includes(asset.marker)) continue;
+
+    const sourcePath = path.join(runtimeRoot, asset.source);
+    const targetPath = path.join(runtimeRoot, asset.target);
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(
+        `Bundled runtime asset source is missing: ${asset.source} (required by ${asset.marker})`,
+      );
+    }
+
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.copyFileSync(sourcePath, targetPath);
+    copied.push(asset.target);
+  }
+
+  return copied;
+}
+
 module.exports = {
   getRuntimeCompanionPathsReferencedByBundle,
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
+  syncRuntimeBundledAssets,
 };

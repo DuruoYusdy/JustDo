@@ -1,4 +1,7 @@
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -7,10 +10,12 @@ const {
   getRuntimeCompanionPathsReferencedByBundle,
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
+  syncRuntimeBundledAssets,
 } = require('../../../scripts/openclaw-runtime-companions.cjs') as {
   getRuntimeCompanionPathsReferencedByBundle: (bundle: string) => string[];
   hasStaleRuntimeWorkerImportMetaUrl: (bundle: string) => boolean;
   rewriteRuntimeWorkerImportMetaUrls: (source: string, replacement: string) => string;
+  syncRuntimeBundledAssets: (runtimeRoot: string, bundle: string) => string[];
 };
 
 describe('OpenClaw runtime companions', () => {
@@ -103,5 +108,35 @@ describe('OpenClaw runtime companions', () => {
       'dist/process/supervisor/service-child-group-anchor.js',
       'dist/process/supervisor/service-child-windows-job-anchor.js',
     ]);
+  });
+
+  it('copies web-tree-sitter WASM beside a bundle that resolves it via import.meta.url', () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-companions-'));
+    const sourcePath = path.join(
+      runtimeRoot,
+      'node_modules',
+      'web-tree-sitter',
+      'web-tree-sitter.wasm',
+    );
+
+    try {
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      fs.writeFileSync(sourcePath, Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+
+      const copied = syncRuntimeBundledAssets(
+        runtimeRoot,
+        `return new URL('web-tree-sitter.wasm', import.meta.url).href;`,
+      );
+
+      expect(copied).toEqual(['web-tree-sitter.wasm']);
+      expect(fs.readFileSync(path.join(runtimeRoot, 'web-tree-sitter.wasm'))).toEqual(
+        fs.readFileSync(sourcePath),
+      );
+      expect(
+        getRuntimeCompanionPathsReferencedByBundle('load web-tree-sitter.wasm'),
+      ).toContain('web-tree-sitter.wasm');
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 });

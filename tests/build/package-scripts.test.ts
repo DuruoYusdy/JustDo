@@ -160,6 +160,10 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   );
 
   expect(electronBuilderConfig.npmRebuild).toBe(false);
+  expect(packageJson.scripts.postinstall).toBe(
+    'node scripts/patch-http-mitm-proxy.cjs && npm run rebuild:electron-native',
+  );
+  expect(packageJson.scripts.postinstall).not.toContain('electron-builder install-app-deps');
   expect(packageJson.scripts['precompile:electron']).toBe('npm run rebuild:electron-native');
   expect(rebuildScript).toContain("'--platform'");
   expect(rebuildScript).toContain("'--arch'");

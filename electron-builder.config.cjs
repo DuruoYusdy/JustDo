@@ -19,8 +19,10 @@ const windowsUpdateConfig = readWindowsUpdateConfig();
 
 module.exports = {
   ...baseConfig,
-  // beforePack rebuilds native modules for the exact target. Disabling the
-  // automatic rebuild still lets electron-builder collect production modules.
+  // The project prepares Electron-specific better-sqlite3 binaries explicitly,
+  // while node-pty ships Node-API prebuilds. Disabling the automatic rebuild
+  // avoids requiring a local C++ toolchain and still lets electron-builder
+  // collect production modules.
   npmRebuild: false,
   appId,
   productName,

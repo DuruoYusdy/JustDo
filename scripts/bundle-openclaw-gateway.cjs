@@ -21,6 +21,7 @@ const {
   getRuntimeCompanionPathsReferencedByBundle,
   hasStaleRuntimeWorkerImportMetaUrl,
   rewriteRuntimeWorkerImportMetaUrls,
+  syncRuntimeBundledAssets,
 } = require('./openclaw-runtime-companions.cjs');
 const {
   INITIAL_BUNDLE_PENDING_FILENAME,
@@ -326,6 +327,11 @@ esbuild
     plugins: [createRuntimeImportMetaUrlPlugin(runtimeDir)],
   })
   .then(result => {
+    const bundle = fs.readFileSync(bundleOutPath, 'utf8');
+    const copiedAssets = syncRuntimeBundledAssets(runtimeDir, bundle);
+    if (copiedAssets.length > 0) {
+      console.log(`[bundle-openclaw-gateway] Copied bundle assets: ${copiedAssets.join(', ')}`);
+    }
     verifyBundledRuntimeCompanions(runtimeDir, bundleOutPath);
     patchOpenClawRuntime(runtimeDir, {
       label: 'bundle-openclaw-gateway',
