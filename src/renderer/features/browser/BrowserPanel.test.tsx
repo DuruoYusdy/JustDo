@@ -296,7 +296,9 @@ describe('BrowserPanel embedded webview', () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByLabelText('Browser address')),
     );
-    const tabs = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0] as BrowserPanelTab[];
+    const tabs = onTabsChange.mock.calls[
+      onTabsChange.mock.calls.length - 1
+    ]?.[0] as BrowserPanelTab[];
     act(() => panelHandle?.closeTab(tabs[tabs.length - 1]!.targetId));
   });
 
@@ -309,6 +311,17 @@ describe('BrowserPanel embedded webview', () => {
 
     expect(handleShortcut).toHaveBeenCalledOnce();
     window.removeEventListener('cowork:shortcut:browser', handleShortcut);
+  });
+
+  it('forwards the files shortcut from panel controls', () => {
+    const handleShortcut = vi.fn();
+    window.addEventListener('cowork:shortcut:files', handleShortcut);
+    render(<BrowserPanelHarness />);
+
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'p', ctrlKey: true });
+
+    expect(handleShortcut).toHaveBeenCalledOnce();
+    window.removeEventListener('cowork:shortcut:files', handleShortcut);
   });
 
   it('does not read guest zoom until the current webview emits dom-ready', async () => {

@@ -1,10 +1,12 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+const { ipcHandle } = vi.hoisted(() => ({ ipcHandle: vi.fn() }));
 
 vi.mock('electron', () => ({
-  ipcMain: { handle: vi.fn() },
+  ipcMain: { handle: ipcHandle },
   shell: { openPath: vi.fn(), showItemInFolder: vi.fn(), openExternal: vi.fn() },
 }));
 
@@ -12,13 +14,20 @@ import {
   authorizePreviewFileEdit,
   createPreviewFileVersion,
   isDownloadableImageUrl,
+  listWorkspaceDirectory,
   readPreviewFile,
+  registerShellHandlers,
   resolveShellOpenPath,
+  resolveSystemOpenWithCommand,
   revokePreviewFileEdit,
   writePreviewFile,
 } from './shell';
 
 const temporaryDirectories: string[] = [];
+
+beforeEach(() => {
+  ipcHandle.mockClear();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -42,6 +51,139 @@ test('resolves an existing relative attachment path against the session working 
   fs.writeFileSync(absolutePath, 'report');
 
   expect(resolveShellOpenPath(relativePath, workingDirectory)).toBe(absolutePath);
+});
+
+test('lists workspace directories with folders first and stable relative paths', async () => {
+  const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-files-'));
+  temporaryDirectories.push(workingDirectory);
+  fs.mkdirSync(path.join(workingDirectory, 'src'));
+  fs.writeFileSync(path.join(workingDirectory, 'README.md'), '# Readme', 'utf8');
+
+  await expect(listWorkspaceDirectory(workingDirectory)).resolves.toEqual({
+    success: true,
+    entries: [
+      {
+        filePath: path.join(workingDirectory, 'src'),
+        kind: 'directory',
+        name: 'src',
+        relativePath: 'src',
+      },
+      {
+        filePath: path.join(workingDirectory, 'README.md'),
+        kind: 'file',
+        name: 'README.md',
+        relativePath: 'README.md',
+      },
+    ],
+    truncated: false,
+  });
+});
+
+test('rejects workspace directory traversal outside the selected root', async () => {
+  const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-files-'));
+  temporaryDirectories.push(workingDirectory);
+
+  await expect(listWorkspaceDirectory(workingDirectory, '..')).resolves.toMatchObject({
+    success: false,
+    error: 'Workspace directory is outside the workspace root',
+  });
+});
+
+test('does not expose symbolic links in workspace listings', async () => {
+  const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-files-'));
+  temporaryDirectories.push(workingDirectory);
+  const targetPath = path.join(workingDirectory, 'target.txt');
+  const linkPath = path.join(workingDirectory, 'link.txt');
+  fs.writeFileSync(targetPath, 'target', 'utf8');
+  try {
+    fs.symlinkSync(targetPath, linkPath, 'file');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EPERM') return;
+    throw error;
+  }
+
+  const result = await listWorkspaceDirectory(workingDirectory);
+
+  expect(result.success).toBe(true);
+  if (result.success) expect(result.entries.map(entry => entry.name)).toEqual(['target.txt']);
+});
+
+test('accepts a symbolic-link workspace root while keeping child links hidden', async () => {
+  const parentDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-files-'));
+  temporaryDirectories.push(parentDirectory);
+  const targetDirectory = path.join(parentDirectory, 'target');
+  const rootLink = path.join(parentDirectory, 'workspace-link');
+  fs.mkdirSync(targetDirectory);
+  fs.writeFileSync(path.join(targetDirectory, 'README.md'), '# Readme', 'utf8');
+  try {
+    fs.symlinkSync(targetDirectory, rootLink, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EPERM') return;
+    throw error;
+  }
+
+  const result = await listWorkspaceDirectory(rootLink);
+
+  expect(result.success).toBe(true);
+  if (result.success) expect(result.entries.map(entry => entry.name)).toEqual(['README.md']);
+});
+
+test('caps large workspace listings and reports truncation', async () => {
+  const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-files-'));
+  temporaryDirectories.push(workingDirectory);
+  for (let index = 0; index < 2_001; index += 1) {
+    fs.writeFileSync(path.join(workingDirectory, `file-${index}.txt`), '', 'utf8');
+  }
+
+  const result = await listWorkspaceDirectory(workingDirectory);
+
+  expect(result.success).toBe(true);
+  if (result.success) {
+    expect(result.entries).toHaveLength(2_000);
+    expect(result.truncated).toBe(true);
+  }
+});
+
+test('binds workspace listing IPC to a main-process session root and window sender', async () => {
+  const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-files-'));
+  temporaryDirectories.push(workingDirectory);
+  fs.writeFileSync(path.join(workingDirectory, 'README.md'), '# Readme', 'utf8');
+  registerShellHandlers({
+    resolveWorkspaceRoot: sessionId => (sessionId === 'session-1' ? workingDirectory : null),
+  });
+  const registration = ipcHandle.mock.calls.find(
+    ([channel]) => channel === 'shell:listWorkspaceDirectory',
+  );
+  expect(registration).toBeDefined();
+  const handler = registration?.[1] as (
+    event: { sender: { getType: () => string } },
+    sessionId: string,
+    relativeDirectory?: string,
+  ) => Promise<unknown> | unknown;
+
+  await expect(
+    Promise.resolve(handler({ sender: { getType: () => 'webview' } }, 'session-1')),
+  ).resolves.toMatchObject({ success: false, error: 'Access denied' });
+  await expect(
+    Promise.resolve(handler({ sender: { getType: () => 'window' } }, 'unknown-session')),
+  ).resolves.toMatchObject({ success: false, error: 'Workspace session is unavailable' });
+  await expect(
+    Promise.resolve(handler({ sender: { getType: () => 'window' } }, 'session-1')),
+  ).resolves.toMatchObject({ success: true });
+});
+
+test('rejects system app chooser requests from non-window senders', async () => {
+  registerShellHandlers();
+  const registration = ipcHandle.mock.calls.find(([channel]) => channel === 'shell:openPathWith');
+  expect(registration).toBeDefined();
+  const handler = registration?.[1] as (
+    event: { sender: { getType: () => string } },
+    filePath: string,
+  ) => Promise<unknown> | unknown;
+
+  await expect(
+    Promise.resolve(handler({ sender: { getType: () => 'webview' } }, 'C:\\archive.zip')),
+  ).resolves.toEqual({ success: false, error: 'Access denied' });
 });
 
 test('keeps a missing relative attachment path unchanged', () => {
@@ -86,6 +228,28 @@ test('reads a previewable file with a stable content version', async () => {
       version: createPreviewFileVersion('# Notes\n'),
     }),
   );
+});
+
+test('returns a structured unsupported result for a non-previewable file', async () => {
+  const workingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-preview-'));
+  temporaryDirectories.push(workingDirectory);
+  const filePath = path.join(workingDirectory, 'archive.zip');
+  fs.writeFileSync(filePath, 'not-used', 'utf8');
+
+  await expect(readPreviewFile(filePath)).resolves.toEqual({
+    success: false,
+    unsupportedType: true,
+  });
+});
+
+test('builds the Windows system app chooser command without shell interpolation', () => {
+  expect(
+    resolveSystemOpenWithCommand('C:\\workspace with spaces\\archive.zip', 'win32', 'C:\\Windows'),
+  ).toEqual({
+    command: 'C:\\Windows\\System32\\rundll32.exe',
+    args: ['shell32.dll,OpenAs_RunDLL', 'C:\\workspace with spaces\\archive.zip'],
+  });
+  expect(resolveSystemOpenWithCommand('/tmp/archive.zip', 'linux')).toBeNull();
 });
 
 test('reads and writes an expanded previewable source file', async () => {

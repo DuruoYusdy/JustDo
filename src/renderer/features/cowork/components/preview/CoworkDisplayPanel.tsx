@@ -21,6 +21,8 @@ interface CoworkDisplayPanelProps {
   emptyState?: React.ReactNode;
   isOpen: boolean;
   onClose: () => void;
+  sidePanel?: React.ReactNode;
+  showEmptyState?: boolean;
   tabs: CoworkDisplayTab[];
 }
 
@@ -40,10 +42,13 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   emptyState,
   isOpen,
   onClose,
+  sidePanel,
   tabs,
+  showEmptyState = tabs.length === 0,
 }) => {
   const [width, setWidth] = useState(DISPLAY_PANEL_DEFAULT_WIDTH);
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(false);
+  const hasSidePanel = Boolean(sidePanel);
   const panelRef = useRef<HTMLElement>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const resizeCleanupRef = useRef<(() => void) | null>(null);
@@ -68,6 +73,11 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       window.removeEventListener('resize', resize);
     };
   }, [clampWidth]);
+
+  useEffect(() => {
+    if (!hasSidePanel) return;
+    setWidth(current => clampWidth(Math.max(current, 760)));
+  }, [clampWidth, hasSidePanel]);
 
   const handleTabKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, tabIndex: number) => {
@@ -261,10 +271,17 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
         </button>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        {children}
-        {tabs.length === 0 && emptyState && (
-          <div className="absolute inset-0 z-10">{emptyState}</div>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="relative min-w-0 flex-1 overflow-hidden">
+          {children}
+          {showEmptyState && emptyState && (
+            <div className="absolute inset-0 z-10">{emptyState}</div>
+          )}
+        </div>
+        {sidePanel && (
+          <div className="relative min-h-0 w-[42%] min-w-56 shrink-0 border-l border-border">
+            {sidePanel}
+          </div>
         )}
       </div>
     </aside>

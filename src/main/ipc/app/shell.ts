@@ -1,3 +1,4 @@
+import { spawn } from 'child_process';
 import crypto from 'crypto';
 import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, Menu, shell } from 'electron';
 import fs from 'fs';
@@ -12,6 +13,7 @@ import {
   type FilePreviewWriteResult,
   getPreviewableFileExtension,
   MAX_PREVIEW_FILE_BYTES,
+  type WorkspaceDirectoryListResult,
 } from '../../../shared/filePreview';
 import { t } from '../../core/i18n';
 
@@ -132,6 +134,8 @@ interface AuthorizePreviewFileEditOptions {
 }
 
 const previewEditGrants = new Map<string, PreviewEditGrant>();
+const MAX_WORKSPACE_DIRECTORY_ENTRIES = 2_000;
+const MAX_WORKSPACE_DIRECTORY_SCAN_ENTRIES = 10_000;
 
 const isFileIdentityEqual = (left: PreviewFileIdentity, right: PreviewFileIdentity): boolean =>
   left.dev === right.dev && left.ino === right.ino;
@@ -143,6 +147,142 @@ const toFileIdentity = (stats: fs.Stats): PreviewFileIdentity => ({
 
 const isMissingFileError = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
+interface SystemOpenWithCommand {
+  args: string[];
+  command: string;
+}
+
+export const resolveSystemOpenWithCommand = (
+  filePath: string,
+  platform = process.platform,
+  windowsDirectory = process.env.WINDIR,
+): SystemOpenWithCommand | null => {
+  if (platform !== 'win32') return null;
+  return {
+    command: path.join(windowsDirectory || 'C:\\Windows', 'System32', 'rundll32.exe'),
+    args: ['shell32.dll,OpenAs_RunDLL', filePath],
+  };
+};
+
+const openPathWithSystemChooser = async (
+  filePath: string,
+): Promise<{ success: boolean; error?: string; notFound?: boolean; unavailable?: boolean }> => {
+  try {
+    const normalizedPath = resolveShellOpenPath(filePath);
+    if (!fs.existsSync(normalizedPath)) return { success: false, notFound: true };
+    const launch = resolveSystemOpenWithCommand(normalizedPath);
+    if (!launch) return { success: false, unavailable: true };
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore' });
+      child.once('error', reject);
+      child.once('spawn', () => {
+        child.unref();
+        resolve();
+      });
+    });
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+};
+
+const isPathWithinRoot = (rootPath: string, candidatePath: string): boolean => {
+  const relativePath = path.relative(rootPath, candidatePath);
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
+  );
+};
+
+export const listWorkspaceDirectory = async (
+  rootPath: string,
+  relativeDirectory = '',
+): Promise<WorkspaceDirectoryListResult> => {
+  try {
+    if (typeof rootPath !== 'string' || !rootPath.trim()) {
+      return { success: false, error: 'Workspace root is required' };
+    }
+    if (typeof relativeDirectory !== 'string') {
+      return { success: false, error: 'Invalid workspace directory' };
+    }
+
+    const requestedRoot = path.resolve(normalizeWindowsShellPath(rootPath.trim()));
+    const canonicalRoot = await fs.promises.realpath(requestedRoot);
+    const rootStats = await fs.promises.stat(canonicalRoot);
+    if (!rootStats.isDirectory()) {
+      return { success: false, error: 'Workspace root must be a directory' };
+    }
+    const requestedDirectory = path.resolve(canonicalRoot, relativeDirectory);
+    if (!isPathWithinRoot(canonicalRoot, requestedDirectory)) {
+      return { success: false, error: 'Workspace directory is outside the workspace root' };
+    }
+
+    const directoryStats = await fs.promises.lstat(requestedDirectory);
+    if (directoryStats.isSymbolicLink() || !directoryStats.isDirectory()) {
+      return { success: false, error: 'Workspace path must be a directory' };
+    }
+    const canonicalDirectory = await fs.promises.realpath(requestedDirectory);
+    if (!isPathWithinRoot(canonicalRoot, canonicalDirectory)) {
+      return { success: false, error: 'Workspace directory is outside the workspace root' };
+    }
+
+    const visibleDirectoryEntries: fs.Dirent[] = [];
+    const directoryHandle = await fs.promises.opendir(canonicalDirectory);
+    let scannedEntries = 0;
+    let scanTruncated = false;
+    for await (const entry of directoryHandle) {
+      scannedEntries += 1;
+      if (scannedEntries > MAX_WORKSPACE_DIRECTORY_SCAN_ENTRIES) {
+        scanTruncated = true;
+        break;
+      }
+      if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) continue;
+      visibleDirectoryEntries.push(entry);
+      if (visibleDirectoryEntries.length > MAX_WORKSPACE_DIRECTORY_ENTRIES) {
+        scanTruncated = true;
+        break;
+      }
+    }
+
+    const currentCanonicalDirectory = await fs.promises.realpath(requestedDirectory);
+    const currentDirectoryStats = await fs.promises.stat(currentCanonicalDirectory);
+    if (
+      currentCanonicalDirectory !== canonicalDirectory ||
+      !isFileIdentityEqual(toFileIdentity(directoryStats), toFileIdentity(currentDirectoryStats))
+    ) {
+      return { success: false, error: 'Workspace directory changed while reading' };
+    }
+
+    const truncated = scanTruncated;
+    const entries = visibleDirectoryEntries
+      .sort((left, right) => {
+        if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+        return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+      })
+      .slice(0, MAX_WORKSPACE_DIRECTORY_ENTRIES)
+      .map(entry => {
+        const filePath = path.join(canonicalDirectory, entry.name);
+        return {
+          filePath,
+          kind: entry.isDirectory() ? ('directory' as const) : ('file' as const),
+          name: entry.name,
+          relativePath: path.relative(canonicalRoot, filePath),
+        };
+      });
+
+    return {
+      success: true,
+      entries,
+      truncated,
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) return { success: false, notFound: true };
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+};
 
 const pruneExpiredPreviewEditGrants = (): void => {
   const now = Date.now();
@@ -256,7 +396,7 @@ export const readPreviewFile = async (
   try {
     const normalizedPath = resolveShellOpenPath(filePath, workingDirectory);
     if (!getPreviewableFileExtension(normalizedPath)) {
-      return { success: false, error: 'Unsupported preview file type' };
+      return { success: false, unsupportedType: true };
     }
     const requestedStats = await fs.promises.lstat(normalizedPath);
     if (requestedStats.isSymbolicLink() || !requestedStats.isFile()) {
@@ -264,7 +404,7 @@ export const readPreviewFile = async (
     }
     const canonicalPath = await fs.promises.realpath(normalizedPath);
     if (!getPreviewableFileExtension(canonicalPath)) {
-      return { success: false, error: 'Unsupported preview file type' };
+      return { success: false, unsupportedType: true };
     }
     const inspected = await inspectPreviewFile(canonicalPath);
     if (!isFileIdentityEqual(toFileIdentity(requestedStats), inspected.identity)) {
@@ -457,7 +597,11 @@ const resolvePreviewFileConflict = async (
   return 'cancel';
 };
 
-export const registerShellHandlers = (): void => {
+interface RegisterShellHandlersOptions {
+  resolveWorkspaceRoot?: (sessionId: string) => string | null | undefined;
+}
+
+export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}): void => {
   ipcMain.handle('shell:showAttachmentContextMenu', event => {
     return new Promise<string | null>(resolve => {
       let selectedAction: string | null = null;
@@ -525,8 +669,32 @@ export const registerShellHandlers = (): void => {
     }
   });
 
+  ipcMain.handle(FilePreviewIpc.OpenWith, (event, filePath: string) => {
+    if (event.sender.getType() !== 'window') {
+      return { success: false, error: 'Access denied' };
+    }
+    return openPathWithSystemChooser(filePath);
+  });
+
   ipcMain.handle(FilePreviewIpc.Read, (event, filePath: string, workingDirectory?: string) =>
     readPreviewFile(filePath, workingDirectory, event.sender.id),
+  );
+
+  ipcMain.handle(
+    FilePreviewIpc.ListDirectory,
+    (event, sessionId: string, relativeDirectory?: string) => {
+      if (event.sender.getType() !== 'window') {
+        return { success: false, error: 'Access denied' } satisfies WorkspaceDirectoryListResult;
+      }
+      const rootPath = options.resolveWorkspaceRoot?.(sessionId);
+      if (!rootPath) {
+        return {
+          success: false,
+          error: 'Workspace session is unavailable',
+        } satisfies WorkspaceDirectoryListResult;
+      }
+      return listWorkspaceDirectory(rootPath, relativeDirectory);
+    },
   );
 
   ipcMain.handle(

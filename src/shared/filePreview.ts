@@ -13,9 +13,14 @@ export const PREVIEWABLE_FILE_EXTENSIONS = [
   '.conf',
   '.properties',
   '.js',
+  '.cjs',
+  '.mjs',
   '.jsx',
   '.ts',
+  '.cts',
+  '.mts',
   '.tsx',
+  '.jsonc',
   '.html',
   '.css',
   '.scss',
@@ -36,15 +41,59 @@ export const PREVIEWABLE_FILE_EXTENSIONS = [
 ] as const;
 
 export const MAX_PREVIEW_FILE_BYTES = 2 * 1024 * 1024;
+export const HOME_WORKSPACE_SESSION_ID = '__home__';
 
 export const FilePreviewIpc = {
   AuthorizeEdit: 'shell:authorizePreviewFileEdit',
+  ListDirectory: 'shell:listWorkspaceDirectory',
+  OpenWith: 'shell:openPathWith',
   Read: 'shell:readPreviewFile',
   RevokeEdit: 'shell:revokePreviewFileEdit',
   Write: 'shell:writePreviewFile',
 } as const;
 
+export interface WorkspaceDirectoryEntry {
+  filePath: string;
+  kind: 'directory' | 'file';
+  name: string;
+  relativePath: string;
+}
+
+export type WorkspaceDirectoryListResult =
+  | {
+      success: true;
+      entries: WorkspaceDirectoryEntry[];
+      truncated: boolean;
+    }
+  | {
+      success: false;
+      error?: string;
+      notFound?: boolean;
+    };
+
 export type PreviewableFileExtension = (typeof PREVIEWABLE_FILE_EXTENSIONS)[number];
+
+const PREVIEWABLE_EXTENSIONLESS_FILE_NAMES: Record<string, PreviewableFileExtension> = {
+  '.editorconfig': '.ini',
+  '.eslintrc': '.txt',
+  '.gitattributes': '.txt',
+  '.git-blame-ignore-revs': '.txt',
+  '.gitignore': '.txt',
+  '.gitmodules': '.ini',
+  '.npmignore': '.txt',
+  '.npmrc': '.ini',
+  '.nvmrc': '.txt',
+  '.prettierignore': '.txt',
+  '.prettierrc': '.txt',
+  '.stylelintrc': '.txt',
+  authors: '.txt',
+  changelog: '.txt',
+  dockerfile: '.txt',
+  license: '.txt',
+  makefile: '.txt',
+  notice: '.txt',
+  procfile: '.txt',
+};
 
 export type FilePreviewReadResult =
   | {
@@ -59,6 +108,7 @@ export type FilePreviewReadResult =
       error?: string;
       notFound?: boolean;
       tooLarge?: boolean;
+      unsupportedType?: boolean;
     };
 
 export interface FilePreviewWriteRequest {
@@ -100,5 +150,9 @@ export type FilePreviewWriteResult =
 
 export function getPreviewableFileExtension(filePath: string): PreviewableFileExtension | null {
   const normalizedPath = filePath.toLowerCase();
-  return PREVIEWABLE_FILE_EXTENSIONS.find(extension => normalizedPath.endsWith(extension)) ?? null;
+  const fileName = normalizedPath.split(/[\\/]/).pop() ?? normalizedPath;
+  const extension = PREVIEWABLE_FILE_EXTENSIONS.find(candidate => fileName.endsWith(candidate));
+  if (extension) return extension;
+  if (fileName === '.env' || fileName.startsWith('.env.')) return '.txt';
+  return PREVIEWABLE_EXTENSIONLESS_FILE_NAMES[fileName] ?? null;
 }

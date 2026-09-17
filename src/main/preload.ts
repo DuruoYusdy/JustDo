@@ -755,6 +755,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('shell:showImageContextMenu', imageUrl),
     openPath: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:openPath', filePath, workingDirectory),
+    openPathWith: (filePath: string) => ipcRenderer.invoke(FilePreviewIpc.OpenWith, filePath),
+    listWorkspaceDirectory: (sessionId: string, relativeDirectory?: string) =>
+      ipcRenderer.invoke(FilePreviewIpc.ListDirectory, sessionId, relativeDirectory),
     readPreviewFile: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke(FilePreviewIpc.Read, filePath, workingDirectory),
     authorizePreviewFileEdit: (

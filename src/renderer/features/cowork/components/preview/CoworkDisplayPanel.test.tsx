@@ -115,6 +115,31 @@ describe('CoworkDisplayPanel', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('496');
   });
 
+  it('docks the workspace tree beside preview content without adding a tab', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);
+
+    render(
+      <CoworkDisplayPanel
+        activeTabId=""
+        isOpen
+        onClose={vi.fn()}
+        tabs={[]}
+        emptyState={<div>Open a file</div>}
+        sidePanel={<div>Workspace tree</div>}
+      >
+        <div>Preview content</div>
+      </CoworkDisplayPanel>,
+    );
+
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.getByText('Open a file')).toBeTruthy();
+    expect(screen.getByText('Workspace tree')).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole('separator').getAttribute('aria-valuenow')).toBe('640'),
+    );
+  });
+
   it('clamps its width when the containing layout changes without a window resize', () => {
     i18nService.setLanguage('en', { persist: false });
     let availableWidth = 1_000;

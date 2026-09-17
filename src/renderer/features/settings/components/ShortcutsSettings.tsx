@@ -10,6 +10,7 @@ export type ShortcutSettingsValue = {
   terminal: string;
   browser: string;
   sideChat: string;
+  files: string;
 };
 
 export const shortcutLabelMap: Record<keyof ShortcutSettingsValue, string> = {
@@ -20,6 +21,7 @@ export const shortcutLabelMap: Record<keyof ShortcutSettingsValue, string> = {
   terminal: 'shortcutTerminal',
   browser: 'shortcutBrowser',
   sideChat: 'shortcutSideChat',
+  files: 'shortcutFiles',
 };
 
 export const findShortcutConflict = (
@@ -80,11 +82,7 @@ const ShortcutRecorder: React.FC<{
   label: string;
   value: string;
   onChange: (v: string) => void;
-}> = ({
-  label,
-  value,
-  onChange,
-}) => {
+}> = ({ label, value, onChange }) => {
   const [recording, setRecording] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -207,11 +205,7 @@ const SendShortcutSelect: React.FC<{ value: string; onChange: (v: string) => voi
                   setOpen(false);
                 }}
                 className={`flex items-center justify-between w-full px-3 py-1.5 text-sm transition-colors
-                  ${
-                    isActive
-                      ? 'text-primary font-medium'
-                      : 'text-foreground'
-                  } hover:bg-primary/10`}
+                  ${isActive ? 'text-primary font-medium' : 'text-foreground'} hover:bg-primary/10`}
               >
                 <span>{label}</span>
                 {isActive && <span className="text-primary">✓</span>}
@@ -229,10 +223,7 @@ type ShortcutsSettingsProps = {
   onShortcutChange: (key: keyof ShortcutSettingsValue, value: string) => void;
 };
 
-const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
-  shortcuts,
-  onShortcutChange,
-}) => (
+const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({ shortcuts, onShortcutChange }) => (
   <div className="space-y-5">
     <div>
       <label className="block text-sm font-medium text-secondary mb-3">
@@ -264,9 +255,7 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
           />
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-sm text-foreground">
-            {i18nService.t('sendMessageShortcut')}
-          </span>
+          <span className="text-sm text-foreground">{i18nService.t('sendMessageShortcut')}</span>
           <SendShortcutSelect
             value={shortcuts.sendMessage}
             onChange={v => onShortcutChange('sendMessage', v)}
@@ -294,6 +283,14 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
             label={i18nService.t('shortcutSideChat')}
             value={shortcuts.sideChat}
             onChange={value => onShortcutChange('sideChat', value)}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-foreground">{i18nService.t('shortcutFiles')}</span>
+          <ShortcutRecorder
+            label={i18nService.t('shortcutFiles')}
+            value={shortcuts.files}
+            onChange={value => onShortcutChange('files', value)}
           />
         </div>
       </div>

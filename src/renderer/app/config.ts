@@ -126,6 +126,7 @@ export interface AppConfig {
     terminal: string;
     browser: string;
     sideChat: string;
+    files: string;
     [key: string]: string | undefined;
   };
 }
@@ -201,6 +202,7 @@ export const defaultConfig: AppConfig = {
     terminal: 'Ctrl+`',
     browser: 'Ctrl+T',
     sideChat: 'Ctrl+Alt+S',
+    files: 'Ctrl+P',
   },
 };
 

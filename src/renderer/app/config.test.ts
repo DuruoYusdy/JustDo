@@ -17,11 +17,12 @@ test('defaultConfig: uses the isolated browser for first launch', () => {
   expect(defaultConfig.browserMode).toBe(BrowserMode.Isolated);
 });
 
-test('defaultConfig: matches the Codex terminal and browser shortcuts', () => {
+test('defaultConfig: matches the Codex panel shortcuts', () => {
   expect(defaultConfig.shortcuts).toMatchObject({
     terminal: 'Ctrl+`',
     browser: 'Ctrl+T',
     sideChat: 'Ctrl+Alt+S',
+    files: 'Ctrl+P',
   });
 });
 

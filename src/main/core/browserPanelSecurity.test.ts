@@ -69,20 +69,42 @@ describe('resolveBrowserGuestShortcut', () => {
         terminal: 'Ctrl+K',
         browser: 'Ctrl+B',
         'side-chat': 'Ctrl+Alt+S',
+        files: 'Ctrl+P',
       }),
     ).toBe('terminal');
     expect(
       resolveBrowserPanelShortcutAction(
         { ...shortcutInput, key: 'b' },
-        { terminal: 'Ctrl+K', browser: 'Ctrl+B', 'side-chat': 'Ctrl+Alt+S' },
+        {
+          terminal: 'Ctrl+K',
+          browser: 'Ctrl+B',
+          'side-chat': 'Ctrl+Alt+S',
+          files: 'Ctrl+P',
+        },
       ),
     ).toBe('browser');
     expect(
       resolveBrowserPanelShortcutAction(
         { ...shortcutInput, key: 's', altKey: true },
-        { terminal: 'Ctrl+K', browser: 'Ctrl+B', 'side-chat': 'Ctrl+Alt+S' },
+        {
+          terminal: 'Ctrl+K',
+          browser: 'Ctrl+B',
+          'side-chat': 'Ctrl+Alt+S',
+          files: 'Ctrl+P',
+        },
       ),
     ).toBe('side-chat');
+    expect(
+      resolveBrowserPanelShortcutAction(
+        { ...shortcutInput, key: 'p' },
+        {
+          terminal: 'Ctrl+K',
+          browser: 'Ctrl+B',
+          'side-chat': 'Ctrl+Alt+S',
+          files: 'Ctrl+P',
+        },
+      ),
+    ).toBe('files');
   });
 
   it('does not intercept page typing or modified application shortcuts', () => {

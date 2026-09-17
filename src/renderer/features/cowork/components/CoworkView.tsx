@@ -22,6 +22,7 @@ import {
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { SaveTextFileErrorCode } from '@shared/dialogIpc';
+import { HOME_WORKSPACE_SESSION_ID } from '@shared/filePreview';
 import { CoworkInteractionKind, OpenClawToolName } from '@shared/openclaw/extensions';
 import {
   type ProgressCard,
@@ -85,6 +86,8 @@ import {
 } from '@/features/cowork/components/preview/planPreviewState';
 import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
 import TerminalTabContextMenu from '@/features/cowork/components/preview/TerminalTabContextMenu';
+import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
+import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import {
   resolveBackgroundRuntimeDiscoverySessionIds,
@@ -316,9 +319,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   } | null>(null);
   const [preferredDisplayTabId, setPreferredDisplayTabId] = useState<string | null>(null);
   const [sideChatTabs, setSideChatTabs] = useState<CoworkSideChatTab[]>([]);
+  const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
+  const [unsupportedFilePreviews, setUnsupportedFilePreviews] = useState<string[]>([]);
   const [planPreviewState, dispatchPlanPreview] = useReducer(
     planPreviewReducer,
     initialPlanPreviewState,
@@ -361,6 +366,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const filePreviewDrawerRefs = useRef(new Map<string, FilePreviewDrawerHandle>());
   const filePreviewsRef = useRef(filePreviews);
   filePreviewsRef.current = filePreviews;
+  const unsupportedFilePreviewsRef = useRef(unsupportedFilePreviews);
+  unsupportedFilePreviewsRef.current = unsupportedFilePreviews;
   const filePreviewRequestIdRef = useRef(0);
   const sessionTranscriptMutationRef = useRef<SessionTranscriptMutation | null>(null);
   // Track if we're starting a session to prevent duplicate submissions
@@ -396,6 +403,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
       ...terminalTabs.map(tab => tab.id),
       ...filePreviews.map(preview => fileDisplayTabId(preview.filePath)),
+      ...unsupportedFilePreviews.map(fileDisplayTabId),
       ...(visiblePlanInteraction ? [PLAN_DISPLAY_TAB_ID] : []),
       ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
       ...sideChatTabs.map(tab => tab.id),
@@ -407,6 +415,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       selectedSubagent,
       sideChatTabs,
       terminalTabs,
+      unsupportedFilePreviews,
       visiblePlanInteraction,
     ],
   );
@@ -419,6 +428,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   );
   const activeFilePreview = filePreviews.find(
     preview => fileDisplayTabId(preview.filePath) === activeDisplayTabId,
+  );
+  const activeUnsupportedFilePath = unsupportedFilePreviews.find(
+    filePath => fileDisplayTabId(filePath) === activeDisplayTabId,
   );
   const activeTerminalTab = terminalTabs.find(tab => tab.id === activeDisplayTabId);
   const activeSideChatTab = sideChatTabs.find(tab => tab.id === activeDisplayTabId);
@@ -460,6 +472,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   useEffect(() => {
     if (!pendingPlanRequestId || !pendingPlanSessionId) return;
     dispatchPlanPreview({ type: 'pending-shown', sessionId: pendingPlanSessionId });
+    setIsWorkspaceFilesOpen(false);
     setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID);
     setIsDisplayPanelOpen(true);
   }, [pendingPlanRequestId, pendingPlanSessionId]);
@@ -915,11 +928,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const handleBrowserTargetChange = useCallback((targetId: string | null) => {
     setBrowserPanelTargetId(targetId);
-    if (targetId) setPreferredDisplayTabId(browserDisplayTabId(targetId));
+    if (targetId) {
+      setIsWorkspaceFilesOpen(false);
+      setPreferredDisplayTabId(browserDisplayTabId(targetId));
+    }
   }, []);
 
   const openSubtask = useCallback((subtask: Subtask) => {
     setSelectedSubagent(subtask);
+    setIsWorkspaceFilesOpen(false);
     setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
     setIsDisplayPanelOpen(true);
     setIsSubtaskListOpen(false);
@@ -932,6 +949,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const closeDisplayPanel = useCallback(() => {
     setIsDisplayPanelOpen(false);
+    setIsWorkspaceFilesOpen(false);
     requestAnimationFrame(() => displayPanelToggleRef.current?.focus());
   }, []);
 
@@ -1086,6 +1104,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setSelectedSubagent(null);
     setGoalRunProgress(null);
     setFilePreviews([]);
+    setUnsupportedFilePreviews([]);
+    setIsWorkspaceFilesOpen(false);
     setPreferredDisplayTabId(current =>
       current?.startsWith(BROWSER_DISPLAY_TAB_PREFIX) ||
       current?.startsWith(TERMINAL_DISPLAY_TAB_PREFIX)
@@ -1100,6 +1120,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     }
     filePreviewRequestIdRef.current += 1;
     setFilePreviews([]);
+    setUnsupportedFilePreviews([]);
     setPreferredDisplayTabId(current =>
       current?.startsWith(FILE_DISPLAY_TAB_PREFIX) ? null : current,
     );
@@ -1118,6 +1139,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [selectAdjacentDisplayTabAfterClose],
   );
 
+  const closeUnsupportedFilePreview = useCallback(
+    (filePath: string): void => {
+      const tabId = fileDisplayTabId(filePath);
+      setUnsupportedFilePreviews(current => current.filter(path => path !== filePath));
+      selectAdjacentDisplayTabAfterClose(tabId);
+    },
+    [selectAdjacentDisplayTabAfterClose],
+  );
+
   useImperativeHandle(ref, () => ({ requestFilePreviewTransition }), [
     requestFilePreviewTransition,
   ]);
@@ -1131,15 +1161,24 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   useEffect(() => {
     const handlePreviewFile = async (event: Event) => {
-      const detail = (event as CustomEvent<{ filePath?: string; workingDirectory?: string }>)
-        .detail;
+      const detail = (
+        event as CustomEvent<{
+          filePath?: string;
+          keepWorkspaceFilesOpen?: boolean;
+          workingDirectory?: string;
+        }>
+      ).detail;
       if (!detail?.filePath) return;
       const requestedTabId = fileDisplayTabId(detail.filePath);
       const existingPreview = filePreviewsRef.current.find(
         preview => fileDisplayTabId(preview.filePath) === requestedTabId,
       );
-      if (existingPreview) {
-        setPreferredDisplayTabId(fileDisplayTabId(existingPreview.filePath));
+      const existingUnsupportedPreview = unsupportedFilePreviewsRef.current.find(
+        filePath => fileDisplayTabId(filePath) === requestedTabId,
+      );
+      if (existingPreview || existingUnsupportedPreview) {
+        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+        setPreferredDisplayTabId(requestedTabId);
         setIsDisplayPanelOpen(true);
         return;
       }
@@ -1192,6 +1231,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           void window.electron.shell
             .revokePreviewFileEdit(result.editToken)
             .catch((): undefined => undefined);
+          if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
           setPreferredDisplayTabId(resolvedTabId);
           setIsDisplayPanelOpen(true);
           return;
@@ -1203,7 +1243,19 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           version: result.version,
         };
         setFilePreviews(current => [...current, preview]);
+        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(resolvedTabId);
+        setIsDisplayPanelOpen(true);
+        return;
+      }
+      if (result.unsupportedType) {
+        setUnsupportedFilePreviews(current =>
+          current.some(filePath => fileDisplayTabId(filePath) === requestedTabId)
+            ? current
+            : [...current, detail.filePath!],
+        );
+        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
+        setPreferredDisplayTabId(requestedTabId);
         setIsDisplayPanelOpen(true);
         return;
       }
@@ -1238,6 +1290,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         },
       };
       dispatchPlanPreview({ type: 'preview-opened', interaction });
+      setIsWorkspaceFilesOpen(false);
       setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID);
       setIsDisplayPanelOpen(true);
     };
@@ -1306,7 +1359,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentSessionFolderName = currentSessionFolderPath
     ? getCompactFolderName(currentSessionFolderPath, 32)
     : '';
-  const terminalWorkingDirectory = currentSessionFolderPath || config.workingDirectory.trim();
+  const homeWorkspaceFolderPath = config.workingDirectory.trim();
+  const workspaceFilesRootPath = currentSession
+    ? currentSessionFolderPath
+    : homeWorkspaceFolderPath;
+  const terminalWorkingDirectory = currentSessionFolderPath || homeWorkspaceFolderPath;
 
   const handleCreateBrowserTab = useCallback(() => {
     if (
@@ -1315,6 +1372,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     )
       return;
     pendingBrowserTabsRef.current.push({});
+    setIsWorkspaceFilesOpen(false);
     setIsDisplayPanelOpen(true);
     setHasBrowserPanelOpened(true);
     setIsBrowserPanelOpen(true);
@@ -1400,6 +1458,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       },
     ]);
     setPreferredDisplayTabId(id);
+    setIsWorkspaceFilesOpen(false);
     setIsDisplayPanelOpen(true);
   }, [terminalTabs.length, terminalWorkingDirectory]);
 
@@ -1543,19 +1602,38 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [],
   );
 
+  const handleOpenWorkspaceFiles = useCallback(() => {
+    if (!workspaceFilesRootPath || currentSessionId?.startsWith('temp-')) return;
+    setIsWorkspaceFilesOpen(current => !current);
+    setIsSubtaskListOpen(false);
+    setIsDisplayPanelOpen(true);
+  }, [currentSessionId, workspaceFilesRootPath]);
+
+  useEffect(() => {
+    if (!workspaceFilesRootPath) setIsWorkspaceFilesOpen(false);
+  }, [workspaceFilesRootPath]);
+
   useEffect(() => {
     const handleTerminalShortcut = () => handleCreateTerminalTab();
     const handleBrowserShortcut = () => handleCreateBrowserTab();
     const handleSideChatShortcut = () => handleCreateSideChat();
+    const handleFilesShortcut = () => handleOpenWorkspaceFiles();
     window.addEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
     window.addEventListener('cowork:shortcut:browser', handleBrowserShortcut);
     window.addEventListener('cowork:shortcut:side-chat', handleSideChatShortcut);
+    window.addEventListener('cowork:shortcut:files', handleFilesShortcut);
     return () => {
       window.removeEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
       window.removeEventListener('cowork:shortcut:browser', handleBrowserShortcut);
       window.removeEventListener('cowork:shortcut:side-chat', handleSideChatShortcut);
+      window.removeEventListener('cowork:shortcut:files', handleFilesShortcut);
     };
-  }, [handleCreateBrowserTab, handleCreateSideChat, handleCreateTerminalTab]);
+  }, [
+    handleCreateBrowserTab,
+    handleCreateSideChat,
+    handleCreateTerminalTab,
+    handleOpenWorkspaceFiles,
+  ]);
 
   const closeTerminalTab = useCallback(
     (id: string) => {
@@ -2000,7 +2078,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         id: tab.id,
         label: tab.label,
         icon: <CommandLineIcon className="h-4 w-4" />,
-        onSelect: () => setPreferredDisplayTabId(tab.id),
+        onSelect: () => {
+          setIsWorkspaceFilesOpen(false);
+          setPreferredDisplayTabId(tab.id);
+        },
         onClose: () => closeTerminalTab(tab.id),
         onContextMenu: ({ x, y }: { x: number; y: number }) =>
           setTerminalTabMenu({ cwd: tab.cwd, x, y }),
@@ -2012,13 +2093,23 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
         onClose: () => void closeFilePreview(preview.filePath),
       })),
+      ...unsupportedFilePreviews.map(filePath => ({
+        id: fileDisplayTabId(filePath),
+        label: filePath.split(/[\\/]/).pop() || filePath,
+        icon: <DocumentTextIcon className="h-4 w-4" />,
+        onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(filePath)),
+        onClose: () => closeUnsupportedFilePreview(filePath),
+      })),
       ...(visiblePlanInteraction
         ? [
             {
               id: PLAN_DISPLAY_TAB_ID,
               label: planPreviewLabel,
               icon: <ClipboardDocumentCheckIcon className="h-4 w-4" />,
-              onSelect: () => setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID),
+              onSelect: () => {
+                setIsWorkspaceFilesOpen(false);
+                setPreferredDisplayTabId(PLAN_DISPLAY_TAB_ID);
+              },
               ...(planPreviewReadOnly
                 ? {
                     onClose: () => {
@@ -2036,7 +2127,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               id: SUBAGENT_DISPLAY_TAB_ID,
               label: selectedSubagent.label,
               icon: <QueueListIcon className="h-4 w-4" />,
-              onSelect: () => setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID),
+              onSelect: () => {
+                setIsWorkspaceFilesOpen(false);
+                setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
+              },
               onClose: () => {
                 setSelectedSubagent(null);
                 selectAdjacentDisplayTabAfterClose(SUBAGENT_DISPLAY_TAB_ID);
@@ -2457,30 +2551,70 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               activeTabId={activeDisplayTabId ?? ''}
               isOpen={isDisplayPanelOpen}
               onClose={closeDisplayPanel}
+              showEmptyState={displayTabs.length === 0}
               tabs={displayTabs}
               emptyState={
-                <DisplayPanelLauncher
-                  browserDisabled={
-                    currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
-                  }
-                  onCreateBrowser={handleCreateBrowserTab}
-                  onCreateSideChat={handleCreateSideChat}
-                  onCreateTerminal={handleCreateTerminalTab}
-                  sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
-                  terminalDisabled={
-                    !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
-                  }
-                />
+                isWorkspaceFilesOpen ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 bg-background p-6 text-center">
+                    <FolderIcon className="h-7 w-7 text-muted" />
+                    <div className="text-sm font-semibold text-foreground">
+                      {i18nService.t('coworkWorkspaceFilesOpenTitle')}
+                    </div>
+                    <div className="text-xs text-secondary">
+                      {i18nService.t('coworkWorkspaceFilesOpenDescription')}
+                    </div>
+                  </div>
+                ) : (
+                  <DisplayPanelLauncher
+                    browserDisabled={
+                      currentSession.id.startsWith('temp-') ||
+                      browserTabs.length >= MAX_BROWSER_TABS
+                    }
+                    filesDisabled={
+                      !currentSessionFolderPath || currentSession.id.startsWith('temp-')
+                    }
+                    onCreateBrowser={handleCreateBrowserTab}
+                    onCreateSideChat={handleCreateSideChat}
+                    onCreateTerminal={handleCreateTerminalTab}
+                    onOpenFiles={handleOpenWorkspaceFiles}
+                    sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
+                    terminalDisabled={
+                      !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+                    }
+                  />
+                )
+              }
+              sidePanel={
+                isWorkspaceFilesOpen && currentSessionFolderPath ? (
+                  <WorkspaceFilesPanel
+                    key={`${currentSession.id}:${currentSessionFolderPath}`}
+                    activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
+                    sessionId={currentSession.id}
+                    onOpenFile={filePath => {
+                      window.dispatchEvent(
+                        new CustomEvent('cowork:preview-file', {
+                          detail: {
+                            filePath,
+                            keepWorkspaceFilesOpen: true,
+                            workingDirectory: currentSessionFolderPath,
+                          },
+                        }),
+                      );
+                    }}
+                  />
+                ) : undefined
               }
               actions={
                 <NewDisplayTabMenu
                   browserDisabled={
                     currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
                   }
+                  filesDisabled={!currentSessionFolderPath || currentSession.id.startsWith('temp-')}
                   onCreateBrowser={handleCreateBrowserTab}
                   onCreateSideChat={handleCreateSideChat}
                   onCreateTerminal={handleCreateTerminalTab}
                   sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
+                  onOpenFiles={handleOpenWorkspaceFiles}
                   terminalDisabled={
                     !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
                   }
@@ -2536,6 +2670,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   onClose={() => void closeFilePreview(preview.filePath)}
                   isObscured={activeFilePreview?.filePath !== preview.filePath}
                   embedded
+                />
+              ))}
+              {unsupportedFilePreviews.map(filePath => (
+                <UnsupportedFilePreview
+                  key={fileDisplayTabId(filePath)}
+                  filePath={filePath}
+                  onClose={() => closeUnsupportedFilePreview(filePath)}
+                  isObscured={activeUnsupportedFilePath !== filePath}
                 />
               ))}
               {visiblePlanInteraction && (
@@ -2662,6 +2804,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       onContextMenu: ({ x, y }: { x: number; y: number }) =>
         setTerminalTabMenu({ cwd: tab.cwd, x, y }),
     })),
+    ...filePreviews.map(preview => ({
+      id: fileDisplayTabId(preview.filePath),
+      label: preview.filePath.split(/[\\/]/).pop() || preview.filePath,
+      icon: <DocumentTextIcon className="h-4 w-4" />,
+      onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
+      onClose: () => void closeFilePreview(preview.filePath),
+    })),
+    ...unsupportedFilePreviews.map(filePath => ({
+      id: fileDisplayTabId(filePath),
+      label: filePath.split(/[\\/]/).pop() || filePath,
+      icon: <DocumentTextIcon className="h-4 w-4" />,
+      onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(filePath)),
+      onClose: () => closeUnsupportedFilePreview(filePath),
+    })),
   ];
 
   // Home view - no current session
@@ -2709,27 +2865,66 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             </div>
           </div>
         </div>
-        {(isDisplayPanelOpen || hasBrowserPanelOpened || terminalTabs.length > 0) && (
+        {(isDisplayPanelOpen ||
+          hasBrowserPanelOpened ||
+          terminalTabs.length > 0 ||
+          filePreviews.length > 0 ||
+          unsupportedFilePreviews.length > 0) && (
           <CoworkDisplayPanel
             activeTabId={activeDisplayTabId ?? ''}
             isOpen={isDisplayPanelOpen}
             onClose={closeDisplayPanel}
+            showEmptyState={homeDisplayTabs.length === 0}
             tabs={homeDisplayTabs}
             emptyState={
-              <DisplayPanelLauncher
-                browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
-                onCreateBrowser={handleCreateBrowserTab}
-                onCreateTerminal={handleCreateTerminalTab}
-                terminalDisabled={
-                  !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
-                }
-              />
+              isWorkspaceFilesOpen ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 bg-background p-6 text-center">
+                  <FolderIcon className="h-7 w-7 text-muted" />
+                  <div className="text-sm font-semibold text-foreground">
+                    {i18nService.t('coworkWorkspaceFilesOpenTitle')}
+                  </div>
+                  <div className="text-xs text-secondary">
+                    {i18nService.t('coworkWorkspaceFilesOpenDescription')}
+                  </div>
+                </div>
+              ) : (
+                <DisplayPanelLauncher
+                  browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
+                  onCreateBrowser={handleCreateBrowserTab}
+                  onCreateTerminal={handleCreateTerminalTab}
+                  onOpenFiles={homeWorkspaceFolderPath ? handleOpenWorkspaceFiles : undefined}
+                  terminalDisabled={
+                    !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
+                  }
+                />
+              )
+            }
+            sidePanel={
+              isWorkspaceFilesOpen && homeWorkspaceFolderPath ? (
+                <WorkspaceFilesPanel
+                  key={`${HOME_WORKSPACE_SESSION_ID}:${homeWorkspaceFolderPath}`}
+                  activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
+                  sessionId={HOME_WORKSPACE_SESSION_ID}
+                  onOpenFile={filePath => {
+                    window.dispatchEvent(
+                      new CustomEvent('cowork:preview-file', {
+                        detail: {
+                          filePath,
+                          keepWorkspaceFilesOpen: true,
+                          workingDirectory: homeWorkspaceFolderPath,
+                        },
+                      }),
+                    );
+                  }}
+                />
+              ) : undefined
             }
             actions={
               <NewDisplayTabMenu
                 browserDisabled={browserTabs.length >= MAX_BROWSER_TABS}
                 onCreateBrowser={handleCreateBrowserTab}
                 onCreateTerminal={handleCreateTerminalTab}
+                onOpenFiles={homeWorkspaceFolderPath ? handleOpenWorkspaceFiles : undefined}
                 terminalDisabled={
                   !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
                 }
@@ -2761,6 +2956,28 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 terminalId={tab.id}
                 cwd={tab.cwd}
                 isObscured={activeTerminalTab?.id !== tab.id}
+              />
+            ))}
+            {filePreviews.map(preview => (
+              <FilePreviewDrawer
+                key={fileDisplayTabId(preview.filePath)}
+                ref={drawer => {
+                  const tabId = fileDisplayTabId(preview.filePath);
+                  if (drawer) filePreviewDrawerRefs.current.set(tabId, drawer);
+                  else filePreviewDrawerRefs.current.delete(tabId);
+                }}
+                preview={preview}
+                onClose={() => void closeFilePreview(preview.filePath)}
+                isObscured={activeFilePreview?.filePath !== preview.filePath}
+                embedded
+              />
+            ))}
+            {unsupportedFilePreviews.map(filePath => (
+              <UnsupportedFilePreview
+                key={fileDisplayTabId(filePath)}
+                filePath={filePath}
+                onClose={() => closeUnsupportedFilePreview(filePath)}
+                isObscured={activeUnsupportedFilePath !== filePath}
               />
             ))}
           </CoworkDisplayPanel>

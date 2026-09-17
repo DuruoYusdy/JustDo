@@ -18,4 +18,21 @@ describe('getPreviewableFileExtension', () => {
       expect(getPreviewableFileExtension(filePath)).toBeNull();
     },
   );
+
+  test.each([
+    ['C:\\workspace\\.gitignore', '.txt'],
+    ['C:\\workspace\\.git-blame-ignore-revs', '.txt'],
+    ['C:\\workspace\\.prettierrc', '.txt'],
+    ['/workspace/LICENSE', '.txt'],
+    ['/workspace/NOTICE', '.txt'],
+    ['/workspace/AUTHORS', '.txt'],
+    ['/workspace/CHANGELOG', '.txt'],
+    ['/workspace/Procfile', '.txt'],
+    ['/workspace/.env.local', '.txt'],
+    ['/workspace/vite.config.mjs', '.mjs'],
+    ['/workspace/electron-builder.config.cjs', '.cjs'],
+    ['/workspace/tsconfig.jsonc', '.jsonc'],
+  ])('recognizes common workspace file %s', (filePath, expectedExtension) => {
+    expect(getPreviewableFileExtension(filePath)).toBe(expectedExtension);
+  });
 });

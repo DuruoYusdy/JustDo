@@ -1,6 +1,7 @@
 import {
   ChatBubbleLeftEllipsisIcon,
   CommandLineIcon,
+  FolderIcon,
   GlobeAltIcon,
   PlusIcon,
 } from '@heroicons/react/24/outline';
@@ -10,18 +11,22 @@ import { i18nService } from '@/services/i18n';
 
 interface NewDisplayTabMenuProps {
   browserDisabled?: boolean;
+  filesDisabled?: boolean;
   onCreateBrowser: () => void;
   onCreateSideChat?: () => void;
   onCreateTerminal: () => void;
+  onOpenFiles?: () => void;
   sideChatDisabled?: boolean;
   terminalDisabled?: boolean;
 }
 
 const NewDisplayTabMenu = ({
   browserDisabled = false,
+  filesDisabled = false,
   onCreateBrowser,
   onCreateSideChat,
   onCreateTerminal,
+  onOpenFiles,
   sideChatDisabled = false,
   terminalDisabled = false,
 }: NewDisplayTabMenuProps) => {
@@ -64,8 +69,8 @@ const NewDisplayTabMenu = ({
     };
   }, [closeMenu, isOpen]);
 
-  const select = (action: () => void) => {
-    closeMenu(true);
+  const select = (action: () => void, restoreFocus = true) => {
+    closeMenu(restoreFocus);
     action();
   };
 
@@ -133,9 +138,25 @@ const NewDisplayTabMenu = ({
               {i18nService.t('sideChatTitle')}
             </button>
           )}
+          {onOpenFiles && (
+            <button
+              ref={element => {
+                itemRefs.current[1] = element;
+              }}
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              disabled={filesDisabled}
+              onClick={() => select(onOpenFiles, false)}
+              className="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm text-foreground hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FolderIcon className="h-4 w-4 text-secondary" />
+              {i18nService.t('coworkWorkspaceFiles')}
+            </button>
+          )}
           <button
             ref={element => {
-              itemRefs.current[1] = element;
+              itemRefs.current[2] = element;
             }}
             type="button"
             role="menuitem"
@@ -149,7 +170,7 @@ const NewDisplayTabMenu = ({
           </button>
           <button
             ref={element => {
-              itemRefs.current[2] = element;
+              itemRefs.current[3] = element;
             }}
             type="button"
             role="menuitem"

@@ -584,6 +584,7 @@ const Settings: React.FC<SettingsProps> = ({
     terminal: defaultConfig.shortcuts!.terminal,
     browser: defaultConfig.shortcuts!.browser,
     sideChat: defaultConfig.shortcuts!.sideChat,
+    files: defaultConfig.shortcuts!.files,
   });
 
   // State for model editing

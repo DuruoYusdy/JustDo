@@ -90,6 +90,7 @@ type FilePreviewEditAuthorizationResult =
   import('../../shared/filePreview').FilePreviewEditAuthorizationResult;
 type FilePreviewWriteRequest = import('../../shared/filePreview').FilePreviewWriteRequest;
 type FilePreviewWriteResult = import('../../shared/filePreview').FilePreviewWriteResult;
+type WorkspaceDirectoryListResult = import('../../shared/filePreview').WorkspaceDirectoryListResult;
 type WorkboardCard = import('../../shared/openclaw/workboard').WorkboardCard;
 type WorkboardCardInput = import('../../shared/openclaw/workboard').WorkboardCardInput;
 type WorkboardCardPatch = import('../../shared/openclaw/workboard').WorkboardCardPatch;
@@ -1060,6 +1061,16 @@ interface IElectronAPI {
       filePath: string,
       workingDirectory?: string,
     ) => Promise<{ success: boolean; error?: string; notFound?: boolean }>;
+    openPathWith: (filePath: string) => Promise<{
+      success: boolean;
+      error?: string;
+      notFound?: boolean;
+      unavailable?: boolean;
+    }>;
+    listWorkspaceDirectory: (
+      sessionId: string,
+      relativeDirectory?: string,
+    ) => Promise<WorkspaceDirectoryListResult>;
     readPreviewFile: (
       filePath: string,
       workingDirectory?: string,

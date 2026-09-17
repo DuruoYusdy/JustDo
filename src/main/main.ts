@@ -18,6 +18,7 @@ import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../share
 import { BuiltinModelIpc } from '../shared/builtinModels';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { DeveloperConfig } from '../shared/developerConfig';
+import { HOME_WORKSPACE_SESSION_ID } from '../shared/filePreview';
 import { LocalSpeechModelIpc } from '../shared/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/localSpeechSettings';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
@@ -1165,10 +1166,14 @@ if (!gotTheLock) {
   registerLocalAsrHandlers();
   registerLocalSpeechModelHandlers({ getService: getLocalSpeechModelService });
 
-  registerShellHandlers();
+  registerShellHandlers({
+    resolveWorkspaceRoot: sessionId =>
+      sessionId === HOME_WORKSPACE_SESSION_ID
+        ? getCoworkStore().getConfig().workingDirectory
+        : getCoworkStore().getSession(sessionId)?.cwd,
+  });
   registerTerminalHandlers({
-    buildEnvironment: async () =>
-      (await getOpenClawEngineManager().buildCliEnvironment()).env,
+    buildEnvironment: async () => (await getOpenClawEngineManager().buildCliEnvironment()).env,
   });
 
   // 创建主窗口
