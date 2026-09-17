@@ -1683,9 +1683,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     goalContinuationMaxTurnsTitle: '最大续跑轮数',
     goalContinuationMaxTurnsDescription: '达到此轮数后将停止自动续跑，可手动继续。',
     goalContinuationSettingsSaveFailed: '无法保存 Goal 模式续跑设置',
-    displayTabRetentionTitle: '后台侧栏 Tab 保留数量',
+    displayTabRetentionSectionTitle: '侧栏标签页',
+    displayTabRetentionSectionDescription: '管理浏览器、终端等侧栏标签页的后台保留策略。',
+    displayTabRetentionTitle: '后台标签页上限',
     displayTabRetentionDescription:
-      '保留最近使用的后台侧栏 Tab；当前会话不受限制。设置为 0 可在切换会话后立即释放。',
+      '最多保留最近使用的后台标签页，当前会话不计入。设为 0 时，切换会话后立即释放。',
     displayTabRetentionSaveFailed: '无法保存侧栏 Tab 保留设置',
     permissionModeTitle: '执行权限',
     permissionModeDescription: '控制当前对话的文件范围和命令审批；未打开对话时作为新对话默认值。',
@@ -4141,9 +4143,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     goalContinuationMaxTurnsDescription:
       'Automatic continuation stops after this many turns. You can continue manually.',
     goalContinuationSettingsSaveFailed: 'Unable to save Goal continuation settings',
-    displayTabRetentionTitle: 'Retained background sidebar tabs',
+    displayTabRetentionSectionTitle: 'Sidebar tabs',
+    displayTabRetentionSectionDescription:
+      'Manage background retention for browser, terminal, and other sidebar tabs.',
+    displayTabRetentionTitle: 'Background tab limit',
     displayTabRetentionDescription:
-      'Keep the most recently used background sidebar tabs. The current session is not limited. Set to 0 to release them after switching sessions.',
+      'Keep up to this many recently used background tabs. The current session is not counted. Set to 0 to release them after switching sessions.',
     displayTabRetentionSaveFailed: 'Unable to save the sidebar tab retention setting',
     permissionModeTitle: 'Execution permissions',
     permissionModeDescription:

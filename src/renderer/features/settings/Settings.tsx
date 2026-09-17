@@ -17,8 +17,6 @@ import {
 import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
-  MAX_MAX_RETAINED_DISPLAY_TABS,
-  MIN_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
 } from '@shared/displayTabRetention';
 import {
@@ -2859,42 +2857,18 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'runtime':
         return (
-          <div className="space-y-3">
-            <section className="overflow-hidden rounded-xl border border-border bg-surface">
-              <div className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(180px,1fr)_minmax(260px,320px)] sm:items-center sm:gap-6">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-foreground">
-                    {i18nService.t('displayTabRetentionTitle')}
-                  </div>
-                  <p className="mt-0.5 text-xs leading-4 text-secondary">
-                    {i18nService.t('displayTabRetentionDescription')}
-                  </p>
-                </div>
-                <input
-                  type="number"
-                  min={MIN_MAX_RETAINED_DISPLAY_TABS}
-                  max={MAX_MAX_RETAINED_DISPLAY_TABS}
-                  step={1}
-                  value={maxRetainedDisplayTabs}
-                  onChange={event =>
-                    setMaxRetainedDisplayTabs(normalizeMaxRetainedDisplayTabs(event.target.value))
-                  }
-                  aria-label={i18nService.t('displayTabRetentionTitle')}
-                  className="ml-auto h-9 w-32 rounded-lg border border-border bg-surface-inset px-3 text-center text-sm font-medium tabular-nums text-foreground outline-none focus:border-primary"
-                />
-              </div>
-            </section>
-            <AgentRuntimeSettingsTab
-              settings={agentRuntimeSettings}
-              models={agentRuntimeModels}
-              isLoading={agentRuntimeSettingsLoading}
-              loadError={agentRuntimeSettingsLoadError}
-              onChange={setAgentRuntimeSettings}
-              onRetry={() => void loadAgentRuntimeSettings()}
-              maxGoalContinuationTurns={maxGoalContinuationTurns}
-              onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
-            />
-          </div>
+          <AgentRuntimeSettingsTab
+            settings={agentRuntimeSettings}
+            models={agentRuntimeModels}
+            isLoading={agentRuntimeSettingsLoading}
+            loadError={agentRuntimeSettingsLoadError}
+            onChange={setAgentRuntimeSettings}
+            onRetry={() => void loadAgentRuntimeSettings()}
+            maxRetainedDisplayTabs={maxRetainedDisplayTabs}
+            onMaxRetainedDisplayTabsChange={setMaxRetainedDisplayTabs}
+            maxGoalContinuationTurns={maxGoalContinuationTurns}
+            onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
+          />
         );
 
       case 'browser':
@@ -2974,35 +2948,39 @@ const Settings: React.FC<SettingsProps> = ({
   };
 
   return (
-    <div className="h-full min-h-0 w-full bg-background">
-      <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
-        {/* Left sidebar */}
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+      {/* Keep window chrome independent from settings navigation and page content. */}
+      <div className="draggable relative flex h-9 shrink-0 select-none items-center border-b border-border-subtle bg-surface-raised">
+        <div className={`flex min-w-0 items-center gap-2 pr-3 ${isMac ? 'pl-[76px]' : 'pl-2'}`}>
+          <button
+            type="button"
+            onClick={handleCloseSettings}
+            className="non-draggable flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface hover:text-foreground"
+            aria-label={i18nService.t('back')}
+            title={i18nService.t('back')}
+          >
+            <ArrowLeftIcon className="h-4 w-4" />
+          </button>
+          <h2 className="truncate text-sm font-semibold text-foreground">
+            {i18nService.t('settings')}
+          </h2>
+        </div>
+        <WindowTitleBar />
+      </div>
+
+      <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
+        {/* Left navigation */}
         <div
-          className="shrink-0 flex flex-col overflow-y-auto bg-surface-raised/60"
+          className="flex shrink-0 flex-col overflow-hidden bg-surface-raised/60"
           style={{ width: sidebarWidth }}
         >
-          <div
-            className={`draggable flex h-16 shrink-0 select-none items-center gap-2 pr-4 ${
-              isMac ? 'pl-[76px]' : 'pl-4'
-            }`}
-          >
-            <button
-              type="button"
-              onClick={handleCloseSettings}
-              className="non-draggable flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface hover:text-foreground"
-              aria-label={i18nService.t('back')}
-              title={i18nService.t('back')}
-            >
-              <ArrowLeftIcon className="h-[18px] w-[18px]" />
-            </button>
-            <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
-          </div>
-          <nav className="flex flex-col gap-0.5 px-3 pb-4">
+          <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-3">
             {sidebarTabs.map(tab => (
               <button
                 key={tab.key}
+                type="button"
                 onClick={() => handleTabChange(tab.key)}
-                className={`flex h-9 items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition-colors ${
+                className={`flex h-9 shrink-0 items-center gap-3 rounded-lg px-3 text-left text-sm font-medium transition-colors ${
                   activeTab === tab.key
                     ? 'bg-primary-muted text-primary'
                     : 'text-secondary hover:bg-surface hover:text-foreground'
@@ -3032,8 +3010,8 @@ const Settings: React.FC<SettingsProps> = ({
 
         {/* Right content */}
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          {/* Content header */}
-          <div className="draggable flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6">
+          {/* Page header */}
+          <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6">
             <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <div className="flex min-w-0 items-center gap-2">
               {activeTab === 'runtime' && agentRuntimeSettingsDirty && (
@@ -3054,7 +3032,6 @@ const Settings: React.FC<SettingsProps> = ({
                   {i18nService.t('agentRuntimeRestoreDefaults')}
                 </button>
               )}
-              <WindowTitleBar inline />
             </div>
           </div>
 

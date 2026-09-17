@@ -6,6 +6,10 @@ import {
   PlusIcon,
 } from '@heroicons/react/24/outline';
 import {
+  MAX_MAX_RETAINED_DISPLAY_TABS,
+  MIN_MAX_RETAINED_DISPLAY_TABS,
+} from '@shared/displayTabRetention';
+import {
   AGENT_RUNTIME_LIMITS,
   AgentRuntimeDelegationMode,
   AgentRuntimeSessionVisibility,
@@ -32,6 +36,8 @@ type Props = {
   loadError: string | null;
   onChange: (settings: AgentRuntimeSettings) => void;
   onRetry: () => void;
+  maxRetainedDisplayTabs: number;
+  onMaxRetainedDisplayTabsChange: (value: number) => void;
   maxGoalContinuationTurns: number;
   onMaxGoalContinuationTurnsChange: (value: number) => void;
 };
@@ -130,6 +136,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   loadError,
   onChange,
   onRetry,
+  maxRetainedDisplayTabs,
+  onMaxRetainedDisplayTabsChange,
   maxGoalContinuationTurns,
   onMaxGoalContinuationTurnsChange,
 }) => {
@@ -336,6 +344,28 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
 
   return (
     <div className="space-y-3 pb-1">
+      <section className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="border-b border-border bg-surface-raised px-4 py-2.5">
+          <div className="text-sm font-semibold text-foreground">
+            {i18nService.t('displayTabRetentionSectionTitle')}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-4 text-secondary">
+            {i18nService.t('displayTabRetentionSectionDescription')}
+          </div>
+        </div>
+        <SettingRow
+          label={i18nService.t('displayTabRetentionTitle')}
+          description={i18nService.t('displayTabRetentionDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('displayTabRetentionTitle')}
+            value={maxRetainedDisplayTabs}
+            min={MIN_MAX_RETAINED_DISPLAY_TABS}
+            max={MAX_MAX_RETAINED_DISPLAY_TABS}
+            onChange={onMaxRetainedDisplayTabsChange}
+          />
+        </SettingRow>
+      </section>
       <section className="overflow-hidden rounded-xl border border-border bg-surface">
         <div className="border-b border-border bg-surface-raised px-4 py-2.5">
           <div className="text-sm font-semibold text-foreground">

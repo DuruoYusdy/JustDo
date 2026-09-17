@@ -33,6 +33,37 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     vi.restoreAllMocks();
   });
 
+  test('renders sidebar tab retention as a bounded stepper', () => {
+    const onMaxRetainedDisplayTabsChange = vi.fn();
+
+    render(
+      <AgentRuntimeSettingsTab
+        settings={createDefaultAgentRuntimeSettings()}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={vi.fn()}
+        onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={onMaxRetainedDisplayTabsChange}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+
+    expect(
+      (
+        screen.getByRole('spinbutton', {
+          name: 'displayTabRetentionTitle',
+        }) as HTMLInputElement
+      ).value,
+    ).toBe('30');
+
+    fireEvent.click(screen.getByRole('button', { name: 'displayTabRetentionTitle +' }));
+
+    expect(onMaxRetainedDisplayTabsChange).toHaveBeenCalledWith(31);
+  });
+
   test('shows an unlimited Agent turn default and emits a bounded MCP timeout update', () => {
     const settings = createDefaultAgentRuntimeSettings();
     const onChange = vi.fn();
@@ -45,6 +76,8 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         loadError={null}
         onChange={onChange}
         onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
         maxGoalContinuationTurns={10}
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
@@ -96,6 +129,8 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         loadError={null}
         onChange={onChange}
         onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
         maxGoalContinuationTurns={10}
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
@@ -138,6 +173,8 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         loadError={null}
         onChange={onChange}
         onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
         maxGoalContinuationTurns={10}
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
@@ -178,6 +215,8 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         loadError={null}
         onChange={vi.fn()}
         onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
         maxGoalContinuationTurns={10}
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
@@ -224,6 +263,8 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         loadError={null}
         onChange={onChange}
         onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
         maxGoalContinuationTurns={10}
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
