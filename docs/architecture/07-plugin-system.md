@@ -299,6 +299,11 @@ UI 应显示 source、eligible/missing、install state 和操作结果；破坏�
 
 新增 plugin kind 或 provider 时同步 shared union、installer 注册、IPC/preload/declaration、UI、config owner、删除语义和测试。现有测试覆盖 marketplace validation/cleanup/redaction、安装器冲突、Skill/Hook archive/path/lock、extension import/registry、`AskUserQuestion` 状态机与 MCP discovery/probe。运行时行为变化还要更新 capability matrix 与 patch tests。
 
+消息分叉仍由 OpenClaw 的原生 transcript DAG 和 `forkSource` 元数据负责。锁定的 v2026.9.2
+runtime Patch 023 只补宿主分叉集成缺口：`sessions.fork` 接受可选 `targetKey` 和受限的 `includeEntry`，但仅 `operator.admin`
+可指定与源 agent 相同的 `agent:<agent>:justdo:*` key，并且目标已存在时必须失败。未传该字段
+时继续使用 OpenClaw 原生 dashboard key；JustDo 不复制 transcript，也不另建分支来源权威。
+
 ## 15. 各类型生命周期对照
 
 | Kind        | 发现/列表                    | 安装或导入                       | Enable           | 删除                   | Runtime 生效               |

@@ -294,7 +294,12 @@ describe('last user message actions', () => {
     const onAction = vi.fn();
     const actionable = stringifyTemplate(
       renderMessageBlock(createGroup('user'), {
-        userMessageActions: { entryId: 'user-entry', onAction },
+        userMessageActions: {
+          entryId: 'user-entry',
+          canEdit: true,
+          canWithdraw: true,
+          onAction,
+        },
       }),
     );
     const ordinary = stringifyTemplate(renderMessageBlock(createGroup('user')));
@@ -303,6 +308,28 @@ describe('last user message actions', () => {
     expect(actionable).toContain(i18nService.t('coworkEditLastMessage'));
     expect(actionable).toContain(i18nService.t('coworkWithdrawLastMessage'));
     expect(ordinary).not.toContain('user-message-actions');
+  });
+
+  test('renders a fork control after completed assistant footer metadata', () => {
+    const onFork = vi.fn();
+    const rendered = stringifyTemplate(
+      renderMessageBlock({ ...createGroup('assistant'), durationMs: 3_500 }, {
+        assistantMessageFork: {
+          entryId: 'assistant-entry',
+          onFork,
+        },
+      }),
+    );
+
+    expect(rendered).toContain('assistant-message-action--fork');
+    expect(rendered).toContain(i18nService.t('coworkForkFromMessage'));
+    expect(
+      rendered.indexOf(
+        i18nService.t('coworkRunWorkedDuration').replace('{duration}', '3s'),
+      ),
+    ).toBeLessThan(
+      rendered.indexOf('assistant-message-action--fork'),
+    );
   });
 });
 

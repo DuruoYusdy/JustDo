@@ -161,7 +161,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the twenty-one retained capability patches', () => {
+  test('contains exactly the twenty-two retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -184,7 +184,136 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '020-openai-realtime-transcription-base-url.cjs',
       '021-isolated-openai-compatible-media-providers.cjs',
       '022-justdo-reset-display-history.cjs',
+      '023-managed-session-fork-target-key.cjs',
     ]);
+  });
+
+  test('atomically includes an assistant entry only in an admin-selected managed fork', () => {
+    const testing = patches.get('023')?.__testing as {
+      MARKERS: { schema: string; handler: string; accessor: string };
+      transformAccessor: (content: string, filePath: string) => string;
+      transformHandler: (content: string, filePath: string) => string;
+      transformSchema: (content: string, filePath: string) => string;
+    };
+    const schema = [
+      'const SessionsRewindParamsSchema = closedObject({ entryId: NonEmptyString });',
+      'const SessionsForkParamsSchema = closedObject({',
+      '\tsessionKey: NonEmptyString,',
+      '\tagentId: Type.Optional(NonEmptyString),',
+      '\tentryId: NonEmptyString',
+      '});',
+      'const SessionsForkResultSchema = closedObject({ sessionKey: NonEmptyString });',
+    ].join('\n');
+    const handler = [
+      'async function mutateSessionAtMessage(options, action) {',
+      '\tconst { params, respond, context, client } = options;',
+      '\tconst cfg = context.getRuntimeConfig();',
+      '\tconst current = loadAccessorSessionEntryForGatewayTarget({ key: params.sessionKey, cfg });',
+      '\tconst lifecycleIdentities = [params.sessionKey, current.canonicalKey];',
+      '\tconst upstreamLink = readSessionUpstreamLink(current.canonicalKey, current.target.agentId);',
+      '\tconst targetKey = action === "fork" ? buildDashboardSessionKey(current.target.agentId, { incognito: current.entry.incognito === true || isIncognitoSessionKey(current.canonicalKey) }) : current.canonicalKey;',
+      '\tconst mutationParams = { sessionKey: current.canonicalKey };',
+      '\treturn forkSessionAtMessage({ ...mutationParams, entryId, targetKey, creation: resolveOperatorSessionCreation(client) });',
+      '}',
+    ].join('\n');
+    const accessor = [
+      'function mutateSqliteSessionAtMessage(params, mode, expectedState) {',
+      '\treturn mutateSqliteSessionAtMessageInTransaction(database, resolved, {',
+      '\t\tentryId: params.entryId,',
+      '\t\tmode,',
+      '\t});',
+      '}',
+      'function mutateSqliteSessionAtMessageInTransaction(database, resolved, params) {',
+      '\tconst events = loadTranscriptEventsFromDatabase(database, currentEntry.sessionId);',
+      '\tconst cut = params.mode === "switch" ? void 0 : resolveMessageCut(events, params.entryId);',
+      '\treturn cut;',
+      '}',
+      'function resolveMessageCut(events, entryId) {',
+      '\tconst tree = scanSessionTranscriptTree(events);',
+      '\tconst target = tree.byId.get(entryId);',
+      '\tif (!target) return { status: "missing-entry" };',
+      '\tconst record = asOptionalRecord(target.entry);',
+      '\tconst message = asOptionalRecord(record?.message);',
+      '\tif (record?.type !== "message" || message?.role !== "user") return { status: "not-user-message" };',
+      '\tconst activePath = selectSessionTranscriptTreePathNodes(tree, tree.leafId);',
+      '\tconst targetIndex = activePath.findIndex(node => node.id === entryId);',
+      '\tconst prefix = [];',
+      '\tfor (const node of activePath.slice(0, targetIndex)) {',
+      '\t\tconst entry = asOptionalRecord(node.entry);',
+      '\t\tprefix.push(entry && entry.parentId !== node.parentId ? {',
+      '\t\t\t...entry,',
+      '\t\t\tparentId: node.parentId,',
+      '\t\t} : node.entry);',
+      '\t}',
+      '\tconst editorAttachments = extractEditorAttachments(message.content);',
+      '\tconst editorMediaRefs = extractEditorMediaRefs(message);',
+      '\treturn {',
+      '\t\tstatus: "cut",',
+      '\t\teditorText: extractEditorText(message.content),',
+      '\t\t...editorAttachments ? { editorAttachments } : {},',
+      '\t\t...editorMediaRefs ? { editorMediaRefs } : {},',
+      '\t\tparentId: target.parentId,',
+      '\t\tprefix,',
+      '\t};',
+      '}',
+    ].join('\n');
+
+    const patchedSchema = testing.transformSchema(schema, 'sessions-schema.js');
+    expect(patchedSchema).toContain('targetKey: Type.Optional(NonEmptyString)');
+    expect(patchedSchema).toContain('includeEntry: Type.Optional(Type.Boolean())');
+    expect(patchedSchema).toContain('entryId: NonEmptyString,\n\ttargetKey:');
+    expect(patchedSchema).toContain(`/*${testing.MARKERS.schema}*/`);
+    expect(() => new vm.Script(patchedSchema)).not.toThrow();
+    expect(testing.transformSchema(patchedSchema, 'sessions-schema.js')).toBe(patchedSchema);
+    const bundledSchema = patchedSchema
+      .replace('const SessionsForkParamsSchema', 'SessionsForkParamsSchema')
+      .replaceAll('Type.', 'typebox_exports.')
+      .replace(`/*${testing.MARKERS.schema}*/`, '');
+    expect(testing.transformSchema(bundledSchema, 'gateway-bundle.mjs')).toBe(bundledSchema);
+
+    const patchedHandler = testing.transformHandler(handler, 'sessions-rewind.js');
+    expect(patchedHandler).toContain('sessions.fork targetKey requires operator.admin');
+    expect(patchedHandler).toContain('`agent:${current.target.agentId}:justdo:`');
+    expect(patchedHandler).toContain('sessions.fork targetKey already exists');
+    expect(patchedHandler).toContain('sessions.fork includeEntry requires targetKey');
+    expect(patchedHandler).toContain('sessions.fork includeEntry is unavailable for linked sessions');
+    expect(patchedHandler).toContain('includeEntry: requestedForkIncludeEntry');
+    expect(patchedHandler).toContain(
+      '...(requestedForkTargetKey ? [requestedForkTargetKey] : [])',
+    );
+    expect(patchedHandler).toContain(
+      'current.canonicalKey,\n\t\t...(requestedForkTargetKey ? [requestedForkTargetKey] : [])',
+    );
+    expect(patchedHandler).toContain('requestedForkTargetKey || buildDashboardSessionKey');
+    expect(patchedHandler).toContain(`/*${testing.MARKERS.handler}*/`);
+    expect(() => new vm.Script(patchedHandler)).not.toThrow();
+    expect(testing.transformHandler(patchedHandler, 'sessions-rewind.js')).toBe(patchedHandler);
+
+    const patchedAccessor = testing.transformAccessor(accessor, 'session-accessor.js');
+    expect(patchedAccessor).toContain('includeEntry: params.includeEntry');
+    expect(patchedAccessor).toContain(
+      'params.mode === "fork" && params.includeEntry === true',
+    );
+    expect(patchedAccessor).toContain(
+      'targetIndex + (includeTargetEntry ? 1 : 0)',
+    );
+    expect(patchedAccessor).toContain(
+      'message.stopReason == null || ["stop", "length"].includes(message.stopReason)',
+    );
+    expect(patchedAccessor).toContain(
+      'includeTargetEntry ? undefined : extractEditorText(message.content)',
+    );
+    expect(patchedAccessor).toContain('parentId: includeTargetEntry ? target.id : target.parentId');
+    expect(patchedAccessor).toContain(`/*${testing.MARKERS.accessor}*/`);
+    expect(testing.transformAccessor(patchedAccessor, 'session-accessor.js')).toBe(
+      patchedAccessor,
+    );
+    const bundledAccessor = patchedAccessor
+      .replaceAll('undefined', 'void 0')
+      .replace(`/*${testing.MARKERS.accessor}*/`, '');
+    expect(testing.transformAccessor(bundledAccessor, 'gateway-bundle.mjs')).toBe(
+      bundledAccessor,
+    );
   });
 
   test('routes OpenAI realtime transcription through its configured base URL', () => {

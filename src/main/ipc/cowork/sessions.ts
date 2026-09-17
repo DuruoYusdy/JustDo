@@ -1,7 +1,14 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 
-import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../../../shared/cowork/sessionCopy';
+import {
+  type CopyCoworkSessionInput,
+  CoworkSessionCopyIpc,
+} from '../../../shared/cowork/sessionCopy';
+import {
+  CoworkSessionForkIpc,
+  type ForkCoworkSessionInput,
+} from '../../../shared/cowork/sessionFork';
 import {
   type BeginSessionRunInput,
   SessionRunBeginErrorCode,
@@ -17,6 +24,8 @@ import {
   type PermissionMode,
   toOpenClawSessionPermissionMode,
 } from '../../../shared/openclaw/approvals';
+import { OpenClawExtensionId, parsePlanModeState } from '../../../shared/openclaw/extensions';
+import { normalizeSessionGoal } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
@@ -36,6 +45,58 @@ interface SessionHandlerDependencies {
   ) => Promise<PermissionModeOperationResult>;
   requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
 }
+
+type GatewayRequest = NonNullable<SessionHandlerDependencies['requestGateway']>;
+
+const clearInheritedSessionGoal = async (
+  requestGateway: GatewayRequest,
+  options: { sessionKey: string; gatewaySessionId: string; agentId: string },
+): Promise<void> => {
+  const described = await requestGateway<{
+    session?: { sessionId?: unknown; goal?: unknown } | null;
+  }>('sessions.describe', { key: options.sessionKey });
+  if (!described.session) {
+    throw new Error('OpenClaw did not return the copied session for Goal verification.');
+  }
+  if (described.session.goal === undefined || described.session.goal === null) return;
+  const goal = normalizeSessionGoal(described.session.goal);
+  if (!goal) throw new Error('OpenClaw returned invalid Goal metadata on the copied session.');
+  const gatewaySessionId =
+    typeof described.session.sessionId === 'string' && described.session.sessionId.trim()
+      ? described.session.sessionId.trim()
+      : options.gatewaySessionId;
+  const operationId = randomUUID();
+  const cleared = await requestGateway<{
+    operationId?: unknown;
+    action?: unknown;
+    sessionId?: unknown;
+    goalId?: unknown;
+    status?: unknown;
+  }>('sessions.goal.clear', {
+    sessionKey: options.sessionKey,
+    agentId: options.agentId,
+    sessionId: gatewaySessionId,
+    goalId: goal.id,
+    operationId,
+    issuedAtMs: Date.now(),
+  });
+  if (
+    cleared.operationId !== operationId ||
+    cleared.action !== 'clear' ||
+    cleared.sessionId !== gatewaySessionId ||
+    cleared.goalId !== goal.id ||
+    cleared.status !== 'cleared'
+  ) {
+    throw new Error('OpenClaw did not confirm that the copied Goal was cleared.');
+  }
+  const verified = await requestGateway<{ session?: { goal?: unknown } | null }>(
+    'sessions.describe',
+    { key: options.sessionKey },
+  );
+  if (!verified.session || (verified.session.goal !== undefined && verified.session.goal !== null)) {
+    throw new Error('OpenClaw did not clear Goal metadata from the copied session.');
+  }
+};
 
 const isRestartCheckpoint = (timing: SessionRunTiming | undefined): boolean =>
   timing?.state === 'aborted' &&
@@ -685,6 +746,21 @@ export const registerCoworkSessionHandlers = ({
         sourceSessionId,
         source.agentId || DEFAULT_MANAGED_AGENT_ID,
       );
+      const described = await requestGateway<{ session?: { pluginExtensions?: unknown } }>(
+        'sessions.describe',
+        { key: parentSessionKey },
+      );
+      const pluginExtensions = Array.isArray(described.session?.pluginExtensions)
+        ? described.session.pluginExtensions
+        : [];
+      const planExtension = pluginExtensions.find(candidate => {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+        const extension = candidate as Record<string, unknown>;
+        return (
+          extension.pluginId === OpenClawExtensionId.PLAN_MODE && extension.namespace === 'state'
+        );
+      }) as Record<string, unknown> | undefined;
+      const copyPlanMode = parsePlanModeState(planExtension?.value).enabled;
       copiedSession = store.createSession(
         title,
         source.cwd,
@@ -719,11 +795,28 @@ export const registerCoworkSessionHandlers = ({
       if (!gatewaySessionId || returnedKey !== copiedSessionKey) {
         throw new Error('OpenClaw did not create the requested copied session.');
       }
+      if (copyPlanMode) {
+        const patched = await requestGateway<{ ok?: unknown }>('sessions.pluginPatch', {
+          key: copiedSessionKey,
+          agentId: copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
+          pluginId: OpenClawExtensionId.PLAN_MODE,
+          namespace: 'state',
+          value: { enabled: true, updatedAt: Date.now() },
+        });
+        if (patched.ok !== true) {
+          throw new Error('OpenClaw did not preserve Plan mode on the copied session.');
+        }
+      }
 
       // Adopting the explicit key verifies the copied workspace and permission
       // boundary and records the runtime key in the adapter cache.
-      await router.prepareSession(copiedSession.id);
-      return { success: true, session: copiedSession };
+      const prepared = await router.prepareSession(copiedSession.id);
+      await clearInheritedSessionGoal(requestGateway, {
+        sessionKey: copiedSessionKey,
+        gatewaySessionId: prepared.gatewaySessionId || gatewaySessionId,
+        agentId: copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
+      });
+      return { success: true, session: copiedSession, planModeEnabled: copyPlanMode };
     } catch (error) {
       if (copiedSession) {
         try {
@@ -745,6 +838,106 @@ export const registerCoworkSessionHandlers = ({
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to copy session.',
+      };
+    }
+  });
+
+  ipcMain.handle(CoworkSessionForkIpc.Fork, async (_event, input: ForkCoworkSessionInput) => {
+    const sourceSessionId = typeof input?.sessionId === 'string' ? input.sessionId.trim() : '';
+    const title = typeof input?.title === 'string' ? input.title.trim() : '';
+    const entryId = typeof input?.entryId === 'string' ? input.entryId.trim() : '';
+    if (!sourceSessionId || !title || !entryId) {
+      return {
+        success: false,
+        error: 'A source session, title, and entry are required.',
+      };
+    }
+
+    const store = getCoworkStore();
+    const router = getCoworkEngineRouter();
+    const source = store.getSession(sourceSessionId);
+    if (!source) return { success: false, error: 'Source session not found.' };
+    if (!requestGateway) {
+      return { success: false, error: 'OpenClaw Gateway session fork is unavailable.' };
+    }
+
+    const sourceSessionKey = buildManagedSessionKey(
+      sourceSessionId,
+      source.agentId || DEFAULT_MANAGED_AGENT_ID,
+    );
+
+    let forkedSession: ReturnType<CoworkStore['createSession']> | null = null;
+    let forkedSessionKey = '';
+    try {
+      const runtime = await router.getSessionRuntimeStatus(sourceSessionId, {
+        includeSubagents: true,
+        forceRefresh: true,
+        fullScan: true,
+      });
+      if (!runtime.known) {
+        return {
+          success: false,
+          error: 'The current session activity could not be verified. Try again in a moment.',
+        };
+      }
+      if (runtime.running) {
+        return { success: false, error: 'Wait for the current session to finish before forking.' };
+      }
+
+      forkedSession = store.createSession(
+        title,
+        source.cwd,
+        source.executionMode,
+        source.activeSkillIds,
+        source.agentId,
+        source.permissionMode,
+        source.modelRef,
+        { sessionId: source.id, title: source.title, entryId },
+      );
+      forkedSessionKey = buildManagedSessionKey(
+        forkedSession.id,
+        forkedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
+      );
+      const forked = await requestGateway<{ sessionKey?: unknown }>('sessions.fork', {
+        sessionKey: sourceSessionKey,
+        agentId: source.agentId || DEFAULT_MANAGED_AGENT_ID,
+        entryId,
+        targetKey: forkedSessionKey,
+        includeEntry: true,
+      });
+      const returnedKey = typeof forked.sessionKey === 'string' ? forked.sessionKey.trim() : '';
+      if (returnedKey !== forkedSessionKey) {
+        throw new Error('OpenClaw did not create the requested forked session.');
+      }
+
+      const prepared = await router.prepareSession(forkedSession.id);
+      await clearInheritedSessionGoal(requestGateway, {
+        sessionKey: forkedSessionKey,
+        gatewaySessionId: prepared.gatewaySessionId,
+        agentId: forkedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
+      });
+      return { success: true, session: forkedSession };
+    } catch (error) {
+      if (forkedSession) {
+        try {
+          store.deleteSession(forkedSession.id);
+        } catch {
+          // Preserve the original fork failure; local cleanup is best effort.
+        }
+        try {
+          router.onSessionDeleted(
+            forkedSession.id,
+            forkedSession.agentId,
+            forkedSessionKey ? [forkedSessionKey] : [],
+            [forkedSession.cwd],
+          );
+        } catch {
+          // Preserve the original fork failure; runtime cleanup is best effort.
+        }
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fork session.',
       };
     }
   });

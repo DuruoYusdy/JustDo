@@ -124,6 +124,12 @@ interface CoworkSession {
   permissionMode: PermissionMode;
   activeSkillIds: string[];
   agentId: string;
+  modelRef?: string;
+  forkSource?: {
+    sessionId?: string;
+    title: string;
+    entryId: string;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -713,7 +719,19 @@ interface IElectronAPI {
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     copySession: (
       input: import('../../shared/cowork/sessionCopy').CopyCoworkSessionInput,
-    ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
+    ) => Promise<{
+      success: boolean;
+      session?: CoworkSession;
+      planModeEnabled?: boolean;
+      error?: string;
+    }>;
+    forkSession: (
+      input: import('../../shared/cowork/sessionFork').ForkCoworkSessionInput,
+    ) => Promise<{
+      success: boolean;
+      session?: CoworkSession;
+      error?: string;
+    }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
     setSessionPinned: (options: {
       sessionId: string;

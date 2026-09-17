@@ -232,6 +232,8 @@ interface CoworkPromptInputProps {
   goalRunProgress?: GoalRunProgress | null;
   /** Notifies the chat projection as soon as a Goal resume is accepted. */
   onGoalResumeAccepted?: (sessionId: string, runId: string) => void;
+  /** Reports whether the canonical session currently owns Goal metadata. */
+  onGoalPresenceChange?: (sessionId: string | undefined, hasGoal: boolean) => void;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
   /** Restricts controls to capabilities supported by an OpenClaw `/btw` side question. */
@@ -279,6 +281,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       initialGoalObjective = null,
       goalRunProgress = null,
       onGoalResumeAccepted,
+      onGoalPresenceChange,
       remoteManaged = false,
       mode = 'default',
     } = props;
@@ -420,6 +423,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const goalStateSessionIdRef = useRef(sessionId);
     const initialGoalObjectiveRef = useRef(initialGoalObjective);
     initialGoalObjectiveRef.current = initialGoalObjective;
+    const goalStateMatchesSession = goalStateSessionIdRef.current === sessionId;
+    const hasSessionGoal =
+      goalStateMatchesSession && Boolean(sessionGoal || pendingGoalObjective);
+    useEffect(() => {
+      onGoalPresenceChange?.(sessionId, hasSessionGoal);
+    }, [hasSessionGoal, onGoalPresenceChange, sessionId]);
     const { isStopping, isStopPending, requestStop } = useSessionStop(
       stopOperationKey ?? sessionId,
       onStop,

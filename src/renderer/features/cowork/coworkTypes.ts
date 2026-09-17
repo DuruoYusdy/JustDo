@@ -63,6 +63,11 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  forkSource?: {
+    sessionId?: string;
+    title: string;
+    entryId: string;
+  };
   createdAt: number;
   updatedAt: number;
 }

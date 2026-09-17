@@ -52,6 +52,7 @@ import type {
   SessionGroup,
   UpdateGroupInput,
 } from '@/features/cowork/coworkTypes';
+import { parseEditorDraftPayload } from '@/libs/openclaw-chat/model/editor-draft';
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
@@ -731,21 +732,60 @@ export class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork?.copySession) return null;
 
-    const title = i18nService
-      .t('coworkCopySessionTitle')
-      .replace('{title}', session.title);
+    const title = i18nService.t('coworkCopySessionTitle').replace('{title}', session.title);
     try {
       const result = await cowork.copySession({ sessionId: session.id, title });
       if (result.success && result.session) {
         const select = store.getState().cowork.currentSession?.id === session.id;
         if (select) this.latestLoadSessionRequestId += 1;
         store.dispatch(addSession({ session: result.session, select }));
+        store.dispatch(
+          setPlanModeState({
+            sessionId: result.session.id,
+            enabled: result.planModeEnabled === true,
+          }),
+        );
         return result.session;
       }
       console.error('Failed to copy session:', result.error);
       return null;
     } catch (error) {
       console.error('Failed to copy session:', error);
+      return null;
+    }
+  }
+
+  async forkSession(
+    session: CoworkSession,
+    entryId: string,
+  ): Promise<{
+    session: CoworkSession;
+    draft: ReturnType<typeof parseEditorDraftPayload>;
+  } | null> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.forkSession) return null;
+
+    const title = i18nService.t('coworkForkSessionTitle').replace('{title}', session.title);
+    try {
+      const result = await cowork.forkSession({
+        sessionId: session.id,
+        title,
+        entryId,
+      });
+      if (result.success && result.session) {
+        const select = store.getState().cowork.currentSession?.id === session.id;
+        if (select) this.latestLoadSessionRequestId += 1;
+        store.dispatch(addSession({ session: result.session, select }));
+        store.dispatch(setPlanModeState({ sessionId: result.session.id, enabled: false }));
+        return {
+          session: result.session,
+          draft: parseEditorDraftPayload(undefined, undefined),
+        };
+      }
+      console.error('Failed to fork session:', result.error);
+      return null;
+    } catch (error) {
+      console.error('Failed to fork session:', error);
       return null;
     }
   }

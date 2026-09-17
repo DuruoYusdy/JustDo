@@ -498,6 +498,7 @@ const BROWSER_DISPLAY_LENGTH_PREFIX = 'display-metadata-length:';
 export type ParsedBrowserAnnotationPrompt = {
   userText: string;
   annotations: BrowserAnnotationDisplay[];
+  modelContext: string;
 };
 
 const boundedDisplayString = (value: unknown, maxLength: number): string =>
@@ -611,6 +612,7 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
     if (value.slice(userTextStart, userTextStart + 2) !== '\n\n') return null;
     const context = value.slice(headerEnd + 1, end);
     let annotations: BrowserAnnotationDisplay[] = [];
+    let modelContext = context;
     if (context.startsWith(BROWSER_DISPLAY_LENGTH_PREFIX)) {
       const metadataHeaderEnd = context.indexOf('\n');
       const metadataLengthText = context.slice(
@@ -629,10 +631,11 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
           annotations = parseDisplayAnnotations(
             context.slice(metadataStart, metadataStart + metadataLength),
           );
+          modelContext = context.slice(metadataStart + metadataLength).replace(/^\n/u, '');
         }
       }
     }
-    return { userText: value.slice(userTextStart + 2), annotations };
+    return { userText: value.slice(userTextStart + 2), annotations, modelContext };
   }
 
   // Compatibility with prompts produced before the length-delimited envelope.
@@ -641,6 +644,7 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
   return {
     userText: value.slice(legacyEnd + BROWSER_CONTEXT_END.length + 1).replace(/^\s+/, ''),
     annotations: [],
+    modelContext: value.slice(contentStart, legacyEnd),
   };
 }
 

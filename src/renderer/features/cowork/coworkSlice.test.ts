@@ -439,6 +439,26 @@ describe('cowork session recent activity', () => {
 
     expect(updated.sessions[0]).toMatchObject({ title: 'Renamed', updatedAt: activityTime });
   });
+
+  test('updates the visible fork source title when its source session is renamed', () => {
+    const source = createSession('source-session');
+    const branch = {
+      ...createSession('branch-session'),
+      forkSource: {
+        sessionId: source.id,
+        title: source.title,
+        entryId: 'source-entry',
+      },
+    };
+    const selected = coworkReducer(undefined, setCurrentSession(branch));
+
+    const updated = coworkReducer(
+      selected,
+      updateSessionTitle({ sessionId: source.id, title: 'Renamed source' }),
+    );
+
+    expect(updated.currentSession?.forkSource?.title).toBe('Renamed source');
+  });
 });
 
 describe('cowork session runtime snapshot', () => {

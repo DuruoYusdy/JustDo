@@ -124,6 +124,367 @@ describe('justdo-chat last user message actions', () => {
     expect(chat.shadowRoot?.textContent).toContain('original');
   });
 
+  test('offers assistant fork only after the latest Plan reset', async () => {
+    const controller = new ChatController();
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.state.connected = true;
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(
+      [
+        {
+          role: 'user',
+          content: 'plan this',
+          runId: 'plan-run',
+          __openclaw: { id: 'planning-user' },
+        },
+        {
+          role: 'assistant',
+          content: 'the plan',
+          runId: 'plan-run',
+          __openclaw: { id: 'planning-assistant' },
+        },
+        {
+          role: 'system',
+          content: '',
+          __openclaw: { id: 'plan-reset', kind: 'reset', planImplementation: true },
+        },
+        {
+          role: 'user',
+          content: 'implementation prompt',
+          runId: 'implementation-run',
+          __openclaw: { id: 'implementation-user' },
+        },
+        {
+          role: 'assistant',
+          content: 'implementation result',
+          runId: 'implementation-run',
+          __openclaw: { id: 'implementation-assistant' },
+        },
+      ],
+      { resetLoadedHistory: true },
+    );
+    const onFork = vi.fn().mockResolvedValue(true);
+    const onAction = vi.fn().mockResolvedValue(true);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    chat.runTimings = [
+      {
+        id: 'plan-timing',
+        sessionId: 'session-1',
+        clientTurnId: 'plan-run',
+        rootRunId: 'plan-run',
+        startedAt: 1,
+        endedAt: 2,
+        state: 'completed',
+      },
+      {
+        id: 'implementation-timing',
+        sessionId: 'session-1',
+        clientTurnId: 'implementation-run',
+        rootRunId: 'implementation-run',
+        startedAt: 3,
+        endedAt: 4,
+        state: 'completed',
+      },
+    ];
+    chat.onAssistantMessageFork = onFork;
+    chat.onLastUserMessageAction = onAction;
+    document.body.append(chat);
+    await chat.updateComplete;
+
+    expect(chat.shadowRoot?.querySelectorAll('.user-message-action--edit')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelectorAll('.user-message-action--withdraw')).toHaveLength(1);
+    const forkButtons = chat.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+      '.assistant-message-action--fork',
+    );
+    expect(forkButtons).toHaveLength(1);
+    forkButtons?.[0]?.click();
+    expect(onFork).toHaveBeenCalledWith('implementation-assistant');
+    const scrollIntoView = vi.fn();
+    const sourceRow = [
+      ...(chat.shadowRoot?.querySelectorAll<HTMLElement>('.chat-history-row') ?? []),
+    ].find(row => row.dataset.entryId === 'implementation-assistant');
+    Object.defineProperty(sourceRow!, 'scrollIntoView', { value: scrollIntoView });
+
+    expect(chat.revealMessage('implementation-assistant')).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'center',
+      inline: 'nearest',
+    });
+  });
+
+  test('hides edit and withdraw when the latest visible user message is before a Plan reset', async () => {
+    const controller = new ChatController();
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.state.connected = true;
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(
+      [
+        { role: 'user', content: 'plan this', __openclaw: { id: 'planning-user' } },
+        {
+          role: 'system',
+          content: '',
+          __openclaw: { id: 'plan-reset', kind: 'reset', planImplementation: true },
+        },
+        { role: 'assistant', content: 'implementation finished', __openclaw: { id: 'result' } },
+      ],
+      { resetLoadedHistory: true },
+    );
+    const onAction = vi.fn().mockResolvedValue(true);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    chat.onLastUserMessageAction = onAction;
+    document.body.append(chat);
+    await chat.updateComplete;
+
+    expect(chat.shadowRoot?.querySelector('.user-message-action--edit')).toBeNull();
+    expect(chat.shadowRoot?.querySelector('.user-message-action--withdraw')).toBeNull();
+  });
+
+  test('offers fork after every completed assistant response in a normal session', async () => {
+    const controller = new ChatController();
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.state.connected = true;
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(
+      [
+        {
+          role: 'user',
+          content: 'first',
+          __openclaw: { id: 'user-1', runId: 'run-1' },
+        },
+        {
+          role: 'assistant',
+          content: 'reply',
+          __openclaw: { id: 'assistant-1', runId: 'run-1' },
+        },
+        {
+          role: 'user',
+          content: 'second',
+          __openclaw: { id: 'user-2', runId: 'run-2' },
+        },
+        {
+          role: 'assistant',
+          content: 'second reply',
+          __openclaw: { id: 'assistant-2', runId: 'run-2' },
+        },
+      ],
+      { resetLoadedHistory: true },
+    );
+    const onFork = vi.fn();
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    chat.runTimings = [
+      {
+        id: 'timing-1',
+        sessionId: 'session-1',
+        clientTurnId: 'run-1',
+        rootRunId: 'run-1',
+        startedAt: 1,
+        endedAt: 2,
+        state: 'completed',
+      },
+      {
+        id: 'timing-2',
+        sessionId: 'session-1',
+        clientTurnId: 'run-2',
+        rootRunId: 'run-2',
+        startedAt: 3,
+        endedAt: 4,
+        state: 'completed',
+      },
+    ];
+    chat.onAssistantMessageFork = onFork;
+    document.body.append(chat);
+    await chat.updateComplete;
+
+    const forkButtons = chat.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+      '.assistant-message-action--fork',
+    );
+    expect(forkButtons).toHaveLength(2);
+    forkButtons?.[0]?.click();
+    forkButtons?.[1]?.click();
+    expect(onFork).toHaveBeenNthCalledWith(1, 'assistant-1');
+    expect(onFork).toHaveBeenNthCalledWith(2, 'assistant-2');
+  });
+
+  test.each(['aborted', 'failed'] as const)(
+    'does not offer fork after an %s assistant run',
+    async state => {
+      const controller = new ChatController();
+      controller.state.sessionKey = 'agent:main:justdo:session-1';
+      controller.state.connected = true;
+      (
+        controller as unknown as {
+          setCurrentSessionMessages(
+            messages: unknown[],
+            options: { resetLoadedHistory: boolean },
+          ): void;
+        }
+      ).setCurrentSessionMessages(
+        [
+          { role: 'user', content: 'try this', runId: 'run-1', __openclaw: { id: 'user-1' } },
+          {
+            role: 'assistant',
+            content: 'partial result',
+            runId: 'run-1',
+            __openclaw: { id: 'assistant-1' },
+          },
+        ],
+        { resetLoadedHistory: true },
+      );
+      const chat = document.createElement('justdo-chat') as JustDoChatElement;
+      chat.controller = controller;
+      chat.runTimings = [
+        {
+          id: 'timing-1',
+          sessionId: 'session-1',
+          clientTurnId: 'run-1',
+          rootRunId: 'run-1',
+          startedAt: 1,
+          endedAt: 2,
+          state,
+        },
+      ];
+      chat.onAssistantMessageFork = vi.fn();
+      document.body.append(chat);
+      await chat.updateComplete;
+
+      expect(chat.shadowRoot?.querySelector('.assistant-message-action--fork')).toBeNull();
+    },
+  );
+
+  test('allows a completed assistant response to fork before Plan implementation starts', async () => {
+    const controller = new ChatController();
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.state.connected = true;
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(
+      [
+        {
+          role: 'user',
+          content: 'plan this',
+          runId: 'plan-run',
+          __openclaw: { id: 'planning-user' },
+        },
+        {
+          role: 'assistant',
+          content: 'draft plan',
+          runId: 'plan-run',
+          __openclaw: { id: 'planning-assistant' },
+        },
+      ],
+      { resetLoadedHistory: true },
+    );
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    chat.runTimings = [
+      {
+        id: 'plan-timing',
+        sessionId: 'session-1',
+        clientTurnId: 'plan-run',
+        rootRunId: 'plan-run',
+        startedAt: 1,
+        endedAt: 2,
+        state: 'completed',
+      },
+    ];
+    chat.onAssistantMessageFork = vi.fn();
+    document.body.append(chat);
+    await chat.updateComplete;
+
+    expect(chat.shadowRoot?.querySelectorAll('.assistant-message-action--fork')).toHaveLength(1);
+  });
+
+  test('uses loaded history for a Plan reset outside the visible history window', async () => {
+    const controller = new ChatController();
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    controller.state.connected = true;
+    const messages = [
+      {
+        role: 'user',
+        content: 'old planning prompt',
+        __openclaw: { id: 'planning-user', runId: 'planning-run' },
+      },
+      {
+        role: 'assistant',
+        content: 'old planning reply',
+        __openclaw: { id: 'planning-assistant', runId: 'planning-run' },
+      },
+      ...Array.from({ length: 788 }, (_, index) => ({
+        role: 'system',
+        content: '',
+        __openclaw: { id: `filler-${index}` },
+      })),
+      {
+        role: 'system',
+        content: '',
+        __openclaw: { id: 'plan-reset', kind: 'reset', planImplementation: true },
+      },
+      {
+        role: 'user',
+        content: 'implementation prompt',
+        __openclaw: { id: 'implementation-user', runId: 'implementation-run' },
+      },
+    ];
+    (
+      controller as unknown as {
+        setCurrentSessionMessages(
+          messages: unknown[],
+          options: { resetLoadedHistory: boolean },
+        ): void;
+      }
+    ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+    controller.state.historyWindowStart = 0;
+    controller.state.historyWindowEnd = 750;
+    controller.state.visibleChatMessages = messages.slice(0, 750);
+
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    chat.runTimings = [
+      {
+        id: 'planning-timing',
+        sessionId: 'session-1',
+        clientTurnId: 'planning-run',
+        rootRunId: 'planning-run',
+        startedAt: 1,
+        endedAt: 2,
+        state: 'completed',
+      },
+    ];
+    chat.onAssistantMessageFork = vi.fn();
+    document.body.append(chat);
+    await chat.updateComplete;
+
+    expect(chat.shadowRoot?.textContent).toContain('old planning reply');
+    expect(chat.shadowRoot?.querySelector('.assistant-message-action--fork')).toBeNull();
+  });
+
   test('does not expose actions while disconnected or when the latest user entry is pending', async () => {
     const controller = new ChatController();
     controller.state.sessionKey = 'agent:main:justdo:session-1';

@@ -148,6 +148,9 @@ export class SqliteStore {
         active_skill_ids TEXT,
         agent_id TEXT NOT NULL DEFAULT 'main',
         model_ref TEXT,
+        forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
+        forked_from_session_title TEXT,
+        forked_from_entry_id TEXT,
         group_id TEXT REFERENCES session_groups(id),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -155,6 +158,13 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
     this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
+    this.ensureColumn(
+      'cowork_sessions',
+      'forked_from_session_id',
+      'TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL',
+    );
+    this.ensureColumn('cowork_sessions', 'forked_from_session_title', 'TEXT');
+    this.ensureColumn('cowork_sessions', 'forked_from_entry_id', 'TEXT');
 
     // OpenClaw v2026.9.2 owns the durable transcript in its per-agent SQLite
     // database. The former table duplicated that transcript and routinely

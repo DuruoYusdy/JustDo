@@ -334,6 +334,9 @@ const coworkSlice = createSlice({
       if (state.currentSession?.id === sessionId) {
         state.currentSession.title = title;
       }
+      if (state.currentSession?.forkSource?.sessionId === sessionId) {
+        state.currentSession.forkSource.title = title;
+      }
     },
 
     enqueuePendingInteraction(state, action: PayloadAction<CoworkInteractionRequest>) {

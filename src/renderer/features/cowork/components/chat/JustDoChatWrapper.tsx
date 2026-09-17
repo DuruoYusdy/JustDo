@@ -11,6 +11,7 @@ import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import type { ProgressCardViewState } from '@shared/openclaw/progressCard';
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -27,6 +28,7 @@ import {
 } from '@/features/cowork/components/goals/goalRunProgress';
 import { selectCurrentSession } from '@/features/cowork/coworkSelectors';
 import type { CoworkAttachmentPayload, CoworkSession } from '@/features/cowork/coworkTypes';
+import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
 import {
   type ChatContextUsageSnapshot,
   ChatController,
@@ -65,6 +67,7 @@ interface JustDoChatWrapperProps {
     entryId: string,
     editedText?: string,
   ) => boolean | Promise<boolean>;
+  onAssistantMessageFork?: (entryId: string) => boolean | Promise<boolean>;
   onSideChatResult?: (result: SideChatResult) => void;
   onSideChatStream?: (update: SideChatStreamUpdate) => void;
 }
@@ -117,6 +120,7 @@ export interface JustDoChatWrapperRef {
   /** Clear the current card only if its completed revision is still current. */
   dismissProgressCard: () => Promise<boolean>;
   rewindToUserMessage: (entryId: string) => Promise<RewindEditorDraft>;
+  revealMessage: (entryId: string) => Promise<boolean>;
   sendSideQuestion: (question: string, runId: string) => Promise<string>;
 }
 
@@ -137,6 +141,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onProgressCardChange,
       onSessionKeyChange,
       onLastUserMessageAction,
+      onAssistantMessageFork,
       onSideChatResult,
       onSideChatStream,
       runTimings = [],
@@ -148,6 +153,10 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSessionAgentId = currentSession?.agentId;
     const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
+    const chatElementRef = useRef<JustDoChatElement | null>(null);
+    const handleChatElementChange = useCallback((element: JustDoChatElement | null) => {
+      chatElementRef.current = element;
+    }, []);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
     const onActivityChangeRef = useRef(onActivityChange);
@@ -248,6 +257,25 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           const controller = controllerRef.current;
           if (!controller) throw new Error('Controller not initialized');
           return controller.rewindToUserMessage(entryId);
+        },
+        revealMessage: async entryId => {
+          const normalizedEntryId = entryId.trim();
+          const controller = controllerRef.current;
+          if (!normalizedEntryId || !controller) return false;
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            const chat = chatElementRef.current;
+            if (chat) {
+              await chat.updateComplete;
+              if (chat.revealMessage(normalizedEntryId)) return true;
+            }
+            if (!controller.state.chatLoading && !controller.state.historyLoadingOlder) {
+              const advanced = await controller.showOlderHistory();
+              const entryLoaded = hasEntryId(controller.getLoadedMessages(), normalizedEntryId);
+              if (!advanced && !controller.state.historyHasMore && !entryLoaded) return false;
+            }
+            await new Promise<void>(resolve => window.setTimeout(resolve, 25));
+          }
+          return false;
         },
         sendSideQuestion: async (question, runId) => {
           const controller = controllerRef.current;
@@ -463,10 +491,22 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         onSearchMatchCountChange={onSearchMatchCountChange}
         runTimings={runTimings}
         onLastUserMessageAction={onLastUserMessageAction}
+        onAssistantMessageFork={onAssistantMessageFork}
+        onChatElementChange={handleChatElementChange}
       />
     );
   },
 );
+
+function hasEntryId(messages: readonly unknown[], entryId: string): boolean {
+  return messages.some(message => {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+    const record = message as Record<string, unknown>;
+    const metadata = record.__openclaw;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false;
+    return (metadata as Record<string, unknown>).id === entryId;
+  });
+}
 
 // ─── Gateway Connection ─────────────────────────────────────────────────────
 

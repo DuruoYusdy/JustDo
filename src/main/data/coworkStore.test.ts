@@ -38,6 +38,9 @@ function setupDb(): void {
       execution_mode TEXT NOT NULL DEFAULT 'local',
       permission_mode TEXT,
       model_ref TEXT,
+      forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
+      forked_from_session_title TEXT,
+      forked_from_entry_id TEXT,
       active_skill_ids TEXT,
       agent_id TEXT NOT NULL DEFAULT 'main',
       created_at INTEGER NOT NULL,
@@ -99,6 +102,34 @@ test('sessions do not expose a local transcript cache', () => {
   expect(
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'").get(),
   ).toBeUndefined();
+});
+
+test('persists fork provenance, follows a live source title, and keeps a snapshot after deletion', () => {
+  const source = store.createSession('Original', '/tmp');
+  const fork = store.createSession('Fork', '/tmp', 'local', [], 'main', 'full', undefined, {
+    sessionId: source.id,
+    title: source.title,
+    entryId: 'entry-1',
+  });
+
+  expect(store.getSession(fork.id)?.forkSource).toEqual({
+    sessionId: source.id,
+    title: 'Original',
+    entryId: 'entry-1',
+  });
+
+  store.updateSession(source.id, { title: 'Renamed original' });
+  expect(store.getSession(fork.id)?.forkSource).toEqual({
+    sessionId: source.id,
+    title: 'Renamed original',
+    entryId: 'entry-1',
+  });
+
+  store.deleteSession(source.id);
+  expect(store.getSession(fork.id)?.forkSource).toEqual({
+    title: 'Original',
+    entryId: 'entry-1',
+  });
 });
 
 test('session metadata updates do not change recent activity time', () => {

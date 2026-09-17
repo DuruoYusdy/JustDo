@@ -43,6 +43,8 @@ type MessageRenderOptions = {
   onSpeak?: (groupKey: string, text: string) => void;
   userMessageActions?: {
     entryId: string;
+    canEdit?: boolean;
+    canWithdraw?: boolean;
     onAction: (action: UserMessageHistoryAction, entryId: string) => void;
     editor?: {
       value: string;
@@ -51,6 +53,10 @@ type MessageRenderOptions = {
       onCancel: () => void;
       onSubmit: () => void;
     };
+  };
+  assistantMessageFork?: {
+    entryId: string;
+    onFork: (entryId: string) => void;
   };
 };
 
@@ -125,6 +131,17 @@ const WITHDRAW_ICON = html`
   </svg>
 `;
 
+const FORK_ICON = html`
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <path
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="1.8"
+      d="M7 4v4a4 4 0 0 0 4 4h6m0 0-3-3m3 3-3 3M7 20v-4"
+    ></path>
+  </svg>
+`;
+
 function renderUserMessageActions(
   actions: NonNullable<MessageRenderOptions['userMessageActions']>,
 ): TemplateResult {
@@ -132,31 +149,63 @@ function renderUserMessageActions(
   const withdrawLabel = i18nService.t('coworkWithdrawLastMessage');
   return html`
     <span class="user-message-actions">
-      <button
-        type="button"
-        class="user-message-action"
-        aria-label=${editLabel}
-        title=${editLabel}
-        @click=${(event: Event) => {
-          event.stopPropagation();
-          actions.onAction('edit', actions.entryId);
-        }}
-      >
-        ${EDIT_ICON}
-      </button>
-      <button
-        type="button"
-        class="user-message-action user-message-action--withdraw"
-        aria-label=${withdrawLabel}
-        title=${withdrawLabel}
-        @click=${(event: Event) => {
-          event.stopPropagation();
-          actions.onAction('withdraw', actions.entryId);
-        }}
-      >
-        ${WITHDRAW_ICON}
-      </button>
+      ${
+        actions.canEdit
+          ? html`
+              <button
+                type="button"
+                class="user-message-action user-message-action--edit"
+                aria-label=${editLabel}
+                title=${editLabel}
+                @click=${(event: Event) => {
+                event.stopPropagation();
+                actions.onAction('edit', actions.entryId);
+              }}
+              >
+                ${EDIT_ICON}
+              </button>
+            `
+          : nothing
+      }
+      ${
+        actions.canWithdraw
+          ? html`
+              <button
+                type="button"
+                class="user-message-action user-message-action--withdraw"
+                aria-label=${withdrawLabel}
+                title=${withdrawLabel}
+                @click=${(event: Event) => {
+                event.stopPropagation();
+                actions.onAction('withdraw', actions.entryId);
+              }}
+              >
+                ${WITHDRAW_ICON}
+              </button>
+            `
+          : nothing
+      }
     </span>
+  `;
+}
+
+function renderAssistantMessageFork(
+  action: NonNullable<MessageRenderOptions['assistantMessageFork']>,
+): TemplateResult {
+  const label = i18nService.t('coworkForkFromMessage');
+  return html`
+    <button
+      type="button"
+      class="assistant-message-action assistant-message-action--fork"
+      aria-label=${label}
+      title=${label}
+      @click=${(event: Event) => {
+        event.stopPropagation();
+        action.onFork(action.entryId);
+      }}
+    >
+      ${FORK_ICON}
+    </button>
   `;
 }
 
@@ -1010,10 +1059,12 @@ function renderGroupFooter(
   opts?: MessageRenderOptions,
 ): TemplateResult | typeof nothing {
   const userMessageActions = group.role === 'user' ? opts?.userMessageActions : undefined;
+  const assistantMessageFork =
+    group.role === 'assistant' ? opts?.assistantMessageFork : undefined;
   const showMetadata = opts?.showFooter ?? true;
-  if (!showMetadata && !userMessageActions) return nothing;
+  if (!showMetadata && !userMessageActions && !assistantMessageFork) return nothing;
   const ts = group.timestamp;
-  if ((!ts || !showMetadata) && !userMessageActions) return nothing;
+  if ((!ts || !showMetadata) && !userMessageActions && !assistantMessageFork) return nothing;
   const date = new Date(ts);
   const time = ts && showMetadata ? formatGroupTimestamp(date) : '';
   const roleName = showMetadata ? getGroupFooterLabel(group, opts?.assistantName) : '';
@@ -1044,6 +1095,7 @@ function renderGroupFooter(
             `
           : nothing
       }
+      ${assistantMessageFork ? renderAssistantMessageFork(assistantMessageFork) : nothing}
     </div>
   `;
 }

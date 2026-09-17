@@ -1292,13 +1292,18 @@ test('copies and selects a session returned by Main', async () => {
     createdAt: 3,
     updatedAt: 3,
   };
-  const copySession = vi.fn().mockResolvedValue({ success: true, session: copied });
+  const copySession = vi.fn().mockResolvedValue({
+    success: true,
+    session: copied,
+    planModeEnabled: true,
+  });
   vi.stubGlobal('window', { electron: { cowork: { copySession } } });
   store.dispatch(setCurrentSession(source));
 
   await expect(coworkService.copySession(source)).resolves.toEqual(copied);
   expect(copySession).toHaveBeenCalledWith({ sessionId: source.id, title: copied.title });
   expect(store.getState().cowork.currentSession).toEqual(copied);
+  expect(store.getState().cowork.planModeBySession[copied.id]).toBe(true);
 
   store.dispatch(deleteSession(copied.id));
   store.dispatch(deleteSession(source.id));
@@ -1342,6 +1347,56 @@ test('does not select a copied session after the user navigates away', async () 
   store.dispatch(deleteSession(copied.id));
   store.dispatch(deleteSession(source.id));
   store.dispatch(deleteSession(other.id));
+  store.dispatch(clearCurrentSession());
+  vi.unstubAllGlobals();
+});
+
+test('forks after an assistant response with an empty composer', async () => {
+  const source: CoworkSession = {
+    id: 'fork-source',
+    title: 'Source session',
+    status: 'completed',
+    pinned: false,
+    cwd: 'C:\\workspace',
+    executionMode: 'local',
+    permissionMode: 'ask',
+    activeSkillIds: [],
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const forked: CoworkSession = {
+    ...source,
+    id: 'fork-target',
+    title: i18nService.t('coworkForkSessionTitle').replace('{title}', source.title),
+    forkSource: { sessionId: source.id, title: source.title, entryId: 'assistant-1' },
+  };
+  const forkSession = vi.fn().mockResolvedValue({
+    success: true,
+    session: forked,
+  });
+  vi.stubGlobal('window', { electron: { cowork: { forkSession } } });
+  store.dispatch(setCurrentSession(source));
+
+  await expect(
+    coworkService.forkSession(source, 'assistant-1'),
+  ).resolves.toEqual({
+    session: forked,
+    draft: {
+      text: '',
+      attachments: [],
+      filePaths: [],
+    },
+  });
+  expect(forkSession).toHaveBeenCalledWith({
+    sessionId: source.id,
+    title: forked.title,
+    entryId: 'assistant-1',
+  });
+  expect(store.getState().cowork.currentSession).toEqual(forked);
+
+  store.dispatch(deleteSession(forked.id));
+  store.dispatch(deleteSession(source.id));
   store.dispatch(clearCurrentSession());
   vi.unstubAllGlobals();
 });

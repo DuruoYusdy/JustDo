@@ -401,6 +401,7 @@ function seedControllerMessages(controller: ChatController, messages: unknown[])
 test('rewinds a persisted user message and reloads the authoritative branch', async () => {
   const controller = new ChatController();
   const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.describe') return { session: { goal: null } };
     if (method === 'sessions.rewind') {
       return {
         editorText: composeBrowserGatewayPrompt('original prompt\nMEDIA:C:\\workspace\\brief.pdf', [
@@ -456,11 +457,14 @@ test('rewinds a persisted user message and reloads the authoritative branch', as
     ],
     filePaths: ['C:\\workspace\\brief.pdf'],
   });
-  expect(request).toHaveBeenNthCalledWith(1, 'sessions.rewind', {
+  expect(request).toHaveBeenNthCalledWith(1, 'sessions.describe', {
+    key: 'agent:main:justdo:session-1',
+  });
+  expect(request).toHaveBeenNthCalledWith(2, 'sessions.rewind', {
     sessionKey: 'agent:main:justdo:session-1',
     entryId: 'latest-user',
   });
-  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
+  expect(request).toHaveBeenNthCalledWith(3, 'chat.history', {
     sessionKey: 'agent:main:justdo:session-1',
     limit: 250,
     maxChars: 500_000,
@@ -473,6 +477,7 @@ test('rewinds a persisted user message and reloads the authoritative branch', as
 test('returns the editor draft and schedules a retry when rewind history reload fails', async () => {
   const controller = new ChatController();
   const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.describe') return { session: { goal: null } };
     if (method === 'sessions.rewind') return { editorText: 'recover me' };
     throw new Error('history unavailable');
   });
@@ -504,6 +509,7 @@ test('returns the source draft without loading it into another selected session'
   const controller = new ChatController();
   let finishRewind!: (value: { editorText: string }) => void;
   const request = vi.fn((method: string) => {
+    if (method === 'sessions.describe') return Promise.resolve({ session: { goal: null } });
     if (method === 'sessions.rewind') {
       return new Promise(resolve => {
         finishRewind = resolve;
@@ -519,6 +525,7 @@ test('returns the source draft without loading it into another selected session'
   ]);
 
   const rewinding = controller.rewindToUserMessage('latest-user');
+  await vi.waitFor(() => expect(typeof finishRewind).toBe('function'));
   controller.state.sessionKey = 'agent:main:justdo:session-other';
   finishRewind({ editorText: 'source draft' });
 
@@ -527,12 +534,13 @@ test('returns the source draft without loading it into another selected session'
     attachments: [],
     filePaths: [],
   });
-  expect(request).toHaveBeenCalledTimes(1);
+  expect(request).toHaveBeenCalledTimes(2);
 });
 
 test('keeps a rotated Gateway session identity while rebuilding the rewound branch', async () => {
   const controller = new ChatController();
   const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.describe') return { session: { goal: null } };
     if (method === 'sessions.rewind') {
       controller.state.currentSessionId = 'gateway-session-rotated';
       return { editorText: 'rotated draft' };
@@ -583,6 +591,56 @@ test('rejects rewind when the requested entry is no longer the latest persisted 
     'Only the latest persisted user message can be updated',
   );
   expect(request).not.toHaveBeenCalled();
+});
+
+test('rejects rewind across the Plan implementation reset', async () => {
+  const controller = new ChatController();
+  const request = vi.fn();
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-plan-implementation';
+  seedControllerMessages(controller, [
+    { role: 'user', content: 'plan this', __openclaw: { id: 'planning-user' } },
+    {
+      role: 'system',
+      content: '',
+      __openclaw: { id: 'plan-reset', kind: 'reset', planImplementation: true },
+    },
+    { role: 'assistant', content: 'implementation finished', __openclaw: { id: 'result' } },
+  ]);
+
+  await expect(controller.rewindToUserMessage('planning-user')).rejects.toThrow(
+    'Planning messages cannot be updated after implementation has started',
+  );
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('rejects rewind while the canonical session still has a Goal', async () => {
+  const controller = new ChatController();
+  const request = vi.fn().mockResolvedValue({
+    session: {
+      goal: {
+        schemaVersion: 1,
+        id: 'goal-1',
+        objective: 'Complete the task',
+        status: 'paused',
+      },
+    },
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'agent:main:justdo:session-goal';
+  seedControllerMessages(controller, [
+    { role: 'user', content: '/goal start Complete the task', __openclaw: { id: 'goal-user' } },
+  ]);
+
+  await expect(controller.rewindToUserMessage('goal-user')).rejects.toThrow(
+    'Messages cannot be updated while the session has a Goal',
+  );
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith('sessions.describe', {
+    key: 'agent:main:justdo:session-goal',
+  });
 });
 
 test('does not rewind history while the session is sending', async () => {

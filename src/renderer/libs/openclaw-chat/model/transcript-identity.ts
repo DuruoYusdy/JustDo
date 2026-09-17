@@ -46,6 +46,31 @@ export function readTranscriptIdentity(message: unknown): TranscriptIdentity | n
 }
 
 /**
+ * Editing or withdrawing a message rewinds the active transcript branch. Once
+ * Plan implementation has started, that rewind must stay on the implementation
+ * side of the reset boundary; plugin and local workflow state do not rewind
+ * with transcript entries.
+ */
+export function isEntryAfterLatestPlanImplementationReset(
+  messages: readonly unknown[],
+  entryId: string,
+): boolean {
+  const normalizedEntryId = entryId.trim();
+  if (!normalizedEntryId) return false;
+  let latestResetIndex = -1;
+  let targetIndex = -1;
+  messages.forEach((message, index) => {
+    const record = asRecord(message);
+    const marker = asRecord(record?.__openclaw);
+    if (marker?.kind === 'reset' && marker.planImplementation === true) {
+      latestResetIndex = index;
+    }
+    if (readScalar(marker?.id) === normalizedEntryId) targetIndex = index;
+  });
+  return targetIndex >= 0 && (latestResetIndex < 0 || targetIndex > latestResetIndex);
+}
+
+/**
  * Identifies one displayed projection at a native history page seam.
  * OpenClaw may project sibling Thinking/Tool/Content rows from one transcript
  * event, so source id/seq alone is not unique. Keep the projection bytes in

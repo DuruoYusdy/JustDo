@@ -93,6 +93,10 @@ import {
   type TranscriptReducerDependencies,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { ChunkedMessageHistory } from '@/libs/openclaw-chat/model/chunked-message-history';
+import {
+  type EditorDraftPayload,
+  parseEditorDraftPayload,
+} from '@/libs/openclaw-chat/model/editor-draft';
 import { reconcileHistory } from '@/libs/openclaw-chat/model/history-reconciler';
 import {
   latestHistoryWindow,
@@ -126,7 +130,10 @@ import {
   readToolCallId,
   unwrapToolMessage,
 } from '@/libs/openclaw-chat/model/tool-message-adapter';
-import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
+import {
+  isEntryAfterLatestPlanImplementationReset,
+  readTranscriptIdentity,
+} from '@/libs/openclaw-chat/model/transcript-identity';
 import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import {
   hydrateGatewayHistoryForDisplay,
@@ -136,7 +143,6 @@ import {
   shouldHideMessage,
   stripAssistantSilentReplySuffix,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
-import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
@@ -197,11 +203,7 @@ export interface ChatContextUsageSnapshot {
   modelRef: string | null;
 }
 
-export interface RewindEditorDraft {
-  text: string;
-  attachments: CoworkAttachmentPayload[];
-  filePaths: string[];
-}
+export type RewindEditorDraft = EditorDraftPayload;
 
 export type ChatStateListener = (state: ChatState) => void;
 export type ChatStreamUpdateKind = 'stream' | 'tool-partial' | 'terminal';
@@ -2078,8 +2080,9 @@ export class ChatController {
       throw new Error('Wait for the current session activity to finish');
     }
 
+    const persistedMessages = this.currentMessageHistory.toArray() as GatewayMessage[];
     const latestUserEntryId = (() => {
-      const messages = this.currentMessageHistory.toArray() as GatewayMessage[];
+      const messages = persistedMessages;
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         if (message?.role?.toLowerCase() !== 'user') continue;
@@ -2093,8 +2096,18 @@ export class ChatController {
     if (latestUserEntryId !== normalizedEntryId) {
       throw new Error('Only the latest persisted user message can be updated');
     }
+    if (!isEntryAfterLatestPlanImplementationReset(persistedMessages, normalizedEntryId)) {
+      throw new Error('Planning messages cannot be updated after implementation has started');
+    }
 
     const sessionKey = this.state.sessionKey;
+    const described = await client.request<{ session?: { goal?: unknown } | null }>(
+      'sessions.describe',
+      { key: sessionKey },
+    );
+    if (described.session?.goal !== undefined && described.session.goal !== null) {
+      throw new Error('Messages cannot be updated while the session has a Goal');
+    }
     const sessionId = this.state.currentSessionId;
     this.state.chatLoading = true;
     this.notify();
@@ -2103,35 +2116,7 @@ export class ChatController {
         editorText?: unknown;
         editorAttachments?: Array<{ mimeType?: unknown; data?: unknown }>;
       }>('sessions.rewind', { sessionKey, entryId: normalizedEntryId });
-      const rawEditorText = typeof result.editorText === 'string' ? result.editorText : '';
-      const browserPrompt = parseBrowserAnnotationPrompt(rawEditorText);
-      const editorText = browserPrompt?.userText ?? rawEditorText;
-      const goalText = extractGoalFollowUpRequest(editorText) ?? editorText;
-      const parsedMedia = splitMediaFromOutput(goalText);
-      const filePaths = parsedMedia.mediaUrls ?? [];
-      const text = filePaths.length
-        ? (parsedMedia.segments ?? [])
-            .filter(segment => segment.type === 'text')
-            .map(segment => segment.text)
-            .join('\n\n')
-        : goalText;
-      const attachments = (result.editorAttachments ?? []).flatMap((attachment, index) => {
-        const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
-        const base64Data = typeof attachment.data === 'string' ? attachment.data.trim() : '';
-        if (!mimeType || !base64Data) return [];
-        const subtype = mimeType
-          .split('/')[1]
-          ?.split(/[;+]/u)[0]
-          ?.replace(/[^a-z0-9]+/giu, '');
-        return [
-          {
-            name: `restored-attachment-${index + 1}${subtype ? `.${subtype}` : ''}`,
-            mimeType,
-            base64Data,
-          },
-        ];
-      });
-      const draft = { text, attachments, filePaths };
+      const draft = parseEditorDraftPayload(result.editorText, result.editorAttachments);
       if (this.state.sessionKey !== sessionKey) {
         this.chatMessagesBySession.delete(sessionKey);
         this.historySourceBySession.delete(sessionKey);

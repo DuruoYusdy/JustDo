@@ -256,7 +256,7 @@ Minimap从timeline identity生成entry，追踪当前viewport并支持hover prev
 
 历史 marker 可以先于原生 `end` 到达：这时只隐藏对应本地卡片，保留操作身份直到终态；若提交后扩展失败，同时保留已提交 marker 和失败诊断。连接中断时清除尚未确认的压缩进度，避免后台失败事件漏收后永久显示“压缩中”，后续由新的原生事件与历史恢复显示。
 
-Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，自动续跑 phase 来自 Main snapshot。卡片生命周期按钮通过最小 preload IPC 提交带 goalId fence 的 structured mutation；start/resume 的 optimistic user text 始终显示用户原文，不展示 transport intent 或历史 follow-up envelope。`usage_limited`、`budget_limited` 使用独立状态文案，token 用量直接显示；elapsed 只在 active 时递增，并冻结在 paused/blocked/limited/complete 的原生时间戳。Compaction history detail通过专用IPC读取，timeline展示summary、tokens before/after和recovery progress；不把内部context markers显示给用户。
+Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，自动续跑 phase 来自 Main snapshot。卡片生命周期按钮通过最小 preload IPC 提交带 goalId fence 的 structured mutation；start/resume 的 optimistic user text 始终显示用户原文，不展示 transport intent 或历史 follow-up envelope。`usage_limited`、`budget_limited` 使用独立状态文案，token 用量直接显示；elapsed 只在 active 时递增，并冻结在 paused/blocked/limited/complete 的原生时间戳。只要 canonical session 仍有 Goal，Composer 就通知 chat 隐藏普通消息编辑/撤回；Controller 在 `sessions.rewind` 前还会读取 `sessions.describe` 并拒绝 Goal 会话，目标修改、暂停、恢复和清除必须走卡片的 structured mutation。Compaction history detail通过专用IPC读取，timeline展示summary、tokens before/after和recovery progress；不把内部context markers显示给用户。
 
 输入区上下文圆环与 OpenClaw webchat 使用同一会话行口径：初始值取 `chat.history.sessionInfo`，运行中的更新取 `sessions.changed` 以及 transcript-derived `session.message.session`，只在 session 已有 `totalTokens` 且能确定 context limit 时展示；`totalTokensFresh: false` 以 `~` 标记近似值。Controller 按 session identity 与 `updatedAt` 拒绝陈旧 history/event 快照，同时允许压缩后的 token 数下降；显示层把超过窗口的 provider 值限制为 100%。该链路不再维护独立 estimate cache，也不再通过 Main IPC 轮询 `sessions.describe/list`。
 
@@ -266,7 +266,9 @@ Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，�
 
 ## 18. 会话操作与导出
 
-消息操作只绑定当前 active transcript 的最后一个持久化 user entry。渲染层根据 `__openclaw.id` 标记这一条，且在断连、sending、compaction、history load/page load 时隐藏操作；optimistic message 和缺少原生身份的投影都不可修改。确认后 Controller 再次核对最后一条原生 entry identity，再调用 `sessions.rewind`，使旧 history generation、分页窗口和显示缓存失效，并从 `chat.history` 重建当前 branch。修改模式把清理过内部 envelope 的 editor text、内联媒体和 `MEDIA:` 文件交回 React composer；history 重载失败或用户切换会话都不能丢失源会话草稿。撤回模式不恢复草稿。操作按钮仅发出 action/entry identity，不能在 Lit render 中直接维护业务草稿。
+编辑与撤回只绑定 canonical transcript 的最后一个持久化 user entry，用户消息 footer 不承载分叉入口。“从此处分支”绑定已完成助手回复，在模型、完成时间和运行时长之后渲染独立图标；只有原生 entry id、成功完成的 run timing 和稳定空闲 history 同时存在时才显示。Plan 尚未发生实施 reset 时 transcript 连续，规划阶段的完整助手回复可分叉；发生 `planImplementation` reset 后，Lit 以最新 marker 为边界，只给其后的实施阶段助手回复显示分叉。实施刚开始而最后一条可见用户消息仍属于规划阶段时不显示编辑/撤回，Controller 也拒绝任何跨 reset 的 `sessions.rewind`，因为 transcript 回退不会同步回滚 Plan 插件状态、本地 handoff 状态或已经发生的工作区副作用。所有操作在断连、sending、compaction、history load/page load、optimistic message 或缺少原生身份时隐藏。
+
+确认编辑/撤回后 Controller 再次核对最后一条原生 entry identity 和 Plan 边界，再调用 `sessions.rewind`，使旧 history generation、分页窗口和显示缓存失效，并从 `chat.history` 重建当前 branch。助手分叉不恢复用户草稿：Renderer 传递所点助手 entry id，Gateway 在生命周期锁和 SQLite transaction 内原子验证并复制截至该完整回复的 active-path 前缀，新会话以空 composer 打开。来源跳转按助手 entry id 加载 canonical history、滚动并短暂高亮原回复。history 重载失败或用户切换会话都不能丢失源会话草稿；撤回模式不恢复草稿。
 
 导出使用Cowork session presentation与canonical items生成文本/Markdown等产品格式，包含必要角色、时间和内容；不直接dump internal state、token、approval payload或Gateway原始JSON。导出前需完成当前显示history加载范围的产品约定，避免误称“完整”却只导出窗口。
 

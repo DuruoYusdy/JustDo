@@ -148,7 +148,7 @@ test('deletes legacy schema database and creates a fresh database', () => {
   store.close();
 });
 
-test('adds model_ref, keeps product sessions, and removes the redundant message cache', () => {
+test('adds compatible session metadata, keeps product sessions, and removes the redundant message cache', () => {
   const dir = createTempDir();
   const dbPath = path.join(dir, DB_FILENAME);
   const db = new BetterSqlite3(dbPath);
@@ -234,7 +234,22 @@ test('adds model_ref, keeps product sessions, and removes the redundant message 
     )
     .get();
 
-  expect(columns.map(column => column.name)).toContain('model_ref');
+  expect(columns.map(column => column.name)).toEqual(
+    expect.arrayContaining([
+      'model_ref',
+      'forked_from_session_id',
+      'forked_from_session_title',
+      'forked_from_entry_id',
+    ]),
+  );
+  const forkForeignKey = (
+    migratedDb.pragma('foreign_key_list(cowork_sessions)') as Array<{
+      from: string;
+      table: string;
+      on_delete: string;
+    }>
+  ).find(key => key.from === 'forked_from_session_id');
+  expect(forkForeignKey).toMatchObject({ table: 'cowork_sessions', on_delete: 'SET NULL' });
   expect(keptRow).toEqual({ id: 'kept-session' });
   expect(messageCacheTable).toBeUndefined();
   expect(resultColumns.map(column => column.name)).toContain('system_managed');

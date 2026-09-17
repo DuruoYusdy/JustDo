@@ -40,6 +40,7 @@ const EXPECTED_PATCH_FILES = [
   '020-openai-realtime-transcription-base-url.cjs',
   '021-isolated-openai-compatible-media-providers.cjs',
   '022-justdo-reset-display-history.cjs',
+  '023-managed-session-fork-target-key.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

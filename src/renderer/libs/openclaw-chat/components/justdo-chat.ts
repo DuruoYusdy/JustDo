@@ -56,6 +56,7 @@ import {
 } from '@/libs/openclaw-chat/model/chat-timeline-trace';
 import {
   type AssistantTurn,
+  type AssistantTurnTiming,
   normalizeTranscriptSessionKey,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import {
@@ -86,6 +87,7 @@ import {
   PersistedTimelineRenderCache,
   projectIncrementalTimelineView,
 } from '@/libs/openclaw-chat/model/timeline-render-cache';
+import { isEntryAfterLatestPlanImplementationReset } from '@/libs/openclaw-chat/model/transcript-identity';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import type {
@@ -111,6 +113,27 @@ function openClawEntryId(message: GatewayMessage | undefined): string | null {
   if (marker?.kind === 'pending-send') return null;
   const id = marker && typeof marker.id === 'string' ? marker.id.trim() : '';
   return id || null;
+}
+
+function gatewayMessageRunId(message: GatewayMessage | undefined): string | null {
+  if (!message) return null;
+  const record = message as Record<string, unknown>;
+  const metadata =
+    record.metadata && typeof record.metadata === 'object' && !Array.isArray(record.metadata)
+      ? (record.metadata as Record<string, unknown>)
+      : null;
+  const marker = message.__openclaw;
+  for (const value of [
+    record.runId,
+    record.run_id,
+    metadata?.runId,
+    metadata?.run_id,
+    marker?.runId,
+    marker?.run_id,
+  ]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 function latestPersistedUserEntryId(messages: readonly GatewayMessage[]): string | null {
@@ -179,6 +202,10 @@ export class JustDoChatElement extends LitElement {
       ) => boolean | Promise<boolean>)
     | undefined;
 
+  @property({ attribute: false })
+  declare onAssistantMessageFork:
+    ((entryId: string) => boolean | Promise<boolean>) | undefined;
+
   @state()
   declare private userMessageEditor: { entryId: string; value: string; submitting: boolean } | null;
 
@@ -241,6 +268,8 @@ export class JustDoChatElement extends LitElement {
   private assistantStreamSessionIdentity: string | null = null;
   private pacedTerminalProjection: PacedTerminalProjection | null = null;
   private actionableUserEntryId: string | null = null;
+  private userMessageHistoryActionsAvailable = false;
+  private forkEligibilityMessages: GatewayMessage[] = [];
 
   constructor() {
     super();
@@ -256,6 +285,7 @@ export class JustDoChatElement extends LitElement {
     this.processSummariesExpanded = false;
     this.runTimings = [];
     this.onLastUserMessageAction = undefined;
+    this.onAssistantMessageFork = undefined;
     this.userMessageEditor = null;
     this.openProcessSummaryKey = null;
     this.collapsedProcessSummaryKeys = new Set();
@@ -870,6 +900,35 @@ export class JustDoChatElement extends LitElement {
       .user-message-action svg {
         width: 15px;
         height: 15px;
+      }
+
+      .assistant-message-action {
+        display: inline-grid;
+        width: 24px;
+        height: 24px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 0;
+        border-radius: 5px;
+        padding: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        opacity: 0.7;
+        -webkit-app-region: no-drag;
+      }
+
+      .assistant-message-action:hover,
+      .assistant-message-action:focus-visible {
+        outline: none;
+        background: color-mix(in srgb, currentColor 10%, transparent);
+        color: var(--justdo-chat-text, #1a1a1a);
+        opacity: 1;
+      }
+
+      .assistant-message-action svg {
+        width: 14px;
+        height: 14px;
       }
 
       .user-message-editor {
@@ -2339,6 +2398,24 @@ export class JustDoChatElement extends LitElement {
         box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.45);
       }
 
+      .chat-history-row--revealed {
+        border-radius: 14px;
+        animation: history-reveal 1.8s ease-out;
+      }
+
+      @keyframes history-reveal {
+        0%,
+        35% {
+          background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 16%, transparent);
+          box-shadow: 0 0 0 4px
+            color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 10%, transparent);
+        }
+        100% {
+          background: transparent;
+          box-shadow: none;
+        }
+      }
+
       .active-turn {
         position: relative;
         width: 100%;
@@ -3114,17 +3191,22 @@ export class JustDoChatElement extends LitElement {
     }
     let messages = this.projectedActiveMessages;
     const persistedMessages = messages;
+    this.forkEligibilityMessages = ctrl
+      ? (ctrl.getLoadedMessages() as GatewayMessage[])
+      : persistedMessages;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
-    this.actionableUserEntryId =
+    this.userMessageHistoryActionsAvailable = Boolean(
       ctrl &&
       ctrl.state.connected &&
       !isStreaming &&
       !ctrl.state.chatLoading &&
       !ctrl.state.historyLoadingOlder &&
       !ctrl.state.compactionInFlight &&
-      ctrl.state.pendingUserMessage === null
-        ? latestPersistedUserEntryId(ctrl.getLoadedMessages() as GatewayMessage[])
-        : null;
+      ctrl.state.pendingUserMessage === null,
+    );
+    this.actionableUserEntryId = this.userMessageHistoryActionsAvailable
+      ? latestPersistedUserEntryId(ctrl!.getLoadedMessages() as GatewayMessage[])
+      : null;
 
     // Merge the optimistic prompt in turn order during session transitions.
     messages = mergePendingUserMessageForDisplay(messages, pendingMessage);
@@ -3166,13 +3248,12 @@ export class JustDoChatElement extends LitElement {
         historyTimeline,
         activeTimeline,
       );
-      const activeTurnFooter = projectActiveTurnFooter(
-        selectActiveTurnTiming(
-          ctrl?.getCurrentTurnTiming() ?? null,
-          currentRunTiming,
-          activeTurn !== null,
-        ),
+      const activeFooterTiming = selectActiveTurnTiming(
+        ctrl?.getCurrentTurnTiming() ?? null,
+        currentRunTiming,
+        activeTurn !== null,
       );
+      const activeTurnFooter = projectActiveTurnFooter(activeFooterTiming);
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
         activeTimeline,
@@ -3270,7 +3351,7 @@ export class JustDoChatElement extends LitElement {
                     >
                       <div class="chat-group__avatar" aria-hidden="true"></div>
                       <footer class="active-turn__footer">
-                        ${this.activeTurnFooter(activeTurnFooter, messages)}
+                        ${this.activeTurnFooter(activeTurnFooter, messages, activeFooterTiming)}
                       </footer>
                     </section>
                   `
@@ -3918,6 +3999,19 @@ export class JustDoChatElement extends LitElement {
     return { index: this.activeSearchIndex, total };
   }
 
+  public revealMessage(entryId: string): boolean {
+    const normalizedEntryId = entryId.trim();
+    if (!normalizedEntryId) return false;
+    const rows = this.renderRoot.querySelectorAll<HTMLElement>('.chat-history-row[data-entry-id]');
+    const target = [...rows].find(row => row.dataset.entryId === normalizedEntryId);
+    if (!target) return false;
+    target.classList.remove('chat-history-row--revealed');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    requestAnimationFrame(() => target.classList.add('chat-history-row--revealed'));
+    window.setTimeout(() => target.classList.remove('chat-history-row--revealed'), 1_900);
+    return true;
+  }
+
   private emitSearchMatchCount(): void {
     const total = this.getSearchMatchCount();
     if (this.activeSearchIndex >= total) {
@@ -4050,14 +4144,37 @@ export class JustDoChatElement extends LitElement {
   private activeTurnFooter(
     footer: ActiveTurnFooter,
     persistedMessages: GatewayMessage[],
+    timing: AssistantTurnTiming | SessionRunTiming | null,
   ): TemplateResult | typeof nothing {
     const model = resolveActiveTurnModel(persistedMessages, footer.modelRef);
+    const timingRunIds = new Set(
+      timing
+        ? [
+            'runId' in timing ? timing.runId : undefined,
+            'rootRunId' in timing ? timing.rootRunId : undefined,
+            'clientTurnId' in timing ? timing.clientTurnId : undefined,
+          ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+        : [],
+    );
+    const matchingAssistant = [...this.forkEligibilityMessages].reverse().find(
+      message =>
+        message.role?.toLowerCase() === 'assistant' &&
+        timingRunIds.has(gatewayMessageRunId(message) ?? ''),
+    );
+    const forkPoint =
+      footer.status === 'completed' &&
+      !footer.running &&
+      this.userMessageHistoryActionsAvailable &&
+      this.onAssistantMessageFork
+        ? this.assistantForkPoint(openClawEntryId(matchingAssistant))
+        : null;
     return this.renderRunFooter({
       status: footer.status,
       running: footer.running,
       model,
       completedAt: footer.completedAt,
       durationMs: footer.durationMs,
+      forkPoint,
     });
   }
 
@@ -4073,12 +4190,31 @@ export class JustDoChatElement extends LitElement {
     });
   }
 
+  /**
+   * Allows only entries on the implementation side of the latest Plan reset.
+   * The Gateway validates and includes the selected assistant entry atomically.
+   */
+  private assistantForkPoint(
+    entryId: string | null,
+  ): { entryId: string } | null {
+    if (
+      !entryId ||
+      !isEntryAfterLatestPlanImplementationReset(this.forkEligibilityMessages, entryId)
+    ) {
+      return null;
+    }
+    return this.forkEligibilityMessages.some(message => openClawEntryId(message) === entryId)
+      ? { entryId }
+      : null;
+  }
+
   private renderRunFooter(details: {
     status: ActiveTurnFooter['status'];
     running: boolean;
     model?: string;
     completedAt?: number | null;
     durationMs?: number;
+    forkPoint?: { entryId: string } | null;
   }): TemplateResult | typeof nothing {
     const model = details.model?.trim() ?? '';
     const completedDateCandidate =
@@ -4125,6 +4261,31 @@ export class JustDoChatElement extends LitElement {
           : nothing
       }
       ${durationLabel ? html`<span>${durationLabel}</span>` : nothing}
+      ${
+        details.forkPoint
+          ? html`
+              <button
+                type="button"
+                class="assistant-message-action assistant-message-action--fork"
+                aria-label=${i18nService.t('coworkForkFromMessage')}
+                title=${i18nService.t('coworkForkFromMessage')}
+                @click=${(event: Event) => {
+                  event.stopPropagation();
+                  void this.onAssistantMessageFork?.(details.forkPoint!.entryId);
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.8"
+                    d="M7 4v4a4 4 0 0 0 4 4h6m0 0-3-3m3 3-3 3M7 20v-4"
+                  ></path>
+                </svg>
+              </button>
+            `
+          : nothing
+      }
     `;
   }
 
@@ -4169,10 +4330,18 @@ export class JustDoChatElement extends LitElement {
           : historyItem,
       );
       const entryId = openClawEntryId(item.message);
+      const isPersistedUserMessage = item.message.role?.toLowerCase() === 'user' && entryId;
+      const canEditOrWithdraw =
+        isPersistedUserMessage &&
+        entryId === this.actionableUserEntryId &&
+        isEntryAfterLatestPlanImplementationReset(this.forkEligibilityMessages, entryId) &&
+        Boolean(this.onLastUserMessageAction);
       const userMessageActions =
-        entryId && entryId === this.actionableUserEntryId && this.onLastUserMessageAction
+        entryId && canEditOrWithdraw
           ? {
               entryId,
+              canEdit: canEditOrWithdraw,
+              canWithdraw: canEditOrWithdraw,
               onAction: (action: UserMessageHistoryAction, targetEntryId: string) => {
                 if (action === 'edit') {
                   this.userMessageEditor = {
@@ -4189,7 +4358,7 @@ export class JustDoChatElement extends LitElement {
                 }
                 this.onLastUserMessageAction?.(action, targetEntryId);
               },
-              ...(this.userMessageEditor?.entryId === entryId
+              ...(canEditOrWithdraw && this.userMessageEditor?.entryId === entryId
                 ? {
                     editor: {
                       value: this.userMessageEditor.value,
@@ -4222,9 +4391,38 @@ export class JustDoChatElement extends LitElement {
                 : {}),
             }
           : undefined;
+      const assistantForkPoint =
+        item.message.role?.toLowerCase() === 'assistant' &&
+        showFooter &&
+        item.durationMs !== undefined &&
+        item.runState === 'completed' &&
+        this.userMessageHistoryActionsAvailable &&
+        this.onAssistantMessageFork
+          ? this.assistantForkPoint(entryId)
+          : null;
+      const assistantMessageFork = assistantForkPoint
+        ? {
+            ...assistantForkPoint,
+            onFork: (sourceEntryId: string) => {
+              void this.onAssistantMessageFork?.(sourceEntryId);
+            },
+          }
+        : undefined;
       return html`
-        <div class="chat-history-row" data-history-key=${item.key} data-minimap-anchor=${item.key}>
-          ${this.renderItems(historyItems, null, showAvatar, showFooter, userMessageActions)}
+        <div
+          class="chat-history-row"
+          data-history-key=${item.key}
+          data-minimap-anchor=${item.key}
+          data-entry-id=${entryId ?? nothing}
+        >
+          ${this.renderItems(
+            historyItems,
+            null,
+            showAvatar,
+            showFooter,
+            userMessageActions,
+            assistantMessageFork,
+          )}
         </div>
       `;
     }
@@ -4554,6 +4752,10 @@ export class JustDoChatElement extends LitElement {
       entryId: string;
       onAction: (action: UserMessageHistoryAction, entryId: string) => void;
     },
+    assistantMessageFork?: {
+      entryId: string;
+      onFork: (entryId: string) => void;
+    },
   ): Array<TemplateResult | typeof nothing> {
     const rendered: Array<TemplateResult | typeof nothing> = [];
 
@@ -4597,6 +4799,7 @@ export class JustDoChatElement extends LitElement {
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
             userMessageActions,
+            assistantMessageFork,
           }),
         );
         continue;

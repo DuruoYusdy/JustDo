@@ -29,6 +29,8 @@ interface ChatMessageDisplayProps {
     entryId: string,
     editedText?: string,
   ) => boolean | Promise<boolean>;
+  onAssistantMessageFork?: (entryId: string) => boolean | Promise<boolean>;
+  onChatElementChange?: (element: JustDoChatElement | null) => void;
 }
 
 /**
@@ -53,6 +55,8 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   onSearchMatchCountChange,
   runTimings = [],
   onLastUserMessageAction,
+  onAssistantMessageFork,
+  onChatElementChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<JustDoChatElement | null>(null);
@@ -67,6 +71,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     }
     container.appendChild(chat);
     chatRef.current = chat;
+    onChatElementChange?.(chat);
 
     const syncTheme = () => {
       chat.classList.toggle('dark', document.documentElement.classList.contains('dark'));
@@ -91,8 +96,9 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.controller = null;
       chat.remove();
       chatRef.current = null;
+      onChatElementChange?.(null);
     };
-  }, [assistantName, fullWidth, onSearchMatchCountChange]);
+  }, [assistantName, fullWidth, onChatElementChange, onSearchMatchCountChange]);
 
   useEffect(() => {
     const chat = chatRef.current;
@@ -108,6 +114,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
     chat.onLastUserMessageAction = onLastUserMessageAction;
+    chat.onAssistantMessageFork = onAssistantMessageFork;
   }, [
     assistantName,
     controller,
@@ -118,6 +125,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     workingDirectory,
     runTimings,
     onLastUserMessageAction,
+    onAssistantMessageFork,
   ]);
 
   useEffect(() => {

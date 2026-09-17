@@ -33,6 +33,10 @@ import {
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
+import {
+  CoworkSessionForkIpc,
+  type ForkCoworkSessionInput,
+} from '../shared/cowork/sessionFork';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
@@ -491,6 +495,8 @@ contextBridge.exposeInMainWorld('electron', {
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
     copySession: (input: CopyCoworkSessionInput) =>
       ipcRenderer.invoke(CoworkSessionCopyIpc.Copy, input),
+    forkSession: (input: ForkCoworkSessionInput) =>
+      ipcRenderer.invoke(CoworkSessionForkIpc.Fork, input),
     deleteSessions: (sessionIds: string[]) =>
       ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>

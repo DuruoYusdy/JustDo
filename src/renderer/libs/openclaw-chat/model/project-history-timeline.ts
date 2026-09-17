@@ -42,6 +42,7 @@ export type PersistedTimelineItem =
       durationMs?: number;
       completedAt?: number;
       modelRef?: string;
+      runState?: SessionRunTiming['state'];
     }
   | {
       kind: 'phase-boundary';
@@ -137,13 +138,29 @@ function runIdOf(
     message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
       ? (message.metadata as Record<string, unknown>)
       : null;
+  const outerOpenClaw =
+    outer.__openclaw &&
+    typeof outer.__openclaw === 'object' &&
+    !Array.isArray(outer.__openclaw)
+      ? (outer.__openclaw as Record<string, unknown>)
+      : null;
+  const messageOpenClaw =
+    message.__openclaw &&
+    typeof message.__openclaw === 'object' &&
+    !Array.isArray(message.__openclaw)
+      ? (message.__openclaw as Record<string, unknown>)
+      : null;
   for (const value of [
     message.runId,
     message.run_id,
+    messageOpenClaw?.runId,
+    messageOpenClaw?.run_id,
     messageMetadata?.runId,
     messageMetadata?.run_id,
     outer.runId,
     outer.run_id,
+    outerOpenClaw?.runId,
+    outerOpenClaw?.run_id,
     outerMetadata?.runId,
     outerMetadata?.run_id,
   ]) {
@@ -361,11 +378,13 @@ export function projectPersistedTimeline(
     durationMs?: number,
     completedAt?: number,
     modelRef?: string,
+    runState?: SessionRunTiming['state'],
   ) => {
     flushSummary();
     if (durationMs !== undefined && lastTimedMessage) {
       delete lastTimedMessage.durationMs;
       delete lastTimedMessage.completedAt;
+      delete lastTimedMessage.runState;
     }
     const item: Extract<PersistedTimelineItem, { kind: 'history-message' }> = {
       kind: 'history-message',
@@ -374,6 +393,7 @@ export function projectPersistedTimeline(
       ...(durationMs !== undefined ? { durationMs } : {}),
       ...(completedAt !== undefined ? { completedAt } : {}),
       ...(modelRef ? { modelRef } : {}),
+      ...(runState ? { runState } : {}),
     };
     projected.push(item);
     if (durationMs !== undefined) lastTimedMessage = item;
@@ -624,6 +644,7 @@ export function projectPersistedTimeline(
         : undefined;
     const completedAt = durationMs === undefined ? undefined : activeTiming?.endedAt;
     const modelRef = durationMs === undefined ? undefined : activeTiming?.modelRef;
+    const runState = durationMs === undefined ? undefined : activeTiming?.state;
     const attachments = [
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),
@@ -654,7 +675,7 @@ export function projectPersistedTimeline(
         (attachments.length === 0 && !hasBlankAssistantControlContent) ||
         (typeof message.content === 'string' && message.content.trim().length > 0)
       ) {
-        emitMessage(outerMessage, messageKey, durationMs, completedAt, modelRef);
+        emitMessage(outerMessage, messageKey, durationMs, completedAt, modelRef, runState);
       }
       for (const [index, attached] of attachments.entries()) {
         applyToolOnlyMessage(
@@ -677,6 +698,7 @@ export function projectPersistedTimeline(
         durationMs,
         completedAt,
         modelRef,
+        runState,
       );
       visibleBlocks = [];
     };

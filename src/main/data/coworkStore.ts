@@ -113,8 +113,15 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  forkSource?: CoworkSessionForkSource;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface CoworkSessionForkSource {
+  sessionId?: string;
+  title: string;
+  entryId: string;
 }
 
 export interface CoworkSessionSummary {
@@ -538,6 +545,7 @@ export class CoworkStore {
     agentId: string = 'main',
     permissionMode: PermissionMode = DEFAULT_PERMISSION_MODE,
     modelRef?: string,
+    forkSource?: { sessionId: string; title: string; entryId: string },
   ): CoworkSession {
     const id = uuidv4();
     const now = Date.now();
@@ -545,8 +553,12 @@ export class CoworkStore {
     this.db
       .prepare(
         `
-      INSERT INTO cowork_sessions (id, title, status, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, model_ref, pinned, created_at, updated_at)
-      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO cowork_sessions (
+        id, title, status, cwd, execution_mode, permission_mode, active_skill_ids, agent_id,
+        model_ref, forked_from_session_id, forked_from_session_title, forked_from_entry_id,
+        pinned, created_at, updated_at
+      )
+      VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `,
       )
       .run(
@@ -558,6 +570,9 @@ export class CoworkStore {
         JSON.stringify(activeSkillIds),
         agentId,
         modelRef?.trim() || null,
+        forkSource?.sessionId ?? null,
+        forkSource?.title ?? null,
+        forkSource?.entryId ?? null,
         now,
         now,
       );
@@ -573,6 +588,7 @@ export class CoworkStore {
       activeSkillIds,
       agentId,
       ...(modelRef?.trim() ? { modelRef: modelRef.trim() } : {}),
+      ...(forkSource ? { forkSource: { ...forkSource } } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -590,15 +606,27 @@ export class CoworkStore {
       active_skill_ids?: string | null;
       agent_id?: string | null;
       model_ref?: string | null;
+      forked_from_session_id?: string | null;
+      forked_from_session_title?: string | null;
+      forked_from_entry_id?: string | null;
+      live_fork_source_id?: string | null;
+      live_fork_source_title?: string | null;
       created_at: number;
       updated_at: number;
     }
 
     const row = this.getOne<SessionRow>(
       `
-      SELECT id, title, status, pinned, cwd, execution_mode, permission_mode, active_skill_ids, agent_id, model_ref, created_at, updated_at
-      FROM cowork_sessions
-      WHERE id = ?
+      SELECT
+        session.id, session.title, session.status, session.pinned, session.cwd,
+        session.execution_mode, session.permission_mode, session.active_skill_ids,
+        session.agent_id, session.model_ref, session.forked_from_session_id,
+        session.forked_from_session_title, session.forked_from_entry_id,
+        source.id AS live_fork_source_id, source.title AS live_fork_source_title,
+        session.created_at, session.updated_at
+      FROM cowork_sessions AS session
+      LEFT JOIN cowork_sessions AS source ON source.id = session.forked_from_session_id
+      WHERE session.id = ?
     `,
       [id],
     );
@@ -614,6 +642,8 @@ export class CoworkStore {
         activeSkillIds = [];
       }
     }
+    const forkSourceTitle =
+      row.live_fork_source_title?.trim() || row.forked_from_session_title?.trim();
 
     return {
       id: row.id,
@@ -626,6 +656,17 @@ export class CoworkStore {
       activeSkillIds,
       agentId: row.agent_id || 'main',
       ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
+      ...(row.forked_from_entry_id?.trim() && forkSourceTitle
+        ? {
+            forkSource: {
+              ...(row.live_fork_source_id?.trim()
+                ? { sessionId: row.live_fork_source_id.trim() }
+                : {}),
+              title: forkSourceTitle,
+              entryId: row.forked_from_entry_id.trim(),
+            },
+          }
+        : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

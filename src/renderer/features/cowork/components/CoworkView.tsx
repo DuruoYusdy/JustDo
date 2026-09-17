@@ -1,6 +1,7 @@
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
+  ArrowUturnLeftIcon,
   ChatBubbleLeftEllipsisIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
@@ -248,7 +249,7 @@ export interface CoworkViewHandle {
 let lastHomeGreeting: string | undefined;
 
 type SessionTranscriptMutation = {
-  kind: 'copy' | 'message';
+  kind: 'copy' | 'fork' | 'message';
   sessionId: string;
 };
 
@@ -359,6 +360,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     initialPlanPreviewState,
   );
   const [goalRunProgress, setGoalRunProgress] = useState<GoalRunProgress | null>(null);
+  const [goalPresence, setGoalPresence] = useState<{
+    sessionId: string | undefined;
+    hasGoal: boolean;
+  }>({ sessionId: undefined, hasGoal: false });
   const [contextUsage, setContextUsage] = useState<ChatContextUsageSnapshot | null>(null);
   const [progressCardState, setProgressCardState] = useState<ProgressCardViewState | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
@@ -370,6 +375,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     useState<SessionTranscriptMutation | null>(null);
   const [pendingMessageHistoryAction, setPendingMessageHistoryAction] =
     useState<PendingMessageHistoryAction | null>(null);
+  const [pendingSourceReveal, setPendingSourceReveal] = useState<{
+    sessionId: string;
+    entryId: string;
+  } | null>(null);
   const [sessionExportMessageCount, setSessionExportMessageCount] = useState(0);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
@@ -424,6 +433,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const pendingAttachmentsRef = useRef<CoworkAttachmentPayload[]>([]);
   const pendingGatewayPromptRef = useRef<string | undefined>(undefined);
   const pendingInitialGoalRef = useRef<{ sessionId: string; objective: string } | null>(null);
+
+  const handleGoalPresenceChange = useCallback(
+    (sessionId: string | undefined, hasGoal: boolean) => {
+      setGoalPresence(current =>
+        current.sessionId === sessionId && current.hasGoal === hasGoal
+          ? current
+          : { sessionId, hasGoal },
+      );
+    },
+    [],
+  );
 
   const retainedPlanInteraction = retainedPlanForSession(planPreviewState, currentSessionId);
   const visiblePlanInteraction = planInteraction ?? retainedPlanInteraction;
@@ -561,6 +581,19 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const isStreaming = useSelector(selectIsStreaming);
   const sessionRuntimeActivity = useSelector(selectSessionRuntimeActivity);
   const sessionRunTimings = useSelector(selectSessionRunTimings);
+  useEffect(() => {
+    if (!pendingSourceReveal || pendingSourceReveal.sessionId !== currentSessionId) return;
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      void chatWrapperRef.current?.revealMessage(pendingSourceReveal.entryId).finally(() => {
+        if (!cancelled) setPendingSourceReveal(null);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [currentSessionId, pendingSourceReveal]);
   useEffect(() => {
     for (const [sessionId, operation] of pendingMessageSubmissionsRef.current) {
       if (!operation.unknownMarked) continue;
@@ -2089,6 +2122,97 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       });
     };
 
+    const handleAssistantMessageFork = async (entryId: string): Promise<boolean> => {
+      const sourceSession = currentSession;
+      const sourceSessionId = sourceSession.id;
+      if (sourceSessionId.startsWith('temp-') || sessionTranscriptMutationRef.current) {
+        return false;
+      }
+      const operation = { kind: 'fork' as const, sessionId: sourceSessionId };
+      sessionTranscriptMutationRef.current = operation;
+      setSessionTranscriptMutation(operation);
+      try {
+        const runtime = await coworkService.getSessionRuntimeStatus(sourceSessionId, {
+          includeSubagents: true,
+          forceRefresh: true,
+          fullScan: true,
+        });
+        if (currentSessionIdRef.current !== sourceSessionId) return false;
+        if (!runtime.known || runtime.running) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t(
+                runtime.running
+                  ? 'coworkForkWaitForCompletion'
+                  : 'coworkMessageHistoryActivityUnknown',
+              ),
+            }),
+          );
+          return false;
+        }
+        const canNavigate = await requestFilePreviewTransition();
+        if (!canNavigate || currentSessionIdRef.current !== sourceSessionId) return false;
+        const forked = await coworkService.forkSession(sourceSession, entryId);
+        if (!forked) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('coworkForkSessionFailed'),
+            }),
+          );
+          return false;
+        }
+        dispatch(setDraftPrompt({ sessionId: forked.session.id, draft: forked.draft.text }));
+        dispatch(
+          setDraftAttachments({
+            draftKey: forked.session.id,
+            attachments: restoredDraftAttachments(forked.draft),
+          }),
+        );
+        dispatch(clearDraftBrowserAnnotations({ draftKey: forked.session.id }));
+        for (const annotation of forked.draft.browserAnnotations ?? []) {
+          dispatch(addDraftBrowserAnnotation({ draftKey: forked.session.id, annotation }));
+        }
+        if (store.getState().cowork.currentSession?.id === forked.session.id) {
+          requestAnimationFrame(() => {
+            promptInputRef.current?.setValue(forked.draft.text);
+            promptInputRef.current?.focus();
+          });
+        }
+        return true;
+      } catch (error) {
+        console.error('[CoworkView] Failed to fork from an assistant response:', error);
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkForkSessionFailed'),
+          }),
+        );
+        return false;
+      } finally {
+        if (sessionTranscriptMutationRef.current === operation) {
+          sessionTranscriptMutationRef.current = null;
+          setSessionTranscriptMutation(null);
+        }
+      }
+    };
+
+    const handleOpenForkSource = async (): Promise<void> => {
+      const sourceSessionId = currentSession.forkSource?.sessionId;
+      const sourceEntryId = currentSession.forkSource?.entryId;
+      if (!sourceSessionId || !sourceEntryId) return;
+      const canNavigate = await requestFilePreviewTransition();
+      if (!canNavigate || currentSessionIdRef.current !== currentSession.id) return;
+      const loaded = await coworkService.loadSession(sourceSessionId);
+      if (!loaded) {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: i18nService.t('coworkBranchSourceUnavailable'),
+          }),
+        );
+      } else {
+        setPendingSourceReveal({ sessionId: sourceSessionId, entryId: sourceEntryId });
+      }
+    };
+
     const performLastUserMessageAction = async ({
       action,
       entryId,
@@ -2373,6 +2497,39 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   {currentSession.title}
                 </h1>
+                {currentSession.forkSource &&
+                  (currentSession.forkSource.sessionId ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenForkSource()}
+                      className="ml-2 inline-flex min-w-0 max-w-[min(24vw,18rem)] items-center gap-1 rounded-md px-1.5 py-1 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+                      title={i18nService
+                        .t('coworkOpenBranchSource')
+                        .replace('{title}', currentSession.forkSource.title)}
+                      aria-label={i18nService
+                        .t('coworkOpenBranchSource')
+                        .replace('{title}', currentSession.forkSource.title)}
+                    >
+                      <ArrowUturnLeftIcon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {i18nService
+                          .t('coworkBranchedFrom')
+                          .replace('{title}', currentSession.forkSource.title)}
+                      </span>
+                    </button>
+                  ) : (
+                    <span
+                      className="ml-2 inline-flex min-w-0 max-w-[min(24vw,18rem)] items-center gap-1 px-1.5 py-1 text-xs text-muted"
+                      title={i18nService.t('coworkBranchSourceUnavailable')}
+                    >
+                      <ArrowUturnLeftIcon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {i18nService
+                          .t('coworkBranchedFrom')
+                          .replace('{title}', currentSession.forkSource.title)}
+                      </span>
+                    </span>
+                  ))}
               </div>
               <div className="non-draggable flex min-w-0 items-center gap-1">
                 {currentSessionFolderPath && currentSessionFolderName && (
@@ -2619,7 +2776,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 setReportedGatewaySessionKey({ sessionId: currentSession.id, sessionKey })
               }
               onLastUserMessageAction={
-                sessionTranscriptMutation === null ? handleLastUserMessageAction : undefined
+                sessionTranscriptMutation === null &&
+                !(goalPresence.sessionId === currentSession.id && goalPresence.hasGoal)
+                  ? handleLastUserMessageAction
+                  : undefined
+              }
+              onAssistantMessageFork={
+                sessionTranscriptMutation === null &&
+                !currentSessionRuntimeRunning &&
+                !currentSession.id.startsWith('temp-')
+                  ? handleAssistantMessageFork
+                  : undefined
               }
               runTimings={sessionRunTimings[currentSession.id] ?? []}
             />
@@ -2649,6 +2816,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       initialGoalObjective={initialGoalObjective}
                       goalRunProgress={goalRunProgress}
                       onGoalResumeAccepted={handleGoalResumeAccepted}
+                      onGoalPresenceChange={handleGoalPresenceChange}
                     />
                   </div>
                   {isQuestionInputBlocked && (
