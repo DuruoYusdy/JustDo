@@ -32,6 +32,16 @@ describe('runGuardedFilePreviewNavigation', () => {
     expect(order).toEqual(['transition', 'navigate']);
   });
 
+  test('passes tab-preservation options to the transition guard', async () => {
+    const requestTransition = vi.fn().mockResolvedValue(true);
+    const navigate = vi.fn();
+
+    await runGuardedFilePreviewNavigation(requestTransition, navigate, { preserveTabs: true });
+
+    expect(requestTransition).toHaveBeenCalledWith({ preserveTabs: true });
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
   test('accepts only the latest request from the active session', () => {
     expect(isCurrentFilePreviewRequest(3, 3, 'session-a', 'session-a')).toBe(true);
     expect(isCurrentFilePreviewRequest(2, 3, 'session-a', 'session-a')).toBe(false);

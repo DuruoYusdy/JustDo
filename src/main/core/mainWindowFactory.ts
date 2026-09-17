@@ -268,12 +268,16 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       if (details.postBody) {
         mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
           url,
+          openerGuestId: guestContents.id,
           errorCode: 'post-navigation-blocked',
         });
         return { action: 'deny' };
       }
       if (isAllowedBrowserPanelUrl(url)) {
-        mainWindow.webContents.send(BrowserIpc.PanelOpenTab, { url: url || 'about:blank' });
+        mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
+          url: url || 'about:blank',
+          openerGuestId: guestContents.id,
+        });
       }
       return { action: 'deny' };
     });

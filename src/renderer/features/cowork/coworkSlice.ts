@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { BrowserAnnotationDraft } from '@shared/browser';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
+import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/displayTabRetention';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/sessionGoal';
 
@@ -86,6 +87,7 @@ const initialState: CoworkState = {
     agentEngine: 'openclaw',
     permissionMode: DEFAULT_PERMISSION_MODE,
     maxGoalContinuationTurns: DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
+    maxRetainedDisplayTabs: DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   },
   thinkingExpanded: false, // Default to collapsed (浅蓝色)
   toolExpanded: true, // Default to expanded (浅蓝色)

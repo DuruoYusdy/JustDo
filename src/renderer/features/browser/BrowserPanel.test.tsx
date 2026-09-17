@@ -8,12 +8,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { i18nService } from '@/services/i18n';
 
 import BrowserPanel, { type BrowserPanelHandle, getBrowserTabAddress } from './BrowserPanel';
+import { promoteBrowserPanelTabs } from './browserPanelRetention';
 
 vi.mock('@/features/cowork/components/composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
 }));
 
-type PanelOpenTabListener = (event: { url: string; errorCode?: 'post-navigation-blocked' }) => void;
+type PanelOpenTabListener = (event: {
+  url: string;
+  openerGuestId?: number;
+  errorCode?: 'post-navigation-blocked';
+}) => void;
 
 let panelOpenTabListener: PanelOpenTabListener | null = null;
 let nextId = 0;
@@ -76,23 +81,27 @@ const defineWebviewMethod = (name: string, value: unknown) => {
 };
 
 function BrowserPanelHarness({
+  draftKey = '__home__',
   embedded = false,
   isOpen = true,
   onTabsChange,
   onRequestBrowserSettings,
   panelRef,
+  retainedTargetIds,
 }: {
+  draftKey?: string;
   embedded?: boolean;
   isOpen?: boolean;
   onTabsChange?: ComponentProps<typeof BrowserPanel>['onTabsChange'];
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
   panelRef?: (instance: BrowserPanelHandle | null) => void;
+  retainedTargetIds?: readonly string[];
 }) {
   const [activeTargetId, setActiveTargetId] = useState<string | null>(null);
   return (
     <BrowserPanel
       ref={panelRef}
-      draftKey="__home__"
+      draftKey={draftKey}
       isOpen={isOpen}
       width={520}
       activeTargetId={activeTargetId}
@@ -102,6 +111,7 @@ function BrowserPanelHarness({
       onAddAnnotation={() => true}
       onTabsChange={onTabsChange}
       onRequestBrowserSettings={onRequestBrowserSettings}
+      retainedTargetIds={retainedTargetIds}
       embedded={embedded}
     />
   );
@@ -143,6 +153,7 @@ describe('BrowserPanel embedded webview', () => {
     defineWebviewMethod('getURL', function (this: HTMLElement) {
       return this.getAttribute('src') ?? 'about:blank';
     });
+    defineWebviewMethod('getWebContentsId', () => 7);
     defineWebviewMethod('goBack', vi.fn());
     defineWebviewMethod('goForward', vi.fn());
     defineWebviewMethod('loadURL', loadUrl);
@@ -245,6 +256,7 @@ describe('BrowserPanel embedded webview', () => {
       'canGoForward',
       'getTitle',
       'getURL',
+      'getWebContentsId',
       'goBack',
       'goForward',
       'loadURL',
@@ -300,6 +312,47 @@ describe('BrowserPanel embedded webview', () => {
       onTabsChange.mock.calls.length - 1
     ]?.[0] as BrowserPanelTab[];
     act(() => panelHandle?.closeTab(tabs[tabs.length - 1]!.targetId));
+  });
+
+  it('unmounts only browser tabs evicted by the external retention limit', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    let latestTabs: BrowserPanelTab[] = [];
+    const { container, rerender } = render(
+      <BrowserPanelHarness
+        draftKey="retention-eviction-test"
+        embedded
+        onTabsChange={tabs => {
+          latestTabs = tabs;
+        }}
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+      />,
+    );
+
+    act(() => {
+      panelHandle?.openTab('https://one.example');
+      panelHandle?.openTab('https://two.example');
+    });
+    await waitFor(() => expect(latestTabs).toHaveLength(2));
+    const retainedTargetId = latestTabs[1]!.targetId;
+
+    rerender(
+      <BrowserPanelHarness
+        draftKey="retention-eviction-test"
+        embedded
+        retainedTargetIds={[retainedTargetId]}
+        onTabsChange={tabs => {
+          latestTabs = tabs;
+        }}
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(latestTabs.map(tab => tab.targetId)).toEqual([retainedTargetId]));
+    await waitFor(() => expect(container.querySelectorAll('webview')).toHaveLength(1));
   });
 
   it('forwards the configured browser shortcut from panel controls', () => {
@@ -487,6 +540,15 @@ describe('BrowserPanel embedded webview', () => {
       expect(webview.getAttribute('allowpopups')).toBe('true');
       expect(webview.getAttribute('partition')).toBe('persist:justdo-browser');
     }
+  });
+
+  it('ignores popup events emitted by a webview owned by another retained panel', async () => {
+    const { container } = render(<BrowserPanelHarness draftKey="popup-routing-isolation" />);
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+
+    panelOpenTabListener?.({ url: 'https://foreign-popup.example', openerGuestId: 99 });
+
+    await waitFor(() => expect(container.querySelectorAll('webview')).toHaveLength(1));
   });
 
   it('reports a blocked target=_blank form submission without opening a GET tab', async () => {
@@ -1036,5 +1098,58 @@ describe('BrowserPanel embedded webview', () => {
     const secondView = render(<BrowserPanelHarness embedded onTabsChange={remountTabsChange} />);
     await waitFor(() => expect(remountTabsChange).toHaveBeenCalledWith([]));
     expect(secondView.container.querySelectorAll('webview')).toHaveLength(0);
+  });
+
+  it('isolates retained tabs by session and moves them when a session is promoted', async () => {
+    const homeKey = `home-${crypto.randomUUID()}`;
+    const sessionKey = `session-${crypto.randomUUID()}`;
+    let panelHandle: BrowserPanelHandle | null = null;
+    const homeTabsChange = vi.fn();
+    const homeView = render(
+      <BrowserPanelHarness
+        draftKey={homeKey}
+        embedded
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={homeTabsChange}
+      />,
+    );
+
+    act(() => panelHandle?.openTab('https://example.com/session-tab'));
+    await waitFor(() => {
+      const tabs = homeTabsChange.mock.calls[homeTabsChange.mock.calls.length - 1]?.[0] as
+        | BrowserPanelTab[]
+        | undefined;
+      expect(tabs).toHaveLength(1);
+    });
+    homeView.unmount();
+
+    const unrelatedTabsChange = vi.fn();
+    const unrelatedView = render(
+      <BrowserPanelHarness
+        draftKey={`other-${crypto.randomUUID()}`}
+        embedded
+        onTabsChange={unrelatedTabsChange}
+      />,
+    );
+    await waitFor(() => expect(unrelatedTabsChange).toHaveBeenCalledWith([]));
+    unrelatedView.unmount();
+
+    promoteBrowserPanelTabs(homeKey, sessionKey);
+    const promotedTabsChange = vi.fn();
+    render(
+      <BrowserPanelHarness
+        draftKey={sessionKey}
+        embedded
+        onTabsChange={promotedTabsChange}
+      />,
+    );
+    await waitFor(() => {
+      const tabs = promotedTabsChange.mock.calls[promotedTabsChange.mock.calls.length - 1]?.[0] as
+        | BrowserPanelTab[]
+        | undefined;
+      expect(tabs?.[0]?.url).toBe('https://example.com/session-tab');
+    });
   });
 });

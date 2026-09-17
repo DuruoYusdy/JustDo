@@ -25,7 +25,10 @@ import {
 } from '@/features/cowork/approvalQueue';
 import { CoworkView, type CoworkViewHandle } from '@/features/cowork/components';
 import ExecApprovalModal from '@/features/cowork/components/approvals/ExecApprovalModal';
-import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/preview/filePreviewNavigation';
+import {
+  type FilePreviewNavigationOptions,
+  runGuardedFilePreviewNavigation,
+} from '@/features/cowork/components/preview/filePreviewNavigation';
 import CoworkInteractionModal from '@/features/cowork/components/questions/CoworkInteractionModal';
 import CoworkQuestionFloatingWindow, {
   shouldShowCoworkQuestionWindow,
@@ -412,27 +415,44 @@ const App: React.FC = () => {
     setMainView('cowork');
   }, []);
 
-  const requestCoworkNavigation = useCallback(async (): Promise<boolean> => {
-    return (await coworkViewRef.current?.requestFilePreviewTransition()) ?? true;
-  }, []);
+  const requestCoworkNavigation = useCallback(
+    async (options?: FilePreviewNavigationOptions): Promise<boolean> => {
+      return (await coworkViewRef.current?.requestFilePreviewTransition(options)) ?? true;
+    },
+    [],
+  );
 
   const handleShowScheduledTasks = useCallback(async () => {
-    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () =>
-      setMainView('scheduledTasks'),
+    await runGuardedFilePreviewNavigation(
+      requestCoworkNavigation,
+      () => setMainView('scheduledTasks'),
+      { preserveTabs: true },
     );
   }, [requestCoworkNavigation]);
 
   const handleShowWorkboard = useCallback(async () => {
     if (!workboardEnabled) return;
-    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('workboard'));
+    await runGuardedFilePreviewNavigation(
+      requestCoworkNavigation,
+      () => setMainView('workboard'),
+      { preserveTabs: true },
+    );
   }, [requestCoworkNavigation, workboardEnabled]);
 
   const handleShowPlugins = useCallback(async () => {
-    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('plugins'));
+    await runGuardedFilePreviewNavigation(
+      requestCoworkNavigation,
+      () => setMainView('plugins'),
+      { preserveTabs: true },
+    );
   }, [requestCoworkNavigation]);
 
   const handleShowMemory = useCallback(async () => {
-    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('memory'));
+    await runGuardedFilePreviewNavigation(
+      requestCoworkNavigation,
+      () => setMainView('memory'),
+      { preserveTabs: true },
+    );
   }, [requestCoworkNavigation]);
 
   const handleToggleSidebar = useCallback(() => {
@@ -440,18 +460,22 @@ const App: React.FC = () => {
   }, []);
 
   const handleNewChat = useCallback(async (): Promise<boolean> => {
-    return runGuardedFilePreviewNavigation(requestCoworkNavigation, () => {
-      const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
-      coworkService.clearSession();
-      setMainView('cowork');
-      window.setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent('cowork:focus-input', {
-            detail: { clear: shouldClearInput },
-          }),
-        );
-      }, 0);
-    });
+    return runGuardedFilePreviewNavigation(
+      requestCoworkNavigation,
+      () => {
+        const shouldClearInput = mainView === 'cowork' || !!currentSessionId;
+        coworkService.clearSession();
+        setMainView('cowork');
+        window.setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent('cowork:focus-input', {
+              detail: { clear: shouldClearInput },
+            }),
+          );
+        }, 0);
+      },
+      { preserveTabs: true },
+    );
   }, [mainView, currentSessionId, requestCoworkNavigation]);
 
   const showToast = useCallback((content: string | ToastContent) => {
@@ -859,7 +883,7 @@ const App: React.FC = () => {
       </BottomRightStatusStack>
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {showSettings ? (
+        {showSettings && (
           <div className="flex-1 min-w-0 p-1.5">
             <div className="relative h-full min-h-0 overflow-hidden rounded-xl bg-background">
               <Settings
@@ -870,50 +894,57 @@ const App: React.FC = () => {
               />
             </div>
           </div>
-        ) : (
-          <>
-            <Sidebar
-              onShowSettings={handleShowSettings}
-              activeView={mainView}
-              onShowCowork={handleShowCowork}
-              onShowScheduledTasks={handleShowScheduledTasks}
-              onShowWorkboard={handleShowWorkboard}
-              showWorkboard={workboardEnabled}
-              onShowMemory={handleShowMemory}
-              onShowPlugins={handleShowPlugins}
-              onNewChat={handleNewChat}
-              onBeforeCoworkNavigation={requestCoworkNavigation}
-              isCollapsed={isSidebarCollapsed}
-              onToggleCollapse={handleToggleSidebar}
-              developerModeAvailable={developerModeAvailable}
-            />
-            <div className={`flex-1 min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-              <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
-                {mainView === 'scheduledTasks' ? (
-                  <CronView
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onToggleSidebar={handleToggleSidebar}
-                    onNewChat={handleNewChat}
-                  />
-                ) : mainView === 'workboard' && workboardEnabled ? (
-                  <WorkboardView
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onToggleSidebar={handleToggleSidebar}
-                    onNewChat={handleNewChat}
-                  />
-                ) : mainView === 'plugins' ? (
-                  <PluginsView
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onToggleSidebar={handleToggleSidebar}
-                    onNewChat={handleNewChat}
-                  />
-                ) : mainView === 'memory' ? (
-                  <MemoryView
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onToggleSidebar={handleToggleSidebar}
-                    onNewChat={handleNewChat}
-                  />
-                ) : (
+        )}
+        {!showSettings && (
+          <Sidebar
+            onShowSettings={handleShowSettings}
+            activeView={mainView}
+            onShowCowork={handleShowCowork}
+            onShowScheduledTasks={handleShowScheduledTasks}
+            onShowWorkboard={handleShowWorkboard}
+            showWorkboard={workboardEnabled}
+            onShowMemory={handleShowMemory}
+            onShowPlugins={handleShowPlugins}
+            onNewChat={handleNewChat}
+            onBeforeCoworkNavigation={requestCoworkNavigation}
+            isCollapsed={isSidebarCollapsed}
+            onToggleCollapse={handleToggleSidebar}
+            developerModeAvailable={developerModeAvailable}
+          />
+        )}
+        <div
+          className={`${showSettings ? 'hidden' : 'flex-1'} min-w-0 py-1.5 pr-1.5 ${isSidebarCollapsed ? 'pl-1.5' : ''}`}
+        >
+          <div className="relative h-full min-h-0 rounded-xl bg-background overflow-hidden">
+            {mainView === 'scheduledTasks' && (
+              <CronView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
+            )}
+            {mainView === 'workboard' && workboardEnabled && (
+              <WorkboardView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
+            )}
+            {mainView === 'plugins' && (
+              <PluginsView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
+            )}
+            {mainView === 'memory' && (
+              <MemoryView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+              />
+            )}
+            <div className={mainView === 'cowork' ? 'h-full' : 'hidden'}>
                   <CoworkView
                     ref={coworkViewRef}
                     onRequestAppSettings={handleShowSettings}
@@ -933,11 +964,9 @@ const App: React.FC = () => {
                         : Promise.resolve(false)
                     }
                   />
-                )}
-              </div>
             </div>
-          </>
-        )}
+          </div>
+        </div>
       </div>
       {questionWindows}
       {interactionModal}

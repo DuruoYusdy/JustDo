@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 
+import { normalizeMaxRetainedDisplayTabs } from '../../../shared/displayTabRetention';
 import {
   AgentRuntimeSettingsIpc,
   validateAgentRuntimeSettings,
@@ -159,6 +160,7 @@ export const registerCoworkConfigHandlers = ({
         agentEngine?: CoworkAgentEngine;
         permissionMode?: PermissionMode;
         maxGoalContinuationTurns?: number;
+        maxRetainedDisplayTabs?: number;
       },
     ) =>
       enqueueCoworkConfigUpdate(async () => {
@@ -186,12 +188,17 @@ export const registerCoworkConfigHandlers = ({
             config.maxGoalContinuationTurns === undefined
               ? undefined
               : normalizeMaxGoalContinuationTurns(config.maxGoalContinuationTurns);
+          const maxRetainedDisplayTabs =
+            config.maxRetainedDisplayTabs === undefined
+              ? undefined
+              : normalizeMaxRetainedDisplayTabs(config.maxRetainedDisplayTabs);
           const normalized: Parameters<CoworkStore['setConfig']>[0] = {
             workingDirectory: config.workingDirectory,
             executionMode,
             agentEngine,
             permissionMode,
             ...(maxGoalContinuationTurns === undefined ? {} : { maxGoalContinuationTurns }),
+            ...(maxRetainedDisplayTabs === undefined ? {} : { maxRetainedDisplayTabs }),
           };
           const store = getCoworkStore();
           const previous = store.getConfig();

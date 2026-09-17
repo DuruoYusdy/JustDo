@@ -16,6 +16,12 @@ import {
 } from '@heroicons/react/24/outline';
 import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import {
+  DEFAULT_MAX_RETAINED_DISPLAY_TABS,
+  MAX_MAX_RETAINED_DISPLAY_TABS,
+  MIN_MAX_RETAINED_DISPLAY_TABS,
+  normalizeMaxRetainedDisplayTabs,
+} from '@shared/displayTabRetention';
+import {
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
 } from '@shared/localSpeechSettings';
@@ -68,6 +74,7 @@ import {
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import { updateConfig as updateCoworkConfig } from '@/features/cowork/coworkSlice';
 import {
   BUILTIN_MODELS_UPDATED_EVENT,
   getEnabledProviderModels,
@@ -409,6 +416,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [maxGoalContinuationTurns, setMaxGoalContinuationTurns] = useState(
     DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
   );
+  const [maxRetainedDisplayTabs, setMaxRetainedDisplayTabs] = useState(
+    DEFAULT_MAX_RETAINED_DISPLAY_TABS,
+  );
   const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
   const [preventSleep, setPreventSleepState] = useState(false);
   const [isUpdatingPreventSleep, setIsUpdatingPreventSleep] = useState(false);
@@ -439,6 +449,7 @@ const Settings: React.FC<SettingsProps> = ({
   const initialAppearanceRef = useRef<AppearanceConfig>(appearance);
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const initialMaxGoalContinuationTurnsRef = useRef(DEFAULT_MAX_GOAL_CONTINUATION_TURNS);
+  const initialMaxRetainedDisplayTabsRef = useRef(DEFAULT_MAX_RETAINED_DISPLAY_TABS);
   const connectionTestRef = useRef({ generation: 0, requestId: null as string | null });
 
   const setNonLanguageModelCategory = useCallback(
@@ -765,6 +776,11 @@ const Settings: React.FC<SettingsProps> = ({
           const value = normalizeMaxGoalContinuationTurns(result.config.maxGoalContinuationTurns);
           setMaxGoalContinuationTurns(value);
           initialMaxGoalContinuationTurnsRef.current = value;
+          const retainedTabs = normalizeMaxRetainedDisplayTabs(
+            result.config.maxRetainedDisplayTabs,
+          );
+          setMaxRetainedDisplayTabs(retainedTabs);
+          initialMaxRetainedDisplayTabsRef.current = retainedTabs;
         }
       });
 
@@ -1288,14 +1304,35 @@ const Settings: React.FC<SettingsProps> = ({
 
       await persistSettingsInOrder({
         saveCoworkConfig: async () => {
-          if (maxGoalContinuationTurns === initialMaxGoalContinuationTurnsRef.current) {
+          const goalTurnsChanged =
+            maxGoalContinuationTurns !== initialMaxGoalContinuationTurnsRef.current;
+          const retainedTabsChanged =
+            maxRetainedDisplayTabs !== initialMaxRetainedDisplayTabsRef.current;
+          if (!goalTurnsChanged && !retainedTabsChanged) {
             return;
           }
-          const result = await window.electron.cowork.setConfig({ maxGoalContinuationTurns });
+          const result = await window.electron.cowork.setConfig({
+            ...(goalTurnsChanged ? { maxGoalContinuationTurns } : {}),
+            ...(retainedTabsChanged ? { maxRetainedDisplayTabs } : {}),
+          });
           if (!result.success) {
-            throw new Error(result.error || i18nService.t('goalContinuationSettingsSaveFailed'));
+            throw new Error(
+              result.error ||
+                i18nService.t(
+                  retainedTabsChanged
+                    ? 'displayTabRetentionSaveFailed'
+                    : 'goalContinuationSettingsSaveFailed',
+                ),
+            );
           }
           initialMaxGoalContinuationTurnsRef.current = maxGoalContinuationTurns;
+          initialMaxRetainedDisplayTabsRef.current = maxRetainedDisplayTabs;
+          dispatch(
+            updateCoworkConfig({
+              ...(goalTurnsChanged ? { maxGoalContinuationTurns } : {}),
+              ...(retainedTabsChanged ? { maxRetainedDisplayTabs } : {}),
+            }),
+          );
         },
         saveRuntimeSettings: async () => {
           if (!initialAgentRuntimeSettings) return;
@@ -2819,16 +2856,44 @@ const Settings: React.FC<SettingsProps> = ({
 
       case 'runtime':
         return (
-          <AgentRuntimeSettingsTab
-            settings={agentRuntimeSettings}
-            models={agentRuntimeModels}
-            isLoading={agentRuntimeSettingsLoading}
-            loadError={agentRuntimeSettingsLoadError}
-            onChange={setAgentRuntimeSettings}
-            onRetry={() => void loadAgentRuntimeSettings()}
-            maxGoalContinuationTurns={maxGoalContinuationTurns}
-            onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
-          />
+          <div className="space-y-3">
+            <section className="overflow-hidden rounded-xl border border-border bg-surface">
+              <div className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(180px,1fr)_minmax(260px,320px)] sm:items-center sm:gap-6">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-foreground">
+                    {i18nService.t('displayTabRetentionTitle')}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-4 text-secondary">
+                    {i18nService.t('displayTabRetentionDescription')}
+                  </p>
+                </div>
+                <input
+                  type="number"
+                  min={MIN_MAX_RETAINED_DISPLAY_TABS}
+                  max={MAX_MAX_RETAINED_DISPLAY_TABS}
+                  step={1}
+                  value={maxRetainedDisplayTabs}
+                  onChange={event =>
+                    setMaxRetainedDisplayTabs(
+                      normalizeMaxRetainedDisplayTabs(event.target.value),
+                    )
+                  }
+                  aria-label={i18nService.t('displayTabRetentionTitle')}
+                  className="ml-auto h-9 w-32 rounded-lg border border-border bg-surface-inset px-3 text-center text-sm font-medium tabular-nums text-foreground outline-none focus:border-primary"
+                />
+              </div>
+            </section>
+            <AgentRuntimeSettingsTab
+              settings={agentRuntimeSettings}
+              models={agentRuntimeModels}
+              isLoading={agentRuntimeSettingsLoading}
+              loadError={agentRuntimeSettingsLoadError}
+              onChange={setAgentRuntimeSettings}
+              onRetry={() => void loadAgentRuntimeSettings()}
+              maxGoalContinuationTurns={maxGoalContinuationTurns}
+              onMaxGoalContinuationTurnsChange={setMaxGoalContinuationTurns}
+            />
+          </div>
         );
 
       case 'browser':

@@ -1,8 +1,13 @@
+export interface FilePreviewNavigationOptions {
+  preserveTabs?: boolean;
+}
+
 export async function runGuardedFilePreviewNavigation(
-  requestTransition: () => Promise<boolean>,
+  requestTransition: (options?: FilePreviewNavigationOptions) => Promise<boolean>,
   navigate: () => unknown | Promise<unknown>,
+  options?: FilePreviewNavigationOptions,
 ): Promise<boolean> {
-  if (!(await requestTransition())) return false;
+  if (!(await requestTransition(options))) return false;
   await navigate();
   return true;
 }

@@ -119,11 +119,13 @@ describe('normalizeBrowserPanelOpenTabEvent', () => {
     expect(
       normalizeBrowserPanelOpenTabEvent({
         url: 'https://example.com/submit',
+        openerGuestId: 42,
         errorCode: 'post-navigation-blocked',
         secret: 'discarded',
       }),
     ).toEqual({
       url: 'https://example.com/submit',
+      openerGuestId: 42,
       errorCode: 'post-navigation-blocked',
     });
   });

@@ -1,0 +1,173 @@
+// @vitest-environment jsdom
+
+import { act, renderHook } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+
+import {
+  createSessionDisplayState,
+  enforceBackgroundTabLimit,
+  HOME_DISPLAY_SESSION_KEY,
+  useSessionDisplayState,
+} from './useSessionDisplayState';
+
+describe('useSessionDisplayState', () => {
+  it('keeps only the most recently used background tabs while protecting the active session', () => {
+    const sessionA = {
+      ...createSessionDisplayState(520),
+      terminalTabs: [
+        { id: 'terminal:old', cwd: 'C:\\a', label: 'Old' },
+        { id: 'terminal:recent', cwd: 'C:\\a', label: 'Recent' },
+      ],
+      filePreviews: [
+        { filePath: 'C:\\a\\large.txt', content: 'large content', editToken: 'token', version: '1' },
+      ],
+      tabRecency: {
+        'terminal:old': 1,
+        'file:C:/a/large.txt': 2,
+        'terminal:recent': 3,
+      },
+    };
+    const activeSession = {
+      ...createSessionDisplayState(520),
+      terminalTabs: [
+        { id: 'terminal:active-1', cwd: 'C:\\b', label: 'Active 1' },
+        { id: 'terminal:active-2', cwd: 'C:\\b', label: 'Active 2' },
+      ],
+      tabRecency: { 'terminal:active-1': 4, 'terminal:active-2': 5 },
+    };
+
+    const retained = enforceBackgroundTabLimit(
+      { 'session-a': sessionA, 'session-b': activeSession },
+      'session-b',
+      1,
+    );
+
+    expect(retained['session-a'].terminalTabs.map(tab => tab.id)).toEqual(['terminal:recent']);
+    expect(retained['session-a'].filePreviews).toEqual([]);
+    expect(retained['session-b'].terminalTabs).toHaveLength(2);
+  });
+
+  it('keeps tabs and panel visibility isolated by session', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string | null }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+
+    act(() => {
+      result.current.setters.setTerminalTabs([
+        { id: 'terminal:a', cwd: 'C:\\workspace-a', label: 'Terminal 1' },
+      ]);
+      result.current.setters.setIsDisplayPanelOpen(true);
+      result.current.setters.setPreferredDisplayTabId('terminal:a');
+    });
+    const sessionASetters = result.current.setters;
+
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.terminalTabs).toEqual([]);
+    expect(result.current.state.isDisplayPanelOpen).toBe(false);
+
+    act(() => {
+      result.current.setters.setIsDisplayPanelOpen(true);
+      sessionASetters.setTerminalTabs(current => [
+        ...current,
+        { id: 'terminal:a2', cwd: 'C:\\workspace-a', label: 'Terminal 2' },
+      ]);
+    });
+    expect(result.current.state.terminalTabs).toEqual([]);
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.terminalTabs).toHaveLength(2);
+    expect(result.current.state.preferredDisplayTabId).toBe('terminal:a');
+    expect(result.current.state.isDisplayPanelOpen).toBe(true);
+  });
+
+  it('keeps a separate state for the new-conversation home', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string | null }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: null as string | null } },
+    );
+
+    act(() => result.current.setters.setIsWorkspaceFilesOpen(true));
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(false);
+
+    rerender({ sessionId: null });
+    expect(result.current.sessionKey).toBe(HOME_DISPLAY_SESSION_KEY);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(true);
+  });
+
+  it('restores file preview tabs after switching away from a session', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string | null }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+    const preview = {
+      filePath: 'C:\\workspace-a\\notes.md',
+      content: '# Notes',
+      editToken: 'edit-token',
+      version: '1',
+    };
+
+    act(() => {
+      result.current.setters.setFilePreviews([preview]);
+      result.current.setters.setPreferredDisplayTabId('file:C:/workspace-a/notes.md');
+      result.current.setters.setIsDisplayPanelOpen(true);
+    });
+
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.filePreviews).toEqual([]);
+
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.filePreviews).toEqual([preview]);
+    expect(result.current.state.preferredDisplayTabId).toBe('file:C:/workspace-a/notes.md');
+    expect(result.current.state.isDisplayPanelOpen).toBe(true);
+  });
+
+  it('updates retained background runtime state without activating the session', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+
+    act(() => {
+      result.current.setters.setTerminalTabs([
+        { id: 'terminal:a', cwd: 'C:\\workspace-a', label: 'Terminal 1' },
+      ]);
+    });
+    rerender({ sessionId: 'session-b' });
+
+    act(() => {
+      result.current.setSessionField('session-a', 'browserPanelTargetId', 'page-a');
+    });
+
+    expect(result.current.sessionKey).toBe('session-b');
+    expect(result.current.state.browserPanelTargetId).toBeNull();
+    expect(result.current.states['session-a'].browserPanelTargetId).toBe('page-a');
+    expect(result.current.states['session-a'].terminalTabs).toHaveLength(1);
+  });
+
+  it('moves home state through temporary-session promotion', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string | null }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: null as string | null } },
+    );
+
+    act(() => {
+      result.current.setters.setIsDisplayPanelOpen(true);
+      result.current.setters.setUnsupportedFilePreviews(['C:\\workspace\\notes.txt']);
+      result.current.promote(HOME_DISPLAY_SESSION_KEY, 'temp-1');
+    });
+    rerender({ sessionId: 'temp-1' });
+    const runtimeId = result.current.state.runtimeId;
+    expect(result.current.state.isDisplayPanelOpen).toBe(true);
+    expect(result.current.state.unsupportedFilePreviews).toEqual(['C:\\workspace\\notes.txt']);
+
+    act(() => result.current.promote('temp-1', 'session-a'));
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.runtimeId).toBe(runtimeId);
+    expect(result.current.state.isDisplayPanelOpen).toBe(true);
+    expect(result.current.state.unsupportedFilePreviews).toEqual(['C:\\workspace\\notes.txt']);
+
+    rerender({ sessionId: null });
+    expect(result.current.state.isDisplayPanelOpen).toBe(false);
+  });
+});

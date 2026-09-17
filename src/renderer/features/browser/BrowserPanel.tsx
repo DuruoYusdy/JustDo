@@ -59,6 +59,10 @@ import BrowserElementInspectorCard from '@/features/browser/BrowserElementInspec
 import BrowserOverflowMenu, {
   type BrowserOverflowAction,
 } from '@/features/browser/BrowserOverflowMenu';
+import {
+  getRetainedBrowserPanelTabs,
+  setRetainedBrowserPanelTabs,
+} from '@/features/browser/browserPanelRetention';
 import BrowserTabContextMenu, {
   type BrowserTabMenuAction,
 } from '@/features/browser/BrowserTabContextMenu';
@@ -92,6 +96,7 @@ type LiveWebview = HTMLElement & {
   capturePage: () => Promise<GuestImage>;
   getTitle: () => string;
   getURL: () => string;
+  getWebContentsId?: () => number;
   findInPage?: (text: string, options?: { forward?: boolean; findNext?: boolean }) => number;
   stopFind?: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
   print?: (
@@ -109,8 +114,6 @@ type LiveWebview = HTMLElement & {
   setAudioMuted?: (muted: boolean) => void;
   send: (channel: string, ...args: unknown[]) => void;
 };
-
-let retainedTabs: BrowserPanelTab[] | null = null;
 
 export const BROWSER_PANEL_DEFAULT_WIDTH = 520;
 const BROWSER_PANEL_MIN_WIDTH = 320;
@@ -282,6 +285,7 @@ interface BrowserPanelProps {
   onAddAnnotation: (annotation: BrowserAnnotationDraft, comment: string) => boolean;
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
   onTabsChange?: (tabs: BrowserPanelTab[]) => void;
+  retainedTargetIds?: readonly string[];
   embedded?: boolean;
 }
 
@@ -297,13 +301,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     onAddAnnotation,
     onRequestBrowserSettings,
     onTabsChange,
+    retainedTargetIds,
     embedded = false,
   },
   ref,
 ) {
   const [tabs, setTabs] = useState<BrowserPanelTab[]>(() => {
-    if (retainedTabs === null) retainedTabs = embedded ? [] : [createTab()];
-    return retainedTabs;
+    const retainedTabs = getRetainedBrowserPanelTabs(draftKey);
+    if (retainedTabs) return retainedTabs;
+    const initialTabs = embedded ? [] : [createTab()];
+    setRetainedBrowserPanelTabs(draftKey, initialTabs);
+    return initialTabs;
   });
   const [urlDraft, setUrlDraft] = useState('');
   const [loadingTargets, setLoadingTargets] = useState<Set<string>>(() => new Set());
@@ -360,6 +368,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const readyGuestsRef = useRef(new WeakSet<LiveWebview>());
   const initialUrlsRef = useRef(new Map(tabs.map(tab => [tab.targetId, tab.url])));
   const tabsRef = useRef(tabs);
+  const onTabsChangeRef = useRef(onTabsChange);
+  onTabsChangeRef.current = onTabsChange;
   const closedTabsRef = useRef<BrowserPanelTab[]>([]);
   const pendingInspectionsRef = useRef(
     new Map<string, (value: BrowserInspectedElement[]) => void>(),
@@ -430,9 +440,28 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   useEffect(() => {
     tabsRef.current = tabs;
-    retainedTabs = tabs;
-    onTabsChange?.(tabs);
-  }, [onTabsChange, tabs]);
+    setRetainedBrowserPanelTabs(draftKey, tabs);
+    onTabsChangeRef.current?.(tabs);
+  }, [draftKey, tabs]);
+
+  const retainedTargetIdsKey = retainedTargetIds?.join('\0');
+  useEffect(() => {
+    if (retainedTargetIdsKey === undefined) return;
+    const retainedIds = new Set(retainedTargetIdsKey ? retainedTargetIdsKey.split('\0') : []);
+    setTabs(current => {
+      const retainedTabs = current.filter(tab => retainedIds.has(tab.targetId));
+      tabsRef.current = retainedTabs;
+      return retainedTabs;
+    });
+    setLoadingTargets(current => new Set([...current].filter(targetId => retainedIds.has(targetId))));
+    setReadyTargets(current => new Set([...current].filter(targetId => retainedIds.has(targetId))));
+    setLoadErrors(
+      current => new Map([...current].filter(([targetId]) => retainedIds.has(targetId))),
+    );
+    for (const targetId of initialUrlsRef.current.keys()) {
+      if (!retainedIds.has(targetId)) initialUrlsRef.current.delete(targetId);
+    }
+  }, [retainedTargetIdsKey]);
 
   const activeTabTargetId = activeTab?.targetId ?? null;
   const annotationAddedNotice = i18nService.t('browserAnnotationAdded');
@@ -500,9 +529,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       tab.targetId === targetId ? { ...tab, ...values } : tab,
     );
     tabsRef.current = nextTabs;
-    retainedTabs = nextTabs;
+    setRetainedBrowserPanelTabs(draftKey, nextTabs);
     setTabs(nextTabs);
-  }, []);
+  }, [draftKey]);
 
   const openTab = useCallback(
     (rawUrl = 'about:blank', options?: BrowserOpenTabOptions) => {
@@ -536,13 +565,22 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   useEffect(
     () =>
       window.electron.browser.onPanelOpenTab(event => {
+        if (
+          event.openerGuestId !== undefined &&
+          ![...webviewsRef.current.values()].some(
+            webview => webview.getWebContentsId?.() === event.openerGuestId,
+          )
+        ) {
+          return;
+        }
+        if (event.openerGuestId === undefined && !isOpen) return;
         if (event.errorCode === 'post-navigation-blocked') {
           setNotice(i18nService.t('browserPanelPostNavigationBlocked'));
           return;
         }
         openTab(event.url);
       }),
-    [openTab],
+    [isOpen, openTab],
   );
 
   const closeTab = useCallback(

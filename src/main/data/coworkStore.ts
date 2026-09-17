@@ -23,6 +23,10 @@ import type {
   CoworkSessionSegmentPhase,
 } from '../../shared/cowork/sessionSegment';
 import {
+  DEFAULT_MAX_RETAINED_DISPLAY_TABS,
+  normalizeMaxRetainedDisplayTabs,
+} from '../../shared/displayTabRetention';
+import {
   type AgentRuntimeSettings,
   parseAgentRuntimeSettings,
   validateAgentRuntimeSettings,
@@ -138,6 +142,7 @@ export interface CoworkConfig {
   agentEngine: CoworkAgentEngine;
   permissionMode: PermissionMode;
   maxGoalContinuationTurns: number;
+  maxRetainedDisplayTabs: number;
 }
 
 export type CoworkConfigUpdate = Partial<
@@ -148,6 +153,7 @@ export type CoworkConfigUpdate = Partial<
     | 'agentEngine'
     | 'permissionMode'
     | 'maxGoalContinuationTurns'
+    | 'maxRetainedDisplayTabs'
   >
 >;
 
@@ -1102,6 +1108,7 @@ export class CoworkStore {
       'agentEngine',
       'permissionMode',
       'maxGoalContinuationTurns',
+      'maxRetainedDisplayTabs',
     ] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
@@ -1116,6 +1123,12 @@ export class CoworkStore {
       permissionMode: resolvePermissionMode(cfg.get('permissionMode')),
       maxGoalContinuationTurns: normalizeMaxGoalContinuationTurns(
         Number.parseInt(cfg.get('maxGoalContinuationTurns') || '', 10),
+      ),
+      maxRetainedDisplayTabs: normalizeMaxRetainedDisplayTabs(
+        Number.parseInt(
+          cfg.get('maxRetainedDisplayTabs') || String(DEFAULT_MAX_RETAINED_DISPLAY_TABS),
+          10,
+        ),
       ),
     };
   }
@@ -1189,6 +1202,17 @@ export class CoworkStore {
         .prepare(
           `INSERT INTO cowork_config (key, value, updated_at)
            VALUES ('maxGoalContinuationTurns', ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        )
+        .run(String(normalized), now);
+    }
+
+    if (config.maxRetainedDisplayTabs !== undefined) {
+      const normalized = normalizeMaxRetainedDisplayTabs(config.maxRetainedDisplayTabs);
+      this.db
+        .prepare(
+          `INSERT INTO cowork_config (key, value, updated_at)
+           VALUES ('maxRetainedDisplayTabs', ?, ?)
            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         )
         .run(String(normalized), now);

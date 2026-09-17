@@ -74,6 +74,7 @@ export interface CoworkConfig {
   agentEngine: CoworkAgentEngine;
   permissionMode: PermissionMode;
   maxGoalContinuationTurns?: number;
+  maxRetainedDisplayTabs?: number;
 }
 
 export type CoworkConfigUpdate = Partial<
@@ -84,6 +85,7 @@ export type CoworkConfigUpdate = Partial<
     | 'agentEngine'
     | 'permissionMode'
     | 'maxGoalContinuationTurns'
+    | 'maxRetainedDisplayTabs'
   >
 >;
 

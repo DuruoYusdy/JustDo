@@ -24,6 +24,7 @@ const baseConfig: CoworkConfig = {
   agentEngine: 'openclaw',
   permissionMode: 'full',
   maxGoalContinuationTurns: 25,
+  maxRetainedDisplayTabs: 30,
 };
 
 describe('cowork config IPC', () => {
@@ -86,6 +87,18 @@ describe('cowork config IPC', () => {
       agentEngine: undefined,
       permissionMode: 'ask',
     });
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+  });
+
+  it('normalizes and persists the retained display tab limit without reloading Gateway', async () => {
+    const result = await handlers
+      .get('cowork:config:set')
+      ?.({}, { maxRetainedDisplayTabs: 999 });
+
+    expect(result).toEqual({ success: true });
+    expect(setConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRetainedDisplayTabs: 200 }),
+    );
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 

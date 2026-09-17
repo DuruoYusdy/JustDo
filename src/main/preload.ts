@@ -568,6 +568,7 @@ contextBridge.exposeInMainWorld('electron', {
       agentEngine?: 'openclaw';
       permissionMode?: 'ask' | 'auto' | 'full';
       maxGoalContinuationTurns?: number;
+      maxRetainedDisplayTabs?: number;
     }) => ipcRenderer.invoke('cowork:config:set', config),
     getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
     setAgentRuntimeSettings: (settings: AgentRuntimeSettings) =>

@@ -92,6 +92,7 @@ export const BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH = 8_000;
 
 export type BrowserPanelOpenTabEvent = {
   url: string;
+  openerGuestId?: number;
   errorCode?: 'post-navigation-blocked';
 };
 
@@ -103,6 +104,9 @@ export const normalizeBrowserPanelOpenTabEvent = (
   if (typeof record.url !== 'string') return null;
   return {
     url: record.url,
+    ...(typeof record.openerGuestId === 'number' && Number.isInteger(record.openerGuestId)
+      ? { openerGuestId: record.openerGuestId }
+      : {}),
     ...(record.errorCode === 'post-navigation-blocked'
       ? { errorCode: 'post-navigation-blocked' as const }
       : {}),

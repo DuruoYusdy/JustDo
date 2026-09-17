@@ -2,7 +2,10 @@ import { BookOpenIcon, ExclamationTriangleIcon, Squares2X2Icon } from '@heroicon
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import { runGuardedFilePreviewNavigation } from '@/features/cowork/components/preview/filePreviewNavigation';
+import {
+  type FilePreviewNavigationOptions,
+  runGuardedFilePreviewNavigation,
+} from '@/features/cowork/components/preview/filePreviewNavigation';
 import CoworkSearchModal from '@/features/cowork/components/sessions/CoworkSearchModal';
 import CoworkSessionList from '@/features/cowork/components/sessions/CoworkSessionList';
 import {
@@ -32,7 +35,7 @@ interface SidebarProps {
   onShowMemory: () => void;
   onShowPlugins: () => void;
   onNewChat: () => void;
-  onBeforeCoworkNavigation: () => Promise<boolean>;
+  onBeforeCoworkNavigation: (options?: FilePreviewNavigationOptions) => Promise<boolean>;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   developerModeAvailable: boolean;
@@ -99,10 +102,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   const handleSelectSession = async (sessionId: string) => {
-    await runGuardedFilePreviewNavigation(onBeforeCoworkNavigation, async () => {
-      onShowCowork();
-      await coworkService.loadSession(sessionId);
-    });
+    await runGuardedFilePreviewNavigation(
+      onBeforeCoworkNavigation,
+      async () => {
+        onShowCowork();
+        await coworkService.loadSession(sessionId);
+      },
+      { preserveTabs: true },
+    );
   };
 
   const handleDeleteSession = async (sessionId: string) => {

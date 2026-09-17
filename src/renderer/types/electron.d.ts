@@ -153,6 +153,7 @@ interface CoworkConfig {
   agentEngine: 'openclaw';
   permissionMode: PermissionMode;
   maxGoalContinuationTurns: number;
+  maxRetainedDisplayTabs: number;
 }
 
 type CoworkConfigUpdate = Partial<
@@ -163,6 +164,7 @@ type CoworkConfigUpdate = Partial<
     | 'agentEngine'
     | 'permissionMode'
     | 'maxGoalContinuationTurns'
+    | 'maxRetainedDisplayTabs'
   >
 >;
 
