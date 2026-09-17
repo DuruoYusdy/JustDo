@@ -5,7 +5,10 @@ import './justdo-chat';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
-import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import {
+  beginAssistantTurn,
+  createChatTranscriptState,
+} from '@/libs/openclaw-chat/model/chat-transcript-state';
 
 import type { JustDoChatElement } from './justdo-chat';
 
@@ -82,6 +85,159 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe('justdo-chat direct-property streaming', () => {
+  test('renders standalone completed turns with the main-chat model and duration footer', async () => {
+    const frames = createAnimationFrameHarness();
+    const startedAt = new Date(2026, 8, 17, 9, 30, 0).getTime();
+    const endedAt = startedAt + 2_500;
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [
+      {
+        role: 'user',
+        content: 'Side question',
+        timestamp: startedAt,
+        __openclaw: { runId: 'side-complete' },
+      },
+      {
+        role: 'assistant',
+        content: 'Side answer',
+        timestamp: endedAt,
+        modelName: 'openai/gpt-5.6',
+        __openclaw: { runId: 'side-complete' },
+      },
+    ];
+    chat.runTimings = [
+      {
+        id: 'side-chat:side-complete',
+        sessionId: 'session-1',
+        clientTurnId: 'side-complete',
+        rootRunId: 'side-complete',
+        modelRef: 'openai/gpt-5.6',
+        startedAt,
+        endedAt,
+        state: 'completed',
+      },
+    ];
+    document.body.append(chat);
+
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    const footer = chat.shadowRoot?.querySelector('.chat-group--assistant .chat-group__footer');
+    expect(footer?.textContent).toContain('openai/gpt-5.6');
+    expect(footer?.textContent).toContain('2026-09-17 09:30');
+    expect(footer?.textContent).toContain('2s');
+  });
+
+  test('renders an accessible waiting row while a standalone consumer is streaming', async () => {
+    const frames = createAnimationFrameHarness();
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [{ role: 'user', content: 'Side question' }];
+    chat.isStreaming = true;
+    document.body.append(chat);
+
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    const container = chat.shadowRoot?.querySelector('.chat-container');
+    expect(container?.getAttribute('role')).toBe('log');
+    expect(container?.getAttribute('aria-busy')).toBe('true');
+    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator')).toHaveLength(1);
+  });
+
+  test('keeps one waiting indicator while a continued side turn gains its active transcript', async () => {
+    const frames = createAnimationFrameHarness();
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [
+      { role: 'user', content: 'First side question' },
+      { role: 'assistant', content: 'First side answer' },
+      { role: 'user', content: 'Follow-up side question' },
+    ];
+    chat.isStreaming = true;
+    document.body.append(chat);
+
+    await chat.updateComplete;
+    await frames.drain(chat);
+    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator')).toHaveLength(1);
+
+    const transcript = createChatTranscriptState('agent:main:justdo:side-chat');
+    chat.activeTurn = beginAssistantTurn(
+      transcript,
+      { runId: 'side-follow-up', startedAt: 2_000 },
+      { now: () => 2_000, createId: prefix => `${prefix}-follow-up` },
+    );
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    expect(chat.shadowRoot?.querySelectorAll('.chat-reading-indicator')).toHaveLength(1);
+  });
+
+  test('renders an isolated active turn with the normal Thinking, Tool, and Content timeline', async () => {
+    const frames = createAnimationFrameHarness();
+    const transcript = createChatTranscriptState('agent:main:justdo:side-chat');
+    const turn = beginAssistantTurn(
+      transcript,
+      { runId: 'side-run', startedAt: 1_000 },
+      { now: () => 1_000, createId: prefix => `${prefix}-1` },
+    );
+    const thinking = {
+      id: 'thinking-1',
+      runId: 'side-run',
+      firstSeq: 1,
+      lastSeq: 1,
+      startedAt: 1_001,
+      updatedAt: 1_001,
+      type: 'thinking' as const,
+      status: 'running' as const,
+      text: 'Inspecting the current context.',
+    };
+    const tool = {
+      id: 'tool-1',
+      runId: 'side-run',
+      firstSeq: 2,
+      lastSeq: 2,
+      startedAt: 1_002,
+      updatedAt: 1_002,
+      type: 'tool' as const,
+      status: 'running' as const,
+      toolCallId: 'read-1',
+      name: 'read',
+      input: { path: 'README.md' },
+    };
+    const content = {
+      id: 'content-1',
+      runId: 'side-run',
+      firstSeq: 3,
+      lastSeq: 3,
+      startedAt: 1_003,
+      updatedAt: 1_003,
+      type: 'content' as const,
+      status: 'streaming' as const,
+      text: 'A side-chat response.',
+      sourceMode: 'snapshot' as const,
+    };
+    turn.items.push(thinking, tool, content);
+    turn.toolById.set(tool.toolCallId, tool);
+    turn.lastAgentSeq = 3;
+
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.messages = [{ role: 'user', content: 'Side question' }];
+    chat.activeTurn = turn;
+    chat.isStreaming = true;
+    document.body.append(chat);
+
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    expect(chat.shadowRoot?.textContent).toContain('Inspecting the current context.');
+    expect(chat.shadowRoot?.textContent).toContain('read');
+    expect(chat.shadowRoot?.textContent).toContain('A side-chat response.');
+    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe(
+      'true',
+    );
+  });
 });
 
 describe('justdo-chat assistant stream pacing', () => {

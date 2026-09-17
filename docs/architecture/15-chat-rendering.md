@@ -12,7 +12,7 @@ CLI 转写；返回文本只写入可编辑 draft，不会自动发送消息。
 
 浏览器工作区的标注也是 Composer draft，而不是独立 transcript。每个 session id（首页使用 `__home__`）在 cowork slice 保存最多 4 份标注；图片总量沿用 20 MB 限制，结构化上下文总长最多 8,000 字符。完成标注后，网页上方显示可编辑评论条：左侧可展开清洗后的 HTML 元素详情，中间录入评论，右侧按当前语音设置显示语音输入及提交动作。评论写入普通用户草稿，不再注入固定提示词。卡片可预览和移除，切换会话不会串用草稿；网页本身始终是可直接操作的嵌入式 Chromium guest，只有检查/画笔/矩形模式启用覆盖 Canvas，切换 Tab、导航或刷新会使尚未加入草稿的覆盖状态失效。截图仅在提交评论时生成。
 
-Cowork 主工作区在桌面宽度下固定为左侧对话、右侧显示区两栏。窗口顶栏只承载拖拽区域和系统窗口控制；下一行由左侧会话标题与操作按钮栏、右侧内容标签栏并列组成。“新建标签页”菜单当前提供浏览器和终端：浏览器创建新的 guest 页面，终端创建独立 PTY 并以创建时的当前会话工程目录（首页使用当前配置的工作目录）为 cwd。终端是窗口级标签，切换会话时继续运行并保留原 cwd，只有关闭标签或窗口才终止。每个浏览器页面、终端和文件预览都作为右侧标签栏中的独立标签存在；Plan 复用唯一标签，新的 Plan 内容替换该标签中的旧内容，子任务详情也进入同一标签栏。浏览器不再额外渲染内部标签栏，隐藏右侧网页标签时仍保留已挂载的 guest。窗口不足以同时保留可用的对话宽度时，显示区回退为右侧覆盖层。子任务列表只作为会话栏按钮锚定的浮动下拉出现，选择子任务后其消息进入右侧显示区。
+Cowork 主工作区在桌面宽度下固定为左侧对话、右侧显示区两栏。窗口顶栏只承载拖拽区域和系统窗口控制；下一行由左侧会话标题与操作按钮栏、右侧内容标签栏并列组成。“新建标签页”菜单在已有会话中提供侧边聊天、浏览器和终端：首页仍只提供浏览器和终端。每次创建侧边聊天（或按 `Ctrl+Alt+S`）都会新增一个独立标签，使用当前会话的 OpenClaw `/btw` 能力；各标签分别持有 Renderer 内存消息和 Composer draft，切换会话、关闭标签或关闭应用时丢弃，不进入主 transcript 或 SQLite。侧聊输入复用主 Composer，只隐藏 `/btw` 不支持的附件、斜杠命令、技能和权限入口；用户消息、Gateway 实际返回的 Thinking/Tool/Content 与最终回复通过共享的 `ChatMessageDisplay` 投影，因此沿用主聊天结构与 CSS。浏览器创建新的 guest 页面，终端创建独立 PTY 并以创建时的当前会话工程目录（首页使用当前配置的工作目录）为 cwd。终端是窗口级标签，切换会话时继续运行并保留原 cwd，只有关闭标签或窗口才终止。每个浏览器页面、终端和文件预览都作为右侧标签栏中的独立标签存在；Plan 复用唯一标签，新的 Plan 内容替换该标签中的旧内容，子任务详情也进入同一标签栏。浏览器不再额外渲染内部标签栏，隐藏右侧网页标签时仍保留已挂载的 guest。窗口不足以同时保留可用的对话宽度时，显示区回退为右侧覆盖层。子任务列表只作为会话栏按钮锚定的浮动下拉出现，选择子任务后其消息进入右侧显示区。
 
 本文按 `v2026.8.27` 的 `src/renderer/libs/openclaw-chat/`、`JustDoChatWrapper`、Gateway client 和相关测试重写。Chat 渲染不是“把 messages map 成 DOM”；它是 history、optimistic tail、实时事件、工具生命周期与滚动窗口的确定性投影。
 
@@ -33,6 +33,7 @@ Cowork 主工作区在桌面宽度下固定为左侧对话、右侧显示区两�
 | 目录/文件                                | 职责                                                              |
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | `JustDoChatWrapper.tsx`                  | React/Cowork与Lit chat的桥、Gateway订阅、session切换、history载入 |
+| `SideChatPanel.tsx`                      | 临时 `/btw` 问答、独立输入和完整实时时间线展示                    |
 | `gateway/client.ts`                      | Renderer Gateway client与连接信息适配                             |
 | `gateway/chat-controller.ts`             | 对外状态/命令、订阅与transcript调度                               |
 | `gateway/chat-history-protocol.ts`       | 原生offset分页、结构化超大行识别与完整消息补取                    |
@@ -92,6 +93,8 @@ flowchart LR
 ```
 
 Wrapper切换session时取消旧订阅、建立新generation、请求Gateway原生history/tool inputs/compaction detail，并设置chat element属性。Controller按session缓存未完成turn、pending user message、run activity和compaction状态；后台session的live/terminal事件及迟到的send/compact RPC结果写回所属缓存，重新选中时先恢复缓存再与history对账。
+
+侧边聊天走同一 Renderer Gateway 连接，但使用独立的 run id 集合和内存 transcript。发送只调用 `chat.send` 并加上 `/btw` 前缀，不创建主会话 optimistic user tail、active turn 或 Main run receipt；Controller 将本连接发起的同一 run 的 `agent`、`session.tool` 与 `chat` 事件归约到独立 transcript，并把 Gateway 实际提供的 Thinking、Tool 和 Content 交给共享时间线渲染。`chat.side_result` 提供最终回复并清理临时 active turn；这些事件都会在进入主 transcript reducer 前被消费，因此不会触发主消息、运行状态或 history 刷新。JustDo 不补造 OpenClaw 未返回的过程事件；外部客户端或其他会话的 side result 一律忽略。
 
 临时session转为canonical session必须由创建流程显式登记准确的source/target key。普通的“临时session → 其他已有session”导航不能推断为promotion，也不能迁移消息或sending状态。Live事件先经过shared domain分类，再送controller/reducer；完整final由后续`session.message`直接接管；无消息、带结构化截断标记、订阅未建立或已有持久化失效通知的final继续做有界补查。旧异步history请求即使晚返回，也因generation/session identity/active leaf fence被丢弃。
 

@@ -68,14 +68,21 @@ describe('resolveBrowserGuestShortcut', () => {
       resolveBrowserPanelShortcutAction(shortcutInput, {
         terminal: 'Ctrl+K',
         browser: 'Ctrl+B',
+        'side-chat': 'Ctrl+Alt+S',
       }),
     ).toBe('terminal');
     expect(
       resolveBrowserPanelShortcutAction(
         { ...shortcutInput, key: 'b' },
-        { terminal: 'Ctrl+K', browser: 'Ctrl+B' },
+        { terminal: 'Ctrl+K', browser: 'Ctrl+B', 'side-chat': 'Ctrl+Alt+S' },
       ),
     ).toBe('browser');
+    expect(
+      resolveBrowserPanelShortcutAction(
+        { ...shortcutInput, key: 's', altKey: true },
+        { terminal: 'Ctrl+K', browser: 'Ctrl+B', 'side-chat': 'Ctrl+Alt+S' },
+      ),
+    ).toBe('side-chat');
   });
 
   it('does not intercept page typing or modified application shortcuts', () => {

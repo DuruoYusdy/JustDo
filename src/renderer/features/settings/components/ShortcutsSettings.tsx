@@ -9,6 +9,7 @@ export type ShortcutSettingsValue = {
   sendMessage: string;
   terminal: string;
   browser: string;
+  sideChat: string;
 };
 
 export const shortcutLabelMap: Record<keyof ShortcutSettingsValue, string> = {
@@ -18,6 +19,7 @@ export const shortcutLabelMap: Record<keyof ShortcutSettingsValue, string> = {
   sendMessage: 'sendMessageShortcut',
   terminal: 'shortcutTerminal',
   browser: 'shortcutBrowser',
+  sideChat: 'shortcutSideChat',
 };
 
 export const findShortcutConflict = (
@@ -284,6 +286,14 @@ const ShortcutsSettings: React.FC<ShortcutsSettingsProps> = ({
             label={i18nService.t('shortcutBrowser')}
             value={shortcuts.browser}
             onChange={value => onShortcutChange('browser', value)}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-foreground">{i18nService.t('shortcutSideChat')}</span>
+          <ShortcutRecorder
+            label={i18nService.t('shortcutSideChat')}
+            value={shortcuts.sideChat}
+            onChange={value => onShortcutChange('sideChat', value)}
           />
         </div>
       </div>

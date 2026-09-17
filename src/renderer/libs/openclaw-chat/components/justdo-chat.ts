@@ -139,6 +139,10 @@ export class JustDoChatElement extends LitElement {
   @property({ type: Array, attribute: false })
   declare messages: GatewayMessage[];
 
+  /** Isolated active turn supplied by standalone consumers such as side chat. */
+  @property({ attribute: false })
+  declare activeTurn: AssistantTurn | null;
+
   /** Read-only transcript segments that precede the active controller session. */
   @property({ type: Array, attribute: false })
   declare historyPrefixMessages: GatewayMessage[];
@@ -249,6 +253,7 @@ export class JustDoChatElement extends LitElement {
   constructor() {
     super();
     this.messages = [];
+    this.activeTurn = null;
     this.historyPrefixMessages = [];
     this.stream = null;
     this.streamStartedAt = null;
@@ -3177,12 +3182,20 @@ export class JustDoChatElement extends LitElement {
         () => projectPersistedTimeline(messages, persistedRunTimings),
       );
 
-    if (ctrl) {
+    if (ctrl || activeTurn) {
       const historyTimeline = getHistoryTimeline();
       const activeTimeline = this.projectActiveTimeline(activeTurn);
-      traceTimelineProjection(ctrl.state.sessionKey, historyTimeline, activeTimeline);
+      traceTimelineProjection(
+        ctrl?.state.sessionKey ?? activeTurn?.sessionKey ?? '',
+        historyTimeline,
+        activeTimeline,
+      );
       const activeTurnFooter = projectActiveTurnFooter(
-        selectActiveTurnTiming(ctrl.getCurrentTurnTiming(), currentRunTiming, activeTurn !== null),
+        selectActiveTurnTiming(
+          ctrl?.getCurrentTurnTiming() ?? null,
+          currentRunTiming,
+          activeTurn !== null,
+        ),
       );
       const timelineView = projectIncrementalTimelineView({
         persisted: this.persistedTimelineRenderCache.get(historyTimeline),
@@ -3221,9 +3234,13 @@ export class JustDoChatElement extends LitElement {
           ...timelineView.activeRows.map(row => row.item),
         ],
         createProcessSummarySessionIdentity({
-          sessionKey: ctrl.state.sessionKey,
-          sessionId: ctrl.state.currentSessionId ?? ctrl.state.transcript.sessionId,
-          historyGeneration: ctrl.state.transcript.historyGeneration,
+          sessionKey: ctrl?.state.sessionKey ?? activeTurn?.sessionKey ?? '',
+          sessionId:
+            ctrl?.state.currentSessionId ??
+            ctrl?.state.transcript.sessionId ??
+            activeTurn?.sessionId ??
+            null,
+          historyGeneration: ctrl?.state.transcript.historyGeneration ?? 0,
         }),
       );
       return html`
@@ -3284,7 +3301,7 @@ export class JustDoChatElement extends LitElement {
                 : nothing
             }
             ${
-              this.chatScrollController.state.mode === 'paused'
+              ctrl && this.chatScrollController.state.mode === 'paused'
                 ? html`
                     <button
                       type="button"
@@ -3356,7 +3373,9 @@ export class JustDoChatElement extends LitElement {
       !thinkingStream &&
       toolMessages.length === 0 &&
       streamSegments.length === 0;
-    const displayStream = shouldRenderWaitingStream ? '' : stream;
+    // A pending turn without content is rendered explicitly below. Passing an
+    // empty string into buildChatItems would create a second waiting bubble.
+    const displayStream = shouldRenderWaitingStream ? null : stream;
     const items = this.buildItems(timelineMessages, toolMessages, streamSegments, displayStream);
     const hasLiveStreamItem = items.some(item => item.kind === 'stream' && item.isStreaming);
     const minimapEntries = projectChatMinimapEntries(
@@ -3367,8 +3386,20 @@ export class JustDoChatElement extends LitElement {
     return html`
       <div class="chat-shell">
         ${this.renderMinimap(minimapEntries)}
-        <div class="chat-container">
+        <div class="chat-container" role="log" aria-busy=${isStreaming}>
+          <div class="sr-only" role="status" aria-live="polite">
+            ${shouldRenderWaitingStream ? i18nService.t('coworkRunStateStarting') : nothing}
+          </div>
           ${this.renderItems(items, thinkingForStreamingGroup)}
+          ${
+            shouldRenderWaitingStream
+              ? renderStreamingGroup('', this.streamStartedAt ?? Date.now(), null, {
+                  showAvatar: !items.some(
+                    item => item.kind === 'group' && item.role === 'assistant',
+                  ),
+                })
+              : nothing
+          }
           ${
             thinkingStream && !hasLiveStreamItem
               ? renderStreamingThinkingGroup(thinkingStream, {
@@ -3481,7 +3512,7 @@ export class JustDoChatElement extends LitElement {
     this.focusedProcessSummaryKeyBeforeRender = null;
     const transcriptRevision =
       this._controller?.state.transcript.revision ??
-      this.messages.length + (this.stream?.length ?? 0);
+      this.messages.length + (this.stream?.length ?? 0) + (this.activeTurn?.lastAgentSeq ?? 0);
     const displayActiveTurn = this.activeTurnForDisplay(this._controller);
     const activeContentDisplaySignature = this.searchQuery.trim()
       ? (displayActiveTurn?.items
@@ -3543,7 +3574,8 @@ export class JustDoChatElement extends LitElement {
     const isRunning =
       this.runTimings[this.runTimings.length - 1]?.state === 'running' ||
       (this.runTimings.length === 0 &&
-        this._controller?.getCurrentTurnTiming()?.status === 'running') ||
+        (this._controller?.getCurrentTurnTiming()?.status === 'running' ||
+          this.activeTurn?.status === 'running')) ||
       this._controller?.state.compactionInFlight === true;
     if (isRunning && this.activeTurnClockTimer === null) {
       this.activeTurnClockTimer = setInterval(() => this.requestUpdate(), 1_000);
@@ -4433,7 +4465,7 @@ export class JustDoChatElement extends LitElement {
   }
 
   private activeTurnForDisplay(ctrl: ChatController | null): AssistantTurn | null {
-    if (!ctrl) return null;
+    if (!ctrl) return this.activeTurn;
     if (ctrl.state.transcript.activeTurn) return ctrl.state.transcript.activeTurn;
     if (
       this.pacedTerminalProjection?.sessionIdentity === this.assistantStreamSessionIdentityFor(ctrl)
@@ -4450,25 +4482,27 @@ export class JustDoChatElement extends LitElement {
           transportStatus: this._controller.state.transportStatus,
         })
       : null;
-    return projectTurnItems(turn, this._controller?.state.chatSending ?? false, waitingStatus).map(
-      timelineItem => {
-        if (timelineItem.kind !== 'content') return timelineItem;
-        const visuallyStreaming = this.assistantStreamPacer.isPending(timelineItem.item.id);
-        const text = this.assistantStreamPacer.displayText(
-          timelineItem.item.id,
-          timelineItem.item.text,
-        );
-        if (text === timelineItem.item.text && !visuallyStreaming) return timelineItem;
-        return {
-          ...timelineItem,
-          item: {
-            ...timelineItem.item,
-            text,
-            ...(visuallyStreaming ? { status: 'streaming' as const } : {}),
-          },
-        };
-      },
-    );
+    return projectTurnItems(
+      turn,
+      this._controller?.state.chatSending ?? this.isStreaming,
+      waitingStatus,
+    ).map(timelineItem => {
+      if (timelineItem.kind !== 'content') return timelineItem;
+      const visuallyStreaming = this.assistantStreamPacer.isPending(timelineItem.item.id);
+      const text = this.assistantStreamPacer.displayText(
+        timelineItem.item.id,
+        timelineItem.item.text,
+      );
+      if (text === timelineItem.item.text && !visuallyStreaming) return timelineItem;
+      return {
+        ...timelineItem,
+        item: {
+          ...timelineItem.item,
+          text,
+          ...(visuallyStreaming ? { status: 'streaming' as const } : {}),
+        },
+      };
+    });
   }
 
   private renderItem(

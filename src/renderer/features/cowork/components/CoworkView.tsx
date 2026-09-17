@@ -1,6 +1,7 @@
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ChatBubbleLeftEllipsisIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
   CommandLineIcon,
@@ -54,6 +55,9 @@ import BrowserPanel, {
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
+import SideChatPanel, {
+  type SideChatMessage,
+} from '@/features/cowork/components/chat/SideChatPanel';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import { submitCoworkMessage } from '@/features/cowork/components/composer/coworkMessageSubmit';
 import CoworkPromptInput, {
@@ -135,6 +139,8 @@ import type { SettingsOpenOptions } from '@/features/settings/Settings';
 import type {
   ChatContextUsageSnapshot,
   RewindEditorDraft,
+  SideChatResult,
+  SideChatStreamUpdate,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
 import { getGreetingPeriod, pickHomeGreeting } from '@/services/i18n/homeGreetings';
@@ -170,6 +176,7 @@ const FILE_DISPLAY_TAB_PREFIX = 'file:';
 const TERMINAL_DISPLAY_TAB_PREFIX = 'terminal:';
 const PLAN_DISPLAY_TAB_ID = 'plan';
 const SUBAGENT_DISPLAY_TAB_ID = 'subagent';
+const SIDE_CHAT_DISPLAY_TAB_PREFIX = 'side-chat:';
 const MAX_BROWSER_TABS = 8;
 const MAX_TERMINAL_TABS = 16;
 
@@ -182,6 +189,13 @@ interface CoworkTerminalTab {
   cwd: string;
   id: string;
   label: string;
+}
+
+interface CoworkSideChatTab {
+  id: string;
+  label: string;
+  messages: SideChatMessage[];
+  sessionId: string;
 }
 function resolveProgressCardRunState(
   card: ProgressCard,
@@ -301,6 +315,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     y: number;
   } | null>(null);
   const [preferredDisplayTabId, setPreferredDisplayTabId] = useState<string | null>(null);
+  const [sideChatTabs, setSideChatTabs] = useState<CoworkSideChatTab[]>([]);
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
@@ -340,6 +355,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     }>
   >([]);
   const terminalSequenceRef = useRef(0);
+  const sideChatSequenceRef = useRef(0);
+  const sideChatTabsRef = useRef(sideChatTabs);
+  sideChatTabsRef.current = sideChatTabs;
   const filePreviewDrawerRefs = useRef(new Map<string, FilePreviewDrawerHandle>());
   const filePreviewsRef = useRef(filePreviews);
   filePreviewsRef.current = filePreviews;
@@ -380,12 +398,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...filePreviews.map(preview => fileDisplayTabId(preview.filePath)),
       ...(visiblePlanInteraction ? [PLAN_DISPLAY_TAB_ID] : []),
       ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
+      ...sideChatTabs.map(tab => tab.id),
     ],
     [
       browserTabs,
       filePreviews,
       isBrowserPanelOpen,
       selectedSubagent,
+      sideChatTabs,
       terminalTabs,
       visiblePlanInteraction,
     ],
@@ -401,12 +421,33 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     preview => fileDisplayTabId(preview.filePath) === activeDisplayTabId,
   );
   const activeTerminalTab = terminalTabs.find(tab => tab.id === activeDisplayTabId);
+  const activeSideChatTab = sideChatTabs.find(tab => tab.id === activeDisplayTabId);
   const isBrowserDisplayActive = Boolean(
     activeDisplayTabId?.startsWith(BROWSER_DISPLAY_TAB_PREFIX),
   );
   const isBrowserPanelVisible = isBrowserPanelOpen && isBrowserDisplayActive;
   const pendingPlanRequestId = planInteraction?.requestId ?? null;
   const pendingPlanSessionId = planInteraction?.sessionId ?? null;
+
+  const sideChatOwnerSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (sideChatOwnerSessionIdRef.current === currentSessionId) return;
+    for (const tab of sideChatTabsRef.current) {
+      dispatch(setDraftPrompt({ sessionId: tab.id, draft: '' }));
+    }
+    sideChatOwnerSessionIdRef.current = currentSessionId;
+    sideChatSequenceRef.current = 0;
+    setSideChatTabs([]);
+  }, [currentSessionId, dispatch]);
+
+  useEffect(
+    () => () => {
+      for (const tab of sideChatTabsRef.current) {
+        dispatch(setDraftPrompt({ sessionId: tab.id, draft: '' }));
+      }
+    },
+    [dispatch],
+  );
 
   const selectAdjacentDisplayTabAfterClose = useCallback(
     (closingId: string) => {
@@ -1362,16 +1403,159 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsDisplayPanelOpen(true);
   }, [terminalTabs.length, terminalWorkingDirectory]);
 
+  const handleCreateSideChat = useCallback(() => {
+    if (!currentSessionId || currentSessionId.startsWith('temp-') || !isOpenClawEngine) return;
+    sideChatSequenceRef.current += 1;
+    const number = sideChatSequenceRef.current;
+    const id = `${SIDE_CHAT_DISPLAY_TAB_PREFIX}${crypto.randomUUID()}`;
+    setSideChatTabs(current => [
+      ...current,
+      {
+        id,
+        label: i18nService.t('sideChatTabTitle').replace('{number}', String(number)),
+        messages: [],
+        sessionId: currentSessionId,
+      },
+    ]);
+    setPreferredDisplayTabId(id);
+    setIsDisplayPanelOpen(true);
+  }, [currentSessionId, isOpenClawEngine]);
+
+  const closeSideChat = useCallback(
+    (tabId: string) => {
+      dispatch(setDraftPrompt({ sessionId: tabId, draft: '' }));
+      selectAdjacentDisplayTabAfterClose(tabId);
+      setSideChatTabs(current => current.filter(tab => tab.id !== tabId));
+    },
+    [dispatch, selectAdjacentDisplayTabAfterClose],
+  );
+
+  const handleSideChatResult = useCallback((result: SideChatResult) => {
+    setSideChatTabs(current =>
+      current.map(tab => {
+        const index = tab.messages.findIndex(message => message.runId === result.runId);
+        if (index < 0) return tab;
+        const messages = [...tab.messages];
+        const previousMessage = messages[index];
+        messages[index] = {
+          ...previousMessage,
+          runId: result.runId,
+          question: result.question,
+          answer: result.text || i18nService.t('sideChatRunInterrupted'),
+          activeTurn: undefined,
+          answeredAt: previousMessage.activeTurn?.endedAt ?? Date.now(),
+          modelRef: previousMessage.activeTurn?.modelRef ?? previousMessage.modelRef,
+          startedAt: previousMessage.activeTurn?.startedAt ?? previousMessage.startedAt,
+          status: result.isError ? 'error' : 'complete',
+        };
+        return { ...tab, messages };
+      }),
+    );
+  }, []);
+
+  const handleSideChatStream = useCallback((update: SideChatStreamUpdate) => {
+    setSideChatTabs(current =>
+      current.map(tab => {
+        const index = tab.messages.findIndex(message => message.runId === update.runId);
+        if (index < 0) return tab;
+        const messages = [...tab.messages];
+        messages[index] = {
+          ...messages[index],
+          activeTurn: update.turn ?? undefined,
+          modelRef: update.turn?.modelRef ?? messages[index].modelRef,
+          startedAt: update.turn?.startedAt ?? messages[index].startedAt,
+        };
+        return { ...tab, messages };
+      }),
+    );
+  }, []);
+
+  const handleSendSideChat = useCallback(
+    async (tabId: string, question: string, modelRef?: string | null): Promise<boolean> => {
+      const normalizedQuestion = question.trim().replace(/\s*[\r\n]+\s*/g, ' ');
+      if (!normalizedQuestion) return false;
+      const runId = `justdo-btw-${Date.now()}-${crypto.randomUUID()}`;
+      setSideChatTabs(current =>
+        current.map(tab =>
+          tab.id === tabId
+            ? {
+                ...tab,
+                messages: [
+                  ...tab.messages,
+                  {
+                    runId,
+                    question: normalizedQuestion,
+                    askedAt: Date.now(),
+                    ...(modelRef ? { modelRef } : {}),
+                    status: 'pending',
+                  },
+                ],
+              }
+            : tab,
+        ),
+      );
+      try {
+        const acceptedRunId = await chatWrapperRef.current?.sendSideQuestion(
+          normalizedQuestion,
+          runId,
+        );
+        if (!acceptedRunId) throw new Error('Chat controller is not ready');
+        if (acceptedRunId !== runId) {
+          setSideChatTabs(current =>
+            current.map(tab =>
+              tab.id === tabId
+                ? {
+                    ...tab,
+                    messages: tab.messages.map(message =>
+                      message.runId === runId ? { ...message, runId: acceptedRunId } : message,
+                    ),
+                  }
+                : tab,
+            ),
+          );
+        }
+        return true;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setSideChatTabs(current =>
+          current.map(tab =>
+            tab.id === tabId
+              ? {
+                  ...tab,
+                  messages: tab.messages.map(message =>
+                    message.runId === runId
+                      ? {
+                          ...message,
+                          answer: i18nService.t('sideChatSendFailed').replace('{error}', detail),
+                          activeTurn: undefined,
+                          answeredAt: Date.now(),
+                          status: 'error',
+                        }
+                      : message,
+                  ),
+                }
+              : tab,
+          ),
+        );
+        return false;
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const handleTerminalShortcut = () => handleCreateTerminalTab();
     const handleBrowserShortcut = () => handleCreateBrowserTab();
+    const handleSideChatShortcut = () => handleCreateSideChat();
     window.addEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
     window.addEventListener('cowork:shortcut:browser', handleBrowserShortcut);
+    window.addEventListener('cowork:shortcut:side-chat', handleSideChatShortcut);
     return () => {
       window.removeEventListener('cowork:shortcut:terminal', handleTerminalShortcut);
       window.removeEventListener('cowork:shortcut:browser', handleBrowserShortcut);
+      window.removeEventListener('cowork:shortcut:side-chat', handleSideChatShortcut);
     };
-  }, [handleCreateBrowserTab, handleCreateTerminalTab]);
+  }, [handleCreateBrowserTab, handleCreateSideChat, handleCreateTerminalTab]);
 
   const closeTerminalTab = useCallback(
     (id: string) => {
@@ -1860,6 +2044,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
           ]
         : []),
+      ...sideChatTabs.map(tab => ({
+        id: tab.id,
+        label: tab.label,
+        icon: <ChatBubbleLeftEllipsisIcon className="h-4 w-4" />,
+        onSelect: () => setPreferredDisplayTabId(tab.id),
+        onClose: () => closeSideChat(tab.id),
+      })),
     ];
 
     return (
@@ -2189,6 +2380,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onActivityChange={setGoalRunProgress}
               onContextUsageChange={setContextUsage}
               onProgressCardChange={setProgressCardState}
+              onSideChatResult={handleSideChatResult}
+              onSideChatStream={handleSideChatStream}
               onSessionKeyChange={sessionKey =>
                 setReportedGatewaySessionKey({ sessionId: currentSession.id, sessionKey })
               }
@@ -2271,7 +2464,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
                   }
                   onCreateBrowser={handleCreateBrowserTab}
+                  onCreateSideChat={handleCreateSideChat}
                   onCreateTerminal={handleCreateTerminalTab}
+                  sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
                   terminalDisabled={
                     !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
                   }
@@ -2283,7 +2478,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     currentSession.id.startsWith('temp-') || browserTabs.length >= MAX_BROWSER_TABS
                   }
                   onCreateBrowser={handleCreateBrowserTab}
+                  onCreateSideChat={handleCreateSideChat}
                   onCreateTerminal={handleCreateTerminalTab}
+                  sideChatDisabled={currentSession.id.startsWith('temp-') || !isOpenClawEngine}
                   terminalDisabled={
                     !terminalWorkingDirectory || terminalTabs.length >= MAX_TERMINAL_TABS
                   }
@@ -2357,6 +2554,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   }
                   embedded
                   isObscured={activeDisplayTabId !== PLAN_DISPLAY_TAB_ID}
+                />
+              )}
+              {activeSideChatTab && (
+                <SideChatPanel
+                  key={activeSideChatTab.id}
+                  assistantName={assistantName}
+                  disabled={!isEngineReady}
+                  draftKey={activeSideChatTab.id}
+                  messages={activeSideChatTab.messages}
+                  modelAgentId={currentSession.agentId}
+                  onSubmit={question =>
+                    handleSendSideChat(activeSideChatTab.id, question, currentSession.modelRef)
+                  }
+                  sessionId={activeSideChatTab.sessionId}
+                  sessionModelRef={currentSession.modelRef}
+                  workingDirectory={currentSessionFolderPath}
                 />
               )}
             </CoworkDisplayPanel>

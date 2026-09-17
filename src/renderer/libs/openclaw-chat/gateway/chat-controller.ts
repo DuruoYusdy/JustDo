@@ -206,6 +206,25 @@ export type ChatStateListener = (state: ChatState) => void;
 export type ChatStreamUpdateKind = 'stream' | 'tool-partial' | 'terminal';
 export type ChatStreamListener = (kind: ChatStreamUpdateKind) => void;
 
+export interface SideChatResult {
+  runId: string;
+  sessionKey: string;
+  question: string;
+  text: string;
+  isError: boolean;
+}
+
+export type SideChatResultListener = (result: SideChatResult) => void;
+
+export interface SideChatStreamUpdate {
+  runId: string;
+  sessionKey: string;
+  turn: AssistantTurn | null;
+  kind: ChatStreamUpdateKind;
+}
+
+export type SideChatStreamListener = (update: SideChatStreamUpdate) => void;
+
 export interface ChatControllerOptions {
   /** Subagent transcripts are expected to contain their originating user/task turn. */
   expectInitialHistory?: boolean;
@@ -338,6 +357,22 @@ function hasStableProgressOwner(event: NormalizedAgentEvent): boolean {
     firstSeq >= 0 &&
     firstSeq <= event.agentSeq
   );
+}
+
+function cloneAssistantTurn(turn: AssistantTurn): AssistantTurn {
+  const items = turn.items.map(item => ({ ...item }));
+  const toolById = new Map<string, ToolItem>();
+  for (const item of items) {
+    if (item.type === 'tool') toolById.set(item.toolCallId, item);
+  }
+  return {
+    ...turn,
+    items,
+    toolById,
+    ...(turn.activityEventSeqById
+      ? { activityEventSeqById: new Map(turn.activityEventSeqById) }
+      : {}),
+  };
 }
 
 function getContentImageUrl(value: unknown): string | null {
@@ -590,6 +625,13 @@ export class ChatController {
   readonly state: ChatState;
   private listeners: Set<ChatStateListener> = new Set();
   private streamListeners: Set<ChatStreamListener> = new Set();
+  private sideChatResultListeners: Set<SideChatResultListener> = new Set();
+  private sideChatStreamListeners: Set<SideChatStreamListener> = new Set();
+  private localSideChatRunIds = new Set<string>();
+  private pendingSideChats = new Map<string, { question: string; sessionKey: string }>();
+  private sideChatTranscripts = new Map<string, ChatTranscriptState>();
+  private sideChatAssistantSnapshotRunIds = new Set<string>();
+  private sideChatTombstoneOrder: string[] = [];
   private lifecycleEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryRecovery: PostFinalHistoryRecovery | null = null;
@@ -891,6 +933,84 @@ export class ChatController {
   onStream(listener: ChatStreamListener): () => void {
     this.streamListeners.add(listener);
     return () => this.streamListeners.delete(listener);
+  }
+
+  /** Subscribe to ephemeral /btw replies, which never enter the main transcript. */
+  onSideChatResult(listener: SideChatResultListener): () => void {
+    this.sideChatResultListeners.add(listener);
+    return () => this.sideChatResultListeners.delete(listener);
+  }
+
+  /** Subscribe to isolated /btw Thinking, Tool, and Content timeline updates. */
+  onSideChatStream(listener: SideChatStreamListener): () => void {
+    this.sideChatStreamListeners.add(listener);
+    return () => this.sideChatStreamListeners.delete(listener);
+  }
+
+  private publishSideChatStream(
+    runId: string,
+    sessionKey: string,
+    kind: ChatStreamUpdateKind = 'stream',
+    turn: AssistantTurn | null = this.sideChatTranscripts.get(runId)?.activeTurn ?? null,
+  ): void {
+    const update: SideChatStreamUpdate = {
+      runId,
+      sessionKey,
+      turn: turn ? cloneAssistantTurn(turn) : null,
+      kind,
+    };
+    for (const listener of this.sideChatStreamListeners) listener(update);
+  }
+
+  private clearSideChatTranscript(
+    runId: string,
+    sessionKey: string,
+    kind: ChatStreamUpdateKind = 'terminal',
+  ): void {
+    this.sideChatTranscripts.delete(runId);
+    this.sideChatAssistantSnapshotRunIds.delete(runId);
+    this.publishSideChatStream(runId, sessionKey, kind, null);
+  }
+
+  private publishSideChatFailure(runId: string, text = ''): void {
+    const pending = this.pendingSideChats.get(runId);
+    if (!pending) return;
+    this.pendingSideChats.delete(runId);
+    const result: SideChatResult = {
+      runId,
+      sessionKey: pending.sessionKey,
+      question: pending.question,
+      text,
+      isError: true,
+    };
+    for (const listener of this.sideChatResultListeners) listener(result);
+    this.clearSideChatTranscript(runId, pending.sessionKey);
+  }
+
+  private retainSideChatTombstone(runId: string): void {
+    if (!this.sideChatTombstoneOrder.includes(runId)) this.sideChatTombstoneOrder.push(runId);
+    while (this.sideChatTombstoneOrder.length > 256) {
+      const expiredRunId = this.sideChatTombstoneOrder.shift();
+      if (expiredRunId && !this.pendingSideChats.has(expiredRunId)) {
+        this.localSideChatRunIds.delete(expiredRunId);
+      }
+    }
+  }
+
+  private clearSideChatRun(runId: string): void {
+    this.localSideChatRunIds.delete(runId);
+    this.pendingSideChats.delete(runId);
+    this.sideChatTranscripts.delete(runId);
+    this.sideChatAssistantSnapshotRunIds.delete(runId);
+    this.sideChatTombstoneOrder = this.sideChatTombstoneOrder.filter(id => id !== runId);
+  }
+
+  private clearAllSideChatRuns(): void {
+    this.sideChatTombstoneOrder = [];
+    this.pendingSideChats.clear();
+    this.sideChatTranscripts.clear();
+    this.sideChatAssistantSnapshotRunIds.clear();
+    this.localSideChatRunIds.clear();
   }
 
   private notify(): void {
@@ -1975,11 +2095,13 @@ export class ChatController {
             .join('\n\n')
         : goalText;
       const attachments = (result.editorAttachments ?? []).flatMap((attachment, index) => {
-        const mimeType =
-          typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
+        const mimeType = typeof attachment.mimeType === 'string' ? attachment.mimeType.trim() : '';
         const base64Data = typeof attachment.data === 'string' ? attachment.data.trim() : '';
         if (!mimeType || !base64Data) return [];
-        const subtype = mimeType.split('/')[1]?.split(/[;+]/u)[0]?.replace(/[^a-z0-9]+/giu, '');
+        const subtype = mimeType
+          .split('/')[1]
+          ?.split(/[;+]/u)[0]
+          ?.replace(/[^a-z0-9]+/giu, '');
         return [
           {
             name: `restored-attachment-${index + 1}${subtype ? `.${subtype}` : ''}`,
@@ -2000,11 +2122,7 @@ export class ChatController {
       this.historyPagingGeneration += 1;
       this.resetHistoryPagination(sessionKey);
       this.displayedHistoryLeafBySession.delete(normalizeTranscriptSessionKey(sessionKey));
-      this.resetTranscriptForSession(
-        sessionKey,
-        this.state.currentSessionId ?? sessionId,
-        false,
-      );
+      this.resetTranscriptForSession(sessionKey, this.state.currentSessionId ?? sessionId, false);
       this.setCurrentSessionMessages([], { resetLoadedHistory: true });
       this.state.pendingUserMessage = null;
       this.state.lastError = null;
@@ -3097,6 +3215,7 @@ export class ChatController {
     this.terminalLifecycleSeen = false;
     this.suspendedRunId = null;
     this.pendingAnnounceEvents.clear();
+    this.clearAllSideChatRuns();
     this.observedSessionMessageSeqBySession.clear();
     this.historyReloadRequested.clear();
     this.immediateHistoryReloadRequested.clear();
@@ -3141,6 +3260,10 @@ export class ChatController {
   }
 
   private handleClose(): void {
+    for (const runId of this.pendingSideChats.keys()) {
+      this.publishSideChatFailure(runId);
+      this.retainSideChatTombstone(runId);
+    }
     // Progress observed on the lost transport is no longer an active fact.
     // Fresh native events/history can restore it; an unobserved failure must
     // not leave a permanent local "compacting" card after reconnection.
@@ -3468,6 +3591,37 @@ export class ChatController {
 
   private handleTimelineEvent(event: GatewayEventFrame): void {
     if (event.event === 'tick') return;
+    if (event.event === 'chat.side_result') {
+      const payload = asRecord(event.payload);
+      const runId = readNonBlankString(payload?.runId);
+      const sessionKey = readNonBlankString(payload?.sessionKey);
+      const question = readNonBlankString(payload?.question);
+      const text = readNonBlankString(payload?.text);
+      if (
+        payload?.kind !== 'btw' ||
+        !runId ||
+        !sessionKey ||
+        !question ||
+        !text ||
+        !this.localSideChatRunIds.has(runId) ||
+        !this.pendingSideChats.has(runId) ||
+        normalizeTranscriptSessionKey(sessionKey) !==
+          normalizeTranscriptSessionKey(this.state.sessionKey)
+      ) {
+        return;
+      }
+      const result: SideChatResult = {
+        runId,
+        sessionKey,
+        question,
+        text,
+        isError: payload.isError === true,
+      };
+      for (const listener of this.sideChatResultListeners) listener(result);
+      this.pendingSideChats.delete(runId);
+      this.clearSideChatTranscript(runId, sessionKey);
+      return;
+    }
     if (event.event === 'progressCard.changed') {
       this.handleProgressCardChanged(event.payload);
       return;
@@ -3475,6 +3629,43 @@ export class ChatController {
     if (event.event === 'chat') {
       const normalizedPayload = normalizeChatEvent({ payload: event.payload, frameSeq: event.seq });
       if (normalizedPayload) {
+        if (normalizedPayload.runId && this.localSideChatRunIds.has(normalizedPayload.runId)) {
+          const pending = this.pendingSideChats.get(normalizedPayload.runId);
+          const transcript = this.sideChatTranscripts.get(normalizedPayload.runId);
+          if (
+            normalizedPayload.state === 'delta' &&
+            this.sideChatAssistantSnapshotRunIds.has(normalizedPayload.runId)
+          ) {
+            return;
+          }
+          if (pending && transcript) {
+            const reduceResult = reduceChatEvent(
+              transcript,
+              normalizedPayload,
+              this.transcriptDependencies,
+            );
+            if (reduceResult === 'applied') {
+              this.publishSideChatStream(
+                normalizedPayload.runId,
+                pending.sessionKey,
+                normalizedPayload.state === 'delta' ? 'stream' : 'terminal',
+              );
+            }
+          }
+          if (
+            normalizedPayload.state === 'final' ||
+            normalizedPayload.state === 'aborted' ||
+            normalizedPayload.state === 'error'
+          ) {
+            this.publishSideChatFailure(
+              normalizedPayload.runId,
+              normalizedPayload.errorMessage ?? '',
+            );
+            this.pendingSideChats.delete(normalizedPayload.runId);
+            this.retainSideChatTombstone(normalizedPayload.runId);
+          }
+          return;
+        }
         let payload = normalizedPayload;
         const failedErrorMessage =
           normalizedPayload.state === 'error'
@@ -3619,6 +3810,45 @@ export class ChatController {
           reason: normalized.reason,
           frameSeq: event.seq ?? null,
         });
+        return;
+      }
+      if (normalized.event.runId && this.localSideChatRunIds.has(normalized.event.runId)) {
+        const pending = this.pendingSideChats.get(normalized.event.runId);
+        const transcript = this.sideChatTranscripts.get(normalized.event.runId);
+        if (pending && transcript) {
+          const reduceResult = reduceAgentEvent(
+            transcript,
+            normalized.event,
+            this.transcriptDependencies,
+            {
+              allowSequenceBackfill:
+                normalized.event.deliveryEvent === 'session.tool' ||
+                hasStableProgressOwner(normalized.event),
+            },
+          );
+          if (reduceResult === 'applied') {
+            if (normalized.event.stream === 'assistant') {
+              const observation = readTerminalGuardObservation(normalized.event.data);
+              if (observation?.action === 'rollback') {
+                this.sideChatAssistantSnapshotRunIds.delete(normalized.event.runId);
+              } else {
+                this.sideChatAssistantSnapshotRunIds.add(normalized.event.runId);
+              }
+            }
+            const phase = normalized.event.data.phase;
+            const terminal =
+              normalized.event.stream === 'lifecycle' && (phase === 'end' || phase === 'error');
+            const toolPartial =
+              normalized.event.stream === 'tool' &&
+              normalized.event.data.partialResult !== undefined &&
+              !terminal;
+            this.publishSideChatStream(
+              normalized.event.runId,
+              pending.sessionKey,
+              terminal ? 'terminal' : toolPartial ? 'tool-partial' : 'stream',
+            );
+          }
+        }
         return;
       }
       const cachedEventSession = this.findLiveSessionState(
@@ -5328,6 +5558,70 @@ export class ChatController {
   }
 
   // ─── Send Message ─────────────────────────────────────────────────────
+
+  /** Send an isolated OpenClaw /btw turn without touching main chat state. */
+  async sendSideQuestion(question: string, runId: string): Promise<string> {
+    const client = this.state.client;
+    if (!client || !this.state.connected) throw new Error('not connected');
+    const normalizedQuestion = question.trim().replace(/\s*[\r\n]+\s*/g, ' ');
+    const proposedRunId = runId.trim();
+    if (!normalizedQuestion) throw new Error('Side chat question is required');
+    if (!proposedRunId) throw new Error('Side chat run id is required');
+
+    const sessionKey = this.state.sessionKey;
+    let trackedRunId = proposedRunId;
+    let terminalAck = false;
+    this.localSideChatRunIds.add(proposedRunId);
+    this.pendingSideChats.set(proposedRunId, { question: normalizedQuestion, sessionKey });
+    const transcript = createChatTranscriptState(sessionKey, this.state.currentSessionId);
+    beginAssistantTurn(
+      transcript,
+      {
+        runId: proposedRunId,
+        sessionId: this.state.currentSessionId,
+        startedAt: Date.now(),
+      },
+      this.transcriptDependencies,
+    );
+    this.sideChatTranscripts.set(proposedRunId, transcript);
+    try {
+      const ack = await client.request<{ runId?: string; status?: string }>('chat.send', {
+        sessionKey,
+        ...(this.state.currentSessionId ? { sessionId: this.state.currentSessionId } : {}),
+        message: `/btw ${normalizedQuestion}`,
+        deliver: false,
+        justdoUserInitiated: true,
+        idempotencyKey: proposedRunId,
+      });
+      const acceptedRunId = readNonBlankString(ack?.runId) ?? proposedRunId;
+      if (acceptedRunId !== proposedRunId) {
+        const pending = this.pendingSideChats.get(proposedRunId);
+        const sideTranscript = this.sideChatTranscripts.get(proposedRunId);
+        const hadAssistantSnapshot = this.sideChatAssistantSnapshotRunIds.has(proposedRunId);
+        this.clearSideChatRun(proposedRunId);
+        this.localSideChatRunIds.add(acceptedRunId);
+        if (pending) this.pendingSideChats.set(acceptedRunId, pending);
+        if (sideTranscript) {
+          bindAssistantTurnRunId(sideTranscript, proposedRunId, acceptedRunId);
+          this.sideChatTranscripts.set(acceptedRunId, sideTranscript);
+        }
+        if (hadAssistantSnapshot) this.sideChatAssistantSnapshotRunIds.add(acceptedRunId);
+        trackedRunId = acceptedRunId;
+      }
+      if (ack?.status === 'error' || ack?.status === 'timeout') {
+        terminalAck = true;
+        this.clearSideChatRun(acceptedRunId);
+        throw new Error(`Side chat ${ack.status}`);
+      }
+      return acceptedRunId;
+    } catch (error) {
+      this.pendingSideChats.delete(trackedRunId);
+      this.sideChatTranscripts.delete(trackedRunId);
+      this.sideChatAssistantSnapshotRunIds.delete(trackedRunId);
+      if (!terminalAck) this.retainSideChatTombstone(trackedRunId);
+      throw error;
+    }
+  }
 
   async sendMessage(
     message: string,

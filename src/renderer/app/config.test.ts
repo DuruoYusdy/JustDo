@@ -21,6 +21,7 @@ test('defaultConfig: matches the Codex terminal and browser shortcuts', () => {
   expect(defaultConfig.shortcuts).toMatchObject({
     terminal: 'Ctrl+`',
     browser: 'Ctrl+T',
+    sideChat: 'Ctrl+Alt+S',
   });
 });
 

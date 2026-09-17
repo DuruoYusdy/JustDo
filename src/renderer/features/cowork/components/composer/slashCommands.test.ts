@@ -48,4 +48,27 @@ describe('composer slash commands', () => {
       expect.objectContaining({ name: 'plan', executeLocal: true }),
     ]);
   });
+
+  test('keeps the internal side-chat protocol out of the user command menu', () => {
+    const commands = mergeAppSlashCommands([
+      {
+        key: 'btw',
+        name: 'btw',
+        aliases: ['side'],
+        description: 'Internal side question.',
+      },
+      {
+        key: 'future',
+        name: 'future',
+        aliases: ['btw', 'later'],
+        description: 'Future command.',
+      },
+    ]);
+
+    expect(commands.map(command => command.name)).not.toContain('btw');
+    expect(commands).toContainEqual(
+      expect.objectContaining({ name: 'future', aliases: ['later'] }),
+    );
+    expect(SLASH_COMMANDS.map(command => command.name)).not.toContain('btw');
+  });
 });

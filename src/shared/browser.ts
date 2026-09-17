@@ -28,13 +28,14 @@ export const BrowserIpc = {
   ClearBrowsingData: 'browser:clearBrowsingData',
 } as const;
 
-export type BrowserPanelShortcutAction = 'terminal' | 'browser';
+export type BrowserPanelShortcutAction = 'terminal' | 'browser' | 'side-chat';
 
 export type BrowserPanelShortcutSettings = Record<BrowserPanelShortcutAction, string>;
 
 export const DEFAULT_BROWSER_PANEL_SHORTCUTS: BrowserPanelShortcutSettings = {
   terminal: 'Ctrl+`',
   browser: 'Ctrl+T',
+  'side-chat': 'Ctrl+Alt+S',
 };
 
 export const normalizeBrowserPanelShortcutSettings = (
@@ -42,10 +43,16 @@ export const normalizeBrowserPanelShortcutSettings = (
 ): BrowserPanelShortcutSettings | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.terminal !== 'string' || typeof record.browser !== 'string') return null;
+  if (
+    typeof record.terminal !== 'string' ||
+    typeof record.browser !== 'string' ||
+    typeof record['side-chat'] !== 'string'
+  )
+    return null;
   return {
     terminal: record.terminal.slice(0, 80),
     browser: record.browser.slice(0, 80),
+    'side-chat': record['side-chat'].slice(0, 80),
   };
 };
 
@@ -55,6 +62,7 @@ export const resolveBrowserPanelShortcutAction = (
 ): BrowserPanelShortcutAction | null => {
   if (matchesShortcut(input, shortcuts.terminal)) return 'terminal';
   if (matchesShortcut(input, shortcuts.browser)) return 'browser';
+  if (matchesShortcut(input, shortcuts['side-chat'])) return 'side-chat';
   return null;
 };
 

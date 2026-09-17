@@ -216,6 +216,8 @@ interface CoworkPromptInputProps {
   showFolderSelector?: boolean;
   showModelSelector?: boolean;
   sessionId?: string;
+  /** Overrides only the local draft identity while preserving the real session for model controls. */
+  draftKeyOverride?: string;
   /** Agent that owns the session. Defaults to the agent selected on the home screen. */
   modelAgentId?: string;
   /** Native Gateway session key used to resolve session-scoped commands and skills. */
@@ -232,6 +234,8 @@ interface CoworkPromptInputProps {
   onGoalResumeAccepted?: (sessionId: string, runId: string) => void;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
   remoteManaged?: boolean;
+  /** Restricts controls to capabilities supported by an OpenClaw `/btw` side question. */
+  mode?: 'default' | 'side-chat';
 }
 
 interface GoalCompletionFeedbackState {
@@ -267,6 +271,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       showFolderSelector = false,
       showModelSelector = false,
       sessionId,
+      draftKeyOverride,
       modelAgentId,
       slashCommandSessionKey,
       sessionModelRef,
@@ -275,9 +280,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       goalRunProgress = null,
       onGoalResumeAccepted,
       remoteManaged = false,
+      mode = 'default',
     } = props;
     const dispatch = useDispatch();
-    const draftKey = sessionId || '__home__';
+    const draftKey = draftKeyOverride || sessionId || '__home__';
+    const isSideChat = mode === 'side-chat';
+    const supportsAttachments = !remoteManaged && !isSideChat;
+    const supportsSlashCommands = !remoteManaged && !isSideChat;
+    const supportsAgentControls = !remoteManaged && !isSideChat;
+    const supportsSpeechInput = !remoteManaged;
     const draftPrompt = useSelector(
       (state: RootState) => selectDraftPrompts(state)[draftKey] || '',
     );
@@ -443,11 +454,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setSessionGoal(null);
       setPendingGoalObjective(null);
       setGoalExecution(null);
-      if (sessionId && !sessionId.startsWith('temp-')) {
+      if (!isSideChat && sessionId && !sessionId.startsWith('temp-')) {
         window.localStorage.removeItem(goalFeedbackStorageKey(sessionId));
       }
       updateCompletionFeedback(null);
-    }, [sessionId, updateCompletionFeedback]);
+    }, [isSideChat, sessionId, updateCompletionFeedback]);
     const beginGoalClear = useCallback(() => {
       goalClearPendingRef.current = true;
       goalClearTargetIdRef.current = sessionGoalRef.current?.id ?? null;
@@ -527,7 +538,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       sessionGoalRef.current = null;
       setGoalExecution(null);
       let restoredFeedback: GoalCompletionFeedbackState | null = null;
-      if (sessionId && !sessionId.startsWith('temp-')) {
+      if (!isSideChat && sessionId && !sessionId.startsWith('temp-')) {
         try {
           const raw = window.localStorage.getItem(goalFeedbackStorageKey(sessionId));
           const parsed = raw ? (JSON.parse(raw) as Partial<GoalCompletionFeedbackState>) : null;
@@ -544,15 +555,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       updateCompletionFeedback(restoredFeedback);
       setEndingGoalId(null);
       setPendingGoalObjective(current =>
-        resolvePendingGoalObjectiveOnSessionChange({
-          previousSessionId,
-          nextSessionId: sessionId,
-          currentObjective: current,
-          initialObjective: initialGoalObjectiveRef.current,
-          startupCancelled: carriesPendingCancellation,
-        }),
+        isSideChat
+          ? null
+          : resolvePendingGoalObjectiveOnSessionChange({
+              previousSessionId,
+              nextSessionId: sessionId,
+              currentObjective: current,
+              initialObjective: initialGoalObjectiveRef.current,
+              startupCancelled: carriesPendingCancellation,
+            }),
       );
-    }, [cancelGoalClear, sessionId, effectiveAgentId, updateCompletionFeedback]);
+    }, [cancelGoalClear, sessionId, effectiveAgentId, isSideChat, updateCompletionFeedback]);
 
     useEffect(() => {
       if (endingGoalId) goalEndCancelButtonRef.current?.focus();
@@ -783,17 +796,48 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     useEffect(() => {
       if (value !== draftPrompt) {
+        if (isSideChat) {
+          dispatch(setDraftPrompt({ sessionId: draftKey, draft: value }));
+          return;
+        }
         const timer = setTimeout(() => {
           dispatch(setDraftPrompt({ sessionId: draftKey, draft: value }));
         }, 300);
         return () => clearTimeout(timer);
       }
-    }, [value, draftPrompt, dispatch, draftKey]);
+    }, [value, draftPrompt, dispatch, draftKey, isSideChat]);
 
     const handleSubmit = useCallback(
       async (promptOverride?: string) => {
         let promptValue = promptOverride ?? value;
         let trimmedValue = promptValue.trim();
+        if (isSideChat) {
+          if (
+            !trimmedValue ||
+            isRunActive ||
+            isStopPending() ||
+            disabled ||
+            modelUpdatePending ||
+            hasNoAvailableModels ||
+            submittedDraftsRef.current.has(draftKey)
+          ) {
+            return;
+          }
+          submittedDraftsRef.current.add(draftKey);
+          dispatch(setDraftPrompt({ sessionId: draftKey, draft: promptValue }));
+          try {
+            const result = await onSubmit(trimmedValue);
+            if (result === false) return;
+            const currentDraft = selectDraftPrompts(store.getState())[draftKey] || '';
+            if (currentDraft !== promptValue || latestValueRef.current !== promptValue) return;
+            latestValueRef.current = '';
+            setValue('');
+            dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
+          } finally {
+            submittedDraftsRef.current.delete(draftKey);
+          }
+          return;
+        }
         const planPrompt = parsePlanSlashCommandPrompt(trimmedValue);
         const submittedViaPlanCommand = planPrompt !== null;
         if (planPrompt !== null) {
@@ -1174,6 +1218,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         runGoalAction,
         updateCompletionFeedback,
         resetSlashMenuState,
+        isSideChat,
       ],
     );
 
@@ -1224,6 +1269,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     );
 
     const handleSlashButtonClick = useCallback(() => {
+      if (!supportsSlashCommands) return;
       const textarea = textareaRef.current;
       if (!textarea) {
         const nextValue = value ? `${value}/` : '/';
@@ -1251,17 +1297,28 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         textarea.selectionStart = nextCaret;
         textarea.selectionEnd = nextCaret;
       });
-    }, [commitValue, refreshSlashCommands, resetSlashMenuState, updateSlashMenu, value]);
+    }, [
+      commitValue,
+      refreshSlashCommands,
+      resetSlashMenuState,
+      supportsSlashCommands,
+      updateSlashMenu,
+      value,
+    ]);
 
     const handleInputChange = useCallback(
       (event: React.ChangeEvent<HTMLTextAreaElement>) => {
         const nextValue = event.target.value;
         latestValueRef.current = nextValue;
         setValue(nextValue);
-        updateSlashMenu(nextValue);
-        refreshSlashCommands(nextValue);
+        if (supportsSlashCommands) {
+          updateSlashMenu(nextValue);
+          refreshSlashCommands(nextValue);
+        } else {
+          resetSlashMenuState();
+        }
       },
-      [refreshSlashCommands, updateSlashMenu],
+      [refreshSlashCommands, resetSlashMenuState, supportsSlashCommands, updateSlashMenu],
     );
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1673,7 +1730,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     );
 
     const handleAddFile = useCallback(async () => {
-      if (isAddingFile || disabled || isRunActive) return;
+      if (!supportsAttachments || isAddingFile || disabled || isRunActive) return;
       setIsAddingFile(true);
       try {
         const result = await window.electron.dialog.selectFiles({
@@ -1706,7 +1763,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       } finally {
         setIsAddingFile(false);
       }
-    }, [addAttachment, isAddingFile, disabled, isRunActive, modelSupportsImage]);
+    }, [
+      addAttachment,
+      disabled,
+      isAddingFile,
+      isRunActive,
+      modelSupportsImage,
+      supportsAttachments,
+    ]);
 
     const handleRemoveAttachment = useCallback(
       (path: string) => {
@@ -1727,7 +1791,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!hasFileTransfer(event.dataTransfer)) return;
+      if (!supportsAttachments || !hasFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       dragDepthRef.current += 1;
@@ -1737,14 +1801,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!hasFileTransfer(event.dataTransfer)) return;
+      if (!supportsAttachments || !hasFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       event.dataTransfer.dropEffect = disabled || isRunActive ? 'none' : 'copy';
     };
 
     const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!hasFileTransfer(event.dataTransfer)) return;
+      if (!supportsAttachments || !hasFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
@@ -1754,7 +1818,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
-      if (!hasFileTransfer(event.dataTransfer)) return;
+      if (!supportsAttachments || !hasFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
       dragDepthRef.current = 0;
@@ -1765,13 +1829,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const handlePaste = useCallback(
       (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-        if (disabled || isRunActive) return;
+        if (!supportsAttachments || disabled || isRunActive) return;
         const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length === 0) return;
         event.preventDefault();
         void handleIncomingFiles(files);
       },
-      [disabled, handleIncomingFiles, isRunActive],
+      [disabled, handleIncomingFiles, isRunActive, supportsAttachments],
     );
 
     // Context menu handling for textarea
@@ -1927,13 +1991,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const canSubmit =
       !disabled &&
       !isRunActive &&
-      !goalActionPending &&
+      (isSideChat || !goalActionPending) &&
       !modelUpdatePending &&
       !hasNoAvailableModels &&
       !!value.trim();
-    const effectivePlaceholder = completionFeedback
-      ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
-      : placeholder;
+    const effectivePlaceholder =
+      !isSideChat && completionFeedback
+        ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
+        : placeholder;
     const enhancedContainerClass = isDraggingFiles
       ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
       : containerClass;
@@ -1956,7 +2021,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // OpenClaw owns Goal lifecycle state. Refresh from exact session events instead of polling
     // an idle active Goal, which cannot change without a Gateway event or a new run.
     useEffect(() => {
-      if (!sessionId || sessionId.startsWith('temp-')) return;
+      if (isSideChat || !sessionId || sessionId.startsWith('temp-')) return;
       let cancelled = false;
       let retryId: number | null = null;
       let requestInFlight = false;
@@ -2038,7 +2103,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         removeExecutionListener();
         if (retryId !== null) window.clearTimeout(retryId);
       };
-    }, [applyAcceptedGoalClear, cancelGoalClear, sessionId, updateCompletionFeedback]);
+    }, [applyAcceptedGoalClear, cancelGoalClear, isSideChat, sessionId, updateCompletionFeedback]);
 
     const handleGoalEdit = useCallback(
       async (objective: string): Promise<boolean> => {
@@ -2303,7 +2368,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     return (
       <div className="relative">
-        {(sessionGoal || pendingGoalObjective) && (
+        {!isSideChat && (sessionGoal || pendingGoalObjective) && (
           <GoalStatusCard
             goal={sessionGoal}
             pendingObjective={pendingGoalObjective}
@@ -2321,7 +2386,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             onEnd={handleGoalEndRequest}
           />
         )}
-        {endingGoalId && (
+        {!isSideChat && endingGoalId && (
           <Modal
             onClose={() => setEndingGoalId(null)}
             className="mx-4 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-xl"
@@ -2371,7 +2436,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             </div>
           </Modal>
         )}
-        {attachments.length > 0 && (
+        {supportsAttachments && attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map(attachment => (
               <AttachmentCard
@@ -2382,7 +2447,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ))}
           </div>
         )}
-        {browserAnnotations.length > 0 && (
+        {!isSideChat && browserAnnotations.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {browserAnnotations.map(annotation => (
               <BrowserAnnotationCard
@@ -2405,7 +2470,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             ))}
           </div>
         )}
-        {imageVisionHint && (
+        {supportsAttachments && imageVisionHint && (
           <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400">
             <ExclamationTriangleIcon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
             <span>{i18nService.t('imageVisionHint')}</span>
@@ -2418,7 +2483,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             </button>
           </div>
         )}
-        {slashMenuVisible && (
+        {supportsSlashCommands && slashMenuVisible && (
           <div
             ref={slashMenuRef}
             className="absolute bottom-full left-0 right-0 z-40 mb-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
@@ -2608,181 +2673,201 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 />
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 pb-2 pt-1.5">
                   <div className="flex items-center gap-2 relative">
-                    {!remoteManaged && (
+                    {supportsAttachments && (
+                      <button
+                        type="button"
+                        onClick={handleAddFile}
+                        className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+                        title={i18nService.t('coworkAddFile')}
+                        aria-label={i18nService.t('coworkAddFile')}
+                        disabled={disabled || isRunActive || isAddingFile}
+                      >
+                        <PaperClipIcon className="h-4 w-4" />
+                      </button>
+                    )}
+                    {supportsSpeechInput && (
+                      <LocalSpeechInputButton
+                        key={draftKey}
+                        disabled={disabled || isRunActive}
+                        onTranscript={insertSpeechTranscript}
+                      />
+                    )}
+                    {supportsSlashCommands && (
+                      <button
+                        type="button"
+                        onClick={handleSlashButtonClick}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                        title={i18nService.t('slashCommandButton')}
+                        aria-label={i18nService.t('slashCommandButton')}
+                        disabled={disabled || isRunActive}
+                      >
+                        /
+                      </button>
+                    )}
+                    {supportsAgentControls && (
                       <>
-                        <button
-                          type="button"
-                          onClick={handleAddFile}
-                          className="flex items-center justify-center p-1.5 rounded-lg text-sm text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                          title={i18nService.t('coworkAddFile')}
-                          aria-label={i18nService.t('coworkAddFile')}
-                          disabled={disabled || isRunActive || isAddingFile}
-                        >
-                          <PaperClipIcon className="h-4 w-4" />
-                        </button>
-                        <LocalSpeechInputButton
-                          key={draftKey}
-                          disabled={disabled || isRunActive}
-                          onTranscript={insertSpeechTranscript}
-                        />
-                        <button
-                          type="button"
-                          onClick={handleSlashButtonClick}
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
-                          title={i18nService.t('slashCommandButton')}
-                          aria-label={i18nService.t('slashCommandButton')}
-                          disabled={disabled || isRunActive}
-                        >
-                          /
-                        </button>
                         <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
                         {contextUsageBadge}
                       </>
                     )}
-                    {!remoteManaged && <ActiveSkillBadge />}
+                    {supportsAgentControls && <ActiveSkillBadge />}
                   </div>
                   <div className="flex min-w-0 items-center justify-end gap-2">
                     {showModelSelector && !remoteManaged && (
                       <div className="flex flex-col items-start gap-1">
-                        <ModelSelector
-                          dropdownDirection="up"
-                          dropdownAlign="right"
-                          value={effectiveSelectedModel}
-                          models={selectableModels}
-                          onOpen={() => void loadOpenClawModelCatalog()}
-                          disabled={disabled}
-                          loading={modelUpdatePending || modelCatalogLoading}
-                          onChange={async nextModel => {
-                            if (!nextModel) return;
-                            const selectionContextKey = modelSelectionContextKey;
-                            const { taskId, completion } = modelSelectionTaskQueue.enqueue(
-                              async () => {
-                                try {
-                                  const result = await applyModelSelectionUpdate(
-                                    {
-                                      sessionId,
-                                      agentId: effectiveAgentId,
-                                      model: nextModel,
-                                      onDefaultModelUpdated: () =>
-                                        syncDefaultModelSelectionState(
-                                          dispatch,
-                                          effectiveAgentId,
-                                          nextModel,
-                                        ),
-                                    },
-                                    coworkService,
-                                  );
-                                  if (sessionId) {
-                                    dispatch(
-                                      confirmDefaultModelSelection({
-                                        contextKey: `__home__\0${effectiveAgentId}`,
+                        {isSideChat ? (
+                          <div
+                            className="flex h-8 max-w-56 cursor-default items-center rounded-full px-2.5 text-muted opacity-60"
+                            title={i18nService.t('sideChatModelReadOnly')}
+                            aria-label={i18nService.t('sideChatModelReadOnly')}
+                          >
+                            <span className="truncate text-sm">
+                              {effectiveSelectedModel?.name ?? ''}
+                            </span>
+                          </div>
+                        ) : (
+                          <ModelSelector
+                            dropdownDirection="up"
+                            dropdownAlign="right"
+                            value={effectiveSelectedModel}
+                            models={selectableModels}
+                            onOpen={() => void loadOpenClawModelCatalog()}
+                            disabled={disabled}
+                            loading={modelUpdatePending || modelCatalogLoading}
+                            onChange={async nextModel => {
+                              if (!nextModel) return;
+                              const selectionContextKey = modelSelectionContextKey;
+                              const { taskId, completion } = modelSelectionTaskQueue.enqueue(
+                                async () => {
+                                  try {
+                                    const result = await applyModelSelectionUpdate(
+                                      {
+                                        sessionId,
+                                        agentId: effectiveAgentId,
                                         model: nextModel,
-                                      }),
+                                        onDefaultModelUpdated: () =>
+                                          syncDefaultModelSelectionState(
+                                            dispatch,
+                                            effectiveAgentId,
+                                            nextModel,
+                                          ),
+                                      },
+                                      coworkService,
                                     );
-                                  }
-                                  if (!sessionId || !result.sessionModelRef) {
+                                    if (sessionId) {
+                                      dispatch(
+                                        confirmDefaultModelSelection({
+                                          contextKey: `__home__\0${effectiveAgentId}`,
+                                          model: nextModel,
+                                        }),
+                                      );
+                                    }
+                                    if (!sessionId || !result.sessionModelRef) {
+                                      dispatch(
+                                        confirmManualModelSelection({
+                                          contextKey: selectionContextKey,
+                                          taskId,
+                                          model: nextModel,
+                                        }),
+                                      );
+                                      return;
+                                    }
+                                    const confirmed =
+                                      resolveOpenClawModelRef(
+                                        result.sessionModelRef,
+                                        availableModels,
+                                      ) ?? nextModel;
                                     dispatch(
                                       confirmManualModelSelection({
                                         contextKey: selectionContextKey,
                                         taskId,
-                                        model: nextModel,
-                                      }),
-                                    );
-                                    return;
-                                  }
-                                  const confirmed =
-                                    resolveOpenClawModelRef(
-                                      result.sessionModelRef,
-                                      availableModels,
-                                    ) ?? nextModel;
-                                  dispatch(
-                                    confirmManualModelSelection({
-                                      contextKey: selectionContextKey,
-                                      taskId,
-                                      model: confirmed,
-                                    }),
-                                  );
-                                  dispatch(
-                                    confirmCurrentSessionModelSelection({
-                                      sessionId,
-                                      modelRef: result.sessionModelRef,
-                                    }),
-                                  );
-                                } catch (error) {
-                                  const persistedModelRef =
-                                    resolvePersistedSessionModelRefAfterApplyError(
-                                      error,
-                                      nextModel,
-                                    );
-                                  if (persistedModelRef && sessionId) {
-                                    const persistedModel =
-                                      resolveOpenClawModelRef(persistedModelRef, availableModels) ??
-                                      nextModel;
-                                    dispatch(
-                                      confirmManualModelSelection({
-                                        contextKey: selectionContextKey,
-                                        taskId,
-                                        model: persistedModel,
+                                        model: confirmed,
                                       }),
                                     );
                                     dispatch(
                                       confirmCurrentSessionModelSelection({
                                         sessionId,
-                                        modelRef: persistedModelRef,
+                                        modelRef: result.sessionModelRef,
                                       }),
                                     );
+                                  } catch (error) {
+                                    const persistedModelRef =
+                                      resolvePersistedSessionModelRefAfterApplyError(
+                                        error,
+                                        nextModel,
+                                      );
+                                    if (persistedModelRef && sessionId) {
+                                      const persistedModel =
+                                        resolveOpenClawModelRef(
+                                          persistedModelRef,
+                                          availableModels,
+                                        ) ?? nextModel;
+                                      dispatch(
+                                        confirmManualModelSelection({
+                                          contextKey: selectionContextKey,
+                                          taskId,
+                                          model: persistedModel,
+                                        }),
+                                      );
+                                      dispatch(
+                                        confirmCurrentSessionModelSelection({
+                                          sessionId,
+                                          modelRef: persistedModelRef,
+                                        }),
+                                      );
+                                    }
+                                    throw error;
                                   }
-                                  throw error;
-                                }
-                              },
-                            );
-                            dispatch(
-                              beginManualModelSelection({
-                                contextKey: selectionContextKey,
-                                taskId,
-                                model: nextModel,
-                                previousModel: effectiveSelectedModel,
-                              }),
-                            );
-                            try {
-                              await completion;
+                                },
+                              );
                               dispatch(
-                                completeManualModelSelection({
+                                beginManualModelSelection({
                                   contextKey: selectionContextKey,
                                   taskId,
+                                  model: nextModel,
+                                  previousModel: effectiveSelectedModel,
                                 }),
                               );
-                            } catch (error) {
-                              const isLatestSelection =
-                                store.getState().cowork.pendingModelSelectionTaskIds[
-                                  selectionContextKey
-                                ] === taskId;
-                              dispatch(
-                                rollbackManualModelSelection({
-                                  contextKey: selectionContextKey,
-                                  taskId,
-                                }),
-                              );
-                              if (!isLatestSelection) return;
-                              const errorMessage =
-                                error instanceof Error ? error.message : String(error);
-                              const userMessage = i18nService
-                                .t(
-                                  error instanceof DefaultModelApplyError
-                                    ? 'coworkDefaultModelApplyFailedSessionUpdated'
-                                    : 'coworkModelApplyFailed',
-                                )
-                                .replace('{error}', errorMessage);
-                              window.dispatchEvent(
-                                new CustomEvent('app:showToast', { detail: userMessage }),
-                              );
-                              console.warn('[CoworkPromptInput] Failed to update session model', {
-                                sessionId,
-                                error,
-                              });
-                            }
-                          }}
-                        />
+                              try {
+                                await completion;
+                                dispatch(
+                                  completeManualModelSelection({
+                                    contextKey: selectionContextKey,
+                                    taskId,
+                                  }),
+                                );
+                              } catch (error) {
+                                const isLatestSelection =
+                                  store.getState().cowork.pendingModelSelectionTaskIds[
+                                    selectionContextKey
+                                  ] === taskId;
+                                dispatch(
+                                  rollbackManualModelSelection({
+                                    contextKey: selectionContextKey,
+                                    taskId,
+                                  }),
+                                );
+                                if (!isLatestSelection) return;
+                                const errorMessage =
+                                  error instanceof Error ? error.message : String(error);
+                                const userMessage = i18nService
+                                  .t(
+                                    error instanceof DefaultModelApplyError
+                                      ? 'coworkDefaultModelApplyFailedSessionUpdated'
+                                      : 'coworkModelApplyFailed',
+                                  )
+                                  .replace('{error}', errorMessage);
+                                window.dispatchEvent(
+                                  new CustomEvent('app:showToast', { detail: userMessage }),
+                                );
+                                console.warn('[CoworkPromptInput] Failed to update session model', {
+                                  sessionId,
+                                  error,
+                                });
+                              }
+                            }}
+                          />
+                        )}
                         {hasNoAvailableModels && (
                           <span className="max-w-60 text-[11px] leading-4 text-red-500">
                             {i18nService.t('noModelAvailableHint')}
@@ -2819,33 +2904,43 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
                 {!remoteManaged && (
                   <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={handleAddFile}
-                      className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-                      title={i18nService.t('coworkAddFile')}
-                      aria-label={i18nService.t('coworkAddFile')}
-                      disabled={disabled || isRunActive || isAddingFile}
-                    >
-                      <PaperClipIcon className="h-4 w-4" />
-                    </button>
-                    <LocalSpeechInputButton
-                      key={draftKey}
-                      disabled={disabled || isRunActive}
-                      onTranscript={insertSpeechTranscript}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSlashButtonClick}
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
-                      title={i18nService.t('slashCommandButton')}
-                      aria-label={i18nService.t('slashCommandButton')}
-                      disabled={disabled || isRunActive}
-                    >
-                      /
-                    </button>
-                    <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
-                    {contextUsageBadge}
+                    {supportsAttachments && (
+                      <button
+                        type="button"
+                        onClick={handleAddFile}
+                        className="flex-shrink-0 p-1.5 rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
+                        title={i18nService.t('coworkAddFile')}
+                        aria-label={i18nService.t('coworkAddFile')}
+                        disabled={disabled || isRunActive || isAddingFile}
+                      >
+                        <PaperClipIcon className="h-4 w-4" />
+                      </button>
+                    )}
+                    {supportsSpeechInput && (
+                      <LocalSpeechInputButton
+                        key={draftKey}
+                        disabled={disabled || isRunActive}
+                        onTranscript={insertSpeechTranscript}
+                      />
+                    )}
+                    {supportsSlashCommands && (
+                      <button
+                        type="button"
+                        onClick={handleSlashButtonClick}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-secondary/70 text-xs text-secondary hover:border-secondary hover:bg-surface-raised hover:text-foreground transition-colors font-mono font-semibold"
+                        title={i18nService.t('slashCommandButton')}
+                        aria-label={i18nService.t('slashCommandButton')}
+                        disabled={disabled || isRunActive}
+                      >
+                        /
+                      </button>
+                    )}
+                    {supportsAgentControls && (
+                      <>
+                        <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
+                        {contextUsageBadge}
+                      </>
+                    )}
                   </div>
                 )}
 

@@ -45,6 +45,27 @@ describe('NewDisplayTabMenu', () => {
     expect(screen.getByRole('menuitem', { name: 'Terminal' }).hasAttribute('disabled')).toBe(true);
   });
 
+  it('offers side chat for an existing session', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const createSideChat = vi.fn();
+    render(
+      <NewDisplayTabMenu
+        onCreateBrowser={vi.fn()}
+        onCreateSideChat={createSideChat}
+        onCreateTerminal={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+      'Side chat',
+      'Browser',
+      'Terminal',
+    ]);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Side chat' }));
+    expect(createSideChat).toHaveBeenCalledTimes(1);
+  });
+
   it('supports menu arrow navigation and returns focus on Escape', async () => {
     i18nService.setLanguage('en', { persist: false });
     render(<NewDisplayTabMenu onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);

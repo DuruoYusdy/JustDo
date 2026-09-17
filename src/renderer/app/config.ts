@@ -125,6 +125,7 @@ export interface AppConfig {
     sendMessage: string;
     terminal: string;
     browser: string;
+    sideChat: string;
     [key: string]: string | undefined;
   };
 }
@@ -199,6 +200,7 @@ export const defaultConfig: AppConfig = {
     sendMessage: 'Enter',
     terminal: 'Ctrl+`',
     browser: 'Ctrl+T',
+    sideChat: 'Ctrl+Alt+S',
   },
 };
 

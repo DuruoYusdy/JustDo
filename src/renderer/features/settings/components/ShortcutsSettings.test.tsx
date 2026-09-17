@@ -14,7 +14,7 @@ import ShortcutsSettings, {
 afterEach(cleanup);
 
 describe('ShortcutsSettings', () => {
-  it('shows editable terminal and browser shortcuts with Codex defaults', () => {
+  it('shows editable workspace shortcuts with Codex defaults', () => {
     i18nService.setLanguage('en', { persist: false });
     const onShortcutChange = vi.fn();
 
@@ -27,8 +27,10 @@ describe('ShortcutsSettings', () => {
 
     expect(screen.getByText('Terminal')).toBeTruthy();
     expect(screen.getByText('Browser')).toBeTruthy();
+    expect(screen.getByText('Side chat')).toBeTruthy();
     expect(screen.getByText('Ctrl+`')).toBeTruthy();
     expect(screen.getByText('Ctrl+T')).toBeTruthy();
+    expect(screen.getByText('Ctrl+Alt+S')).toBeTruthy();
 
     const terminalShortcut = screen.getByRole('button', { name: 'Terminal: Ctrl+`' });
     fireEvent.click(terminalShortcut);

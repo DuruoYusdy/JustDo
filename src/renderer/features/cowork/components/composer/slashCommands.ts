@@ -448,9 +448,14 @@ const APP_ONLY_SLASH_COMMAND_NAMES = new Set(['plan']);
 
 export function mergeAppSlashCommands(commands: SlashCommandDef[]): SlashCommandDef[] {
   const gatewayCommands = commands
-    .filter(command => !APP_ONLY_SLASH_COMMAND_NAMES.has(command.name))
+    .filter(
+      command =>
+        !APP_ONLY_SLASH_COMMAND_NAMES.has(command.name) && !SlashCommandBlacklist.has(command.name),
+    )
     .map(command => {
-      const aliases = command.aliases?.filter(alias => !APP_ONLY_SLASH_COMMAND_NAMES.has(alias));
+      const aliases = command.aliases?.filter(
+        alias => !APP_ONLY_SLASH_COMMAND_NAMES.has(alias) && !SlashCommandBlacklist.has(alias),
+      );
       return aliases?.length === command.aliases?.length ? command : { ...command, aliases };
     });
   const appOnly = SLASH_COMMANDS.filter(command => APP_ONLY_SLASH_COMMAND_NAMES.has(command.name));

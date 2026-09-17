@@ -33,6 +33,8 @@ import {
   type ChatContextUsageSnapshot,
   ChatController,
   type RewindEditorDraft,
+  type SideChatResult,
+  type SideChatStreamUpdate,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
@@ -66,6 +68,8 @@ interface JustDoChatWrapperProps {
     entryId: string,
     editedText?: string,
   ) => boolean | Promise<boolean>;
+  onSideChatResult?: (result: SideChatResult) => void;
+  onSideChatStream?: (update: SideChatStreamUpdate) => void;
 }
 
 type SegmentLoadState = {
@@ -121,6 +125,7 @@ export interface JustDoChatWrapperRef {
   /** Clear the current card only if its completed revision is still current. */
   dismissProgressCard: () => Promise<boolean>;
   rewindToUserMessage: (entryId: string) => Promise<RewindEditorDraft>;
+  sendSideQuestion: (question: string, runId: string) => Promise<string>;
 }
 
 const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(
@@ -140,6 +145,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       onProgressCardChange,
       onSessionKeyChange,
       onLastUserMessageAction,
+      onSideChatResult,
+      onSideChatStream,
       runTimings = [],
     },
     ref,
@@ -158,6 +165,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const onContextUsageChangeRef = useRef(onContextUsageChange);
     const onProgressCardChangeRef = useRef(onProgressCardChange);
     const onSessionKeyChangeRef = useRef(onSessionKeyChange);
+    const onSideChatResultRef = useRef(onSideChatResult);
+    const onSideChatStreamRef = useRef(onSideChatStream);
     const lastActivityKeyRef = useRef('');
     const lastContextUsageKeyRef = useRef('');
     const lastProgressCardKeyRef = useRef('');
@@ -210,6 +219,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     } | null>(null);
     const promotionSourceByTargetRef = useRef(new Map<string, string>());
     const lastReportedSessionKeyRef = useRef('');
+
+    onSideChatResultRef.current = onSideChatResult;
+    onSideChatStreamRef.current = onSideChatStream;
 
     const refreshTranscriptSegments = useCallback(
       async (controller: ChatController, sessionId: string): Promise<void> => {
@@ -493,6 +505,22 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           if (!controller) throw new Error('Controller not initialized');
           return controller.rewindToUserMessage(entryId);
         },
+        sendSideQuestion: async (question, runId) => {
+          const controller = controllerRef.current;
+          if (!controller) throw new Error('Controller not initialized');
+          const sessionId = currentSessionIdentityRef.current.sessionId;
+          const routing = segmentRoutingRef.current;
+          if (
+            !sessionId ||
+            routing.logicalSessionId !== sessionId ||
+            routing.status !== 'ready' ||
+            !routing.sessionKey ||
+            controller.state.sessionKey !== routing.sessionKey
+          ) {
+            throw new Error(i18nService.t('coworkSessionRoutingLoading'));
+          }
+          return controller.sendSideQuestion(question, runId);
+        },
       }),
       [],
     );
@@ -550,6 +578,12 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       };
       const unsubscribeState = controller.subscribe(publishActivity);
       const unsubscribeStream = controller.onStream(publishActivity);
+      const unsubscribeSideChat = controller.onSideChatResult(result =>
+        onSideChatResultRef.current?.(result),
+      );
+      const unsubscribeSideChatStream = controller.onSideChatStream(update =>
+        onSideChatStreamRef.current?.(update),
+      );
 
       // Apply any buffered pending user message (set before controller existed)
       if (pendingUserMessageRef.current) {
@@ -604,6 +638,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         cancelled = true;
         unsubscribeState();
         unsubscribeStream();
+        unsubscribeSideChat();
+        unsubscribeSideChatStream();
         lastActivityKeyRef.current = '';
         lastContextUsageKeyRef.current = '';
         lastProgressCardKeyRef.current = '';

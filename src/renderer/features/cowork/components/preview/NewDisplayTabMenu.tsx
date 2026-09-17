@@ -1,4 +1,9 @@
-import { CommandLineIcon, GlobeAltIcon, PlusIcon } from '@heroicons/react/24/outline';
+import {
+  ChatBubbleLeftEllipsisIcon,
+  CommandLineIcon,
+  GlobeAltIcon,
+  PlusIcon,
+} from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -6,14 +11,18 @@ import { i18nService } from '@/services/i18n';
 interface NewDisplayTabMenuProps {
   browserDisabled?: boolean;
   onCreateBrowser: () => void;
+  onCreateSideChat?: () => void;
   onCreateTerminal: () => void;
+  sideChatDisabled?: boolean;
   terminalDisabled?: boolean;
 }
 
 const NewDisplayTabMenu = ({
   browserDisabled = false,
   onCreateBrowser,
+  onCreateSideChat,
   onCreateTerminal,
+  sideChatDisabled = false,
   terminalDisabled = false,
 }: NewDisplayTabMenuProps) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -108,9 +117,25 @@ const NewDisplayTabMenu = ({
           aria-label={i18nService.t('coworkNewDisplayTab')}
           onKeyDown={handleMenuKeyDown}
         >
+          {onCreateSideChat && (
+            <button
+              ref={element => {
+                itemRefs.current[0] = element;
+              }}
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              disabled={sideChatDisabled}
+              onClick={() => select(onCreateSideChat)}
+              className="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm text-foreground hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChatBubbleLeftEllipsisIcon className="h-4 w-4 text-secondary" />
+              {i18nService.t('sideChatTitle')}
+            </button>
+          )}
           <button
             ref={element => {
-              itemRefs.current[0] = element;
+              itemRefs.current[1] = element;
             }}
             type="button"
             role="menuitem"
@@ -124,7 +149,7 @@ const NewDisplayTabMenu = ({
           </button>
           <button
             ref={element => {
-              itemRefs.current[1] = element;
+              itemRefs.current[2] = element;
             }}
             type="button"
             role="menuitem"

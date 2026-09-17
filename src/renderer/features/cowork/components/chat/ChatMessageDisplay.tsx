@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 
 import type { JustDoChatElement } from '@/libs/openclaw-chat/components/justdo-chat';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import type { GatewayMessage, UserMessageHistoryAction } from '@/libs/openclaw-chat/types';
 
 interface ChatMessageDisplayProps {
@@ -12,6 +13,7 @@ interface ChatMessageDisplayProps {
   controller?: ChatController | null;
   gatewayMessages?: GatewayMessage[];
   isStreaming?: boolean;
+  activeTurn?: AssistantTurn | null;
   fullWidth?: boolean;
   assistantName?: string;
   workingDirectory?: string;
@@ -40,6 +42,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   controller = null,
   gatewayMessages,
   isStreaming = false,
+  activeTurn = null,
   fullWidth = false,
   assistantName,
   workingDirectory = '',
@@ -100,6 +103,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     if (!controller) {
       chat.messages = gatewayMessages ?? [];
       chat.isStreaming = isStreaming;
+      chat.activeTurn = activeTurn;
     }
     chat.assistantName = assistantName ?? '';
     chat.workingDirectory = workingDirectory;
@@ -112,6 +116,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     controller,
     gatewayMessages,
     isStreaming,
+    activeTurn,
     processSummariesExpanded,
     workingDirectory,
     runTimings,

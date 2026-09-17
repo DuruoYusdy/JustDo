@@ -194,6 +194,7 @@ export const SlashCommandBlacklist: ReadonlySet<string> = new Set([
   'steer',
   'redirect',
   'btw',
+  'side',
   'acp',
   'diagnostics',
   'login',

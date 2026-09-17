@@ -1,21 +1,40 @@
-import { CommandLineIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
+import {
+  ChatBubbleLeftEllipsisIcon,
+  CommandLineIcon,
+  GlobeAltIcon,
+} from '@heroicons/react/24/outline';
 
 import { i18nService } from '@/services/i18n';
 
 interface DisplayPanelLauncherProps {
   browserDisabled?: boolean;
   onCreateBrowser: () => void;
+  onCreateSideChat?: () => void;
   onCreateTerminal: () => void;
+  sideChatDisabled?: boolean;
   terminalDisabled?: boolean;
 }
 
 const DisplayPanelLauncher = ({
   browserDisabled = false,
   onCreateBrowser,
+  onCreateSideChat,
   onCreateTerminal,
+  sideChatDisabled = false,
   terminalDisabled = false,
 }: DisplayPanelLauncherProps) => (
   <div className="flex h-full flex-col justify-center gap-1.5 bg-background p-6">
+    {onCreateSideChat && (
+      <button
+        type="button"
+        disabled={sideChatDisabled}
+        onClick={onCreateSideChat}
+        className="mx-auto flex h-10 w-full max-w-72 items-center gap-2.5 rounded-lg bg-surface-raised px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChatBubbleLeftEllipsisIcon className="h-4 w-4 shrink-0 text-secondary" />
+        <span>{i18nService.t('sideChatTitle')}</span>
+      </button>
+    )}
     <button
       type="button"
       disabled={browserDisabled}
