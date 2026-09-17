@@ -349,6 +349,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const subagentStatusLabel = i18nService.t(SUBTASK_STATUS_I18N_KEYS[subagentStatus]);
   const detailRows: Array<[string, React.ReactNode, boolean?]> = [
     [i18nService.t('subtaskInfoStatus'), subagentStatusLabel],
+    [i18nService.t('subtaskInfoAgentId'), displaySubagent.agentId],
     [i18nService.t('subtaskInfoTask'), displaySubagent.task],
     [i18nService.t('subtaskInfoModel'), displaySubagent.model],
     [

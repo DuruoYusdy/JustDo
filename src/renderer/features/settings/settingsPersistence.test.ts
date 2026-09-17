@@ -208,6 +208,9 @@ describe('settings persistence order', () => {
           calls.push('runtime');
           throw new Error('runtime failed');
         },
+        saveExternalAgentSettings: async () => {
+          calls.push('external-agents');
+        },
         saveAppConfig: async () => {
           calls.push('config');
         },
@@ -232,6 +235,9 @@ describe('settings persistence order', () => {
       saveRuntimeSettings: async () => {
         calls.push('runtime');
       },
+      saveExternalAgentSettings: async () => {
+        calls.push('external-agents');
+      },
       saveAppConfig: async () => {
         calls.push('config');
       },
@@ -240,7 +246,7 @@ describe('settings persistence order', () => {
       },
     });
 
-    expect(calls).toEqual(['config', 'committed', 'cowork', 'runtime']);
+    expect(calls).toEqual(['config', 'committed', 'cowork', 'runtime', 'external-agents']);
   });
 
   test('does not mark the draft committed when app config persistence fails', async () => {
@@ -251,6 +257,7 @@ describe('settings persistence order', () => {
       persistSettingsInOrder({
         saveCoworkConfig: async () => undefined,
         saveRuntimeSettings,
+        saveExternalAgentSettings: async () => undefined,
         saveAppConfig: async () => {
           throw new Error('config failed');
         },

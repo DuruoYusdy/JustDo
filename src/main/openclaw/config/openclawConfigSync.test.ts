@@ -7,6 +7,7 @@ import {
   createDefaultAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
+import { createDefaultExternalAgentSettings } from '../../../shared/openclaw/externalAgents';
 import {
   OpenClawApi,
   OpenClawProviderId,
@@ -18,7 +19,10 @@ import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
+  buildManagedAcpxPluginEntry,
+  buildManagedExternalAgentEntries,
   buildManagedOnlineAsrPluginEntries,
+  buildManagedOpenClawAcpConfig,
   buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
@@ -30,6 +34,7 @@ import {
   buildOpenClawConfigMeta,
   buildProviderSelection,
   hasOpenClawConfigChanged,
+  mergeAgentEntriesWithManagedMainSettings,
   mergeOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
   OPENCLAW_FALLBACK_EXEC_MODE,
@@ -41,6 +46,7 @@ import {
   OPENCLAW_SESSION_PRUNE_AFTER,
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
+  OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   sanitizeOpenClawV2026_9_2Config,
@@ -535,6 +541,291 @@ describe('OpenClaw managed subagent config', () => {
       model: 'provider/worker-model',
       thinking: 'high',
     });
+  });
+});
+
+describe('OpenClaw managed ACP config', () => {
+  test('enables the bundled backend for enabled external agents', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.agents.claude.enabled = true;
+    settings.agents.codex.enabled = true;
+
+    expect(buildManagedOpenClawAcpConfig(settings)).toEqual({
+      enabled: true,
+      dispatch: { enabled: true },
+      backend: OpenClawExtensionId.ACPX,
+      allowedAgents: ['claude', 'codex'],
+      defaultAgent: 'claude',
+    });
+  });
+
+  test('projects build-time adapter definitions into the bundled plugin', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.permissionMode = 'read-only';
+    settings.agents.claude.enabled = true;
+    settings.agents.codex.enabled = false;
+
+    expect(
+      buildManagedAcpxPluginEntry(settings, [
+        {
+          id: 'claude',
+          name: 'Claude',
+          descriptionKey: 'externalAgentsClaudeDescription',
+          defaultEnabled: false,
+          adapter: { command: '${NODE_EXECUTABLE}', args: ['adapter.mjs', '--stdio'] },
+        },
+      ]),
+    ).toEqual({
+      enabled: true,
+      config: {
+        permissionMode: 'approve-reads',
+        nonInteractivePermissions: 'deny',
+        timeoutSeconds: 120,
+        pluginToolsMcpBridge: false,
+        openClawToolsMcpBridge: false,
+        startupProbe: false,
+        diagnosticAgents: ['claude'],
+        agents: {
+          claude: { command: '${NODE_EXECUTABLE}', args: ['adapter.mjs', '--stdio'] },
+        },
+      },
+    });
+  });
+
+  test('publishes every enabled ACP harness as a configured runtime owner', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.agents.claude.enabled = true;
+    settings.agents.codex.enabled = true;
+
+    expect(buildManagedExternalAgentEntries('C:/workspace', settings)).toEqual({
+      claude: {
+        workspace: 'C:/workspace',
+        runtime: {
+          type: 'acp',
+          acp: {
+            agent: 'claude',
+            backend: OpenClawExtensionId.ACPX,
+            cwd: 'C:/workspace',
+          },
+        },
+      },
+      codex: {
+        workspace: 'C:/workspace',
+        runtime: {
+          type: 'acp',
+          acp: {
+            agent: 'codex',
+            backend: OpenClawExtensionId.ACPX,
+            cwd: 'C:/workspace',
+          },
+        },
+      },
+    });
+  });
+
+  test('does not inject the embedded Agent model into ACP runtime owners', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.agents.codex.enabled = true;
+    const sync = new OpenClawConfigSync({
+      getAgents: () => [],
+    } as never);
+
+    const result = (
+      sync as unknown as {
+        buildAgentsEntries: (
+          fallback: string,
+          available: ReadonlySet<string>,
+          workspace: string,
+          externalAgentSettings: ReturnType<typeof createDefaultExternalAgentSettings>,
+        ) => { entries: Record<string, Record<string, unknown>> };
+      }
+    ).buildAgentsEntries(
+      'custom4/oc/mimo-v2.5',
+      new Set(['custom4/oc/mimo-v2.5']),
+      'C:/workspace',
+      settings,
+    );
+
+    expect(result.entries.codex).toMatchObject({
+      runtime: {
+        type: 'acp',
+        acp: { agent: 'codex', backend: OpenClawExtensionId.ACPX },
+      },
+    });
+    expect(result.entries.codex).not.toHaveProperty('model');
+  });
+
+  test('reconciles managed ACP runtime owners when an external agent is toggled', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.agents.codex.enabled = true;
+    const managedCodex = buildManagedExternalAgentEntries('/managed', settings);
+    const staleEntries = {
+      main: { workspace: '/existing' },
+      codex: {
+        runtime: {
+          type: 'acp',
+          acp: { agent: 'codex', backend: OpenClawExtensionId.ACPX },
+        },
+      },
+    };
+
+    expect(mergeAgentEntriesWithManagedMainSettings(managedCodex, staleEntries)).toEqual({
+      main: { workspace: '/existing' },
+      ...managedCodex,
+    });
+    expect(mergeAgentEntriesWithManagedMainSettings({}, staleEntries)).toEqual({
+      main: { workspace: '/existing' },
+    });
+  });
+
+  test('registers native ACP commands without a runtime downloader', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.agents.opencode.enabled = true;
+
+    const pluginEntry = buildManagedAcpxPluginEntry(settings);
+
+    expect(pluginEntry).toEqual({
+      enabled: true,
+      config: {
+        permissionMode: 'approve-reads',
+        nonInteractivePermissions: 'deny',
+        timeoutSeconds: 120,
+        pluginToolsMcpBridge: false,
+        openClawToolsMcpBridge: false,
+        startupProbe: false,
+        diagnosticAgents: ['claude', 'codex', 'opencode', 'deepseek-harness', 'hermes'],
+        agents: {
+          opencode: { command: 'opencode', args: ['acp'] },
+          'deepseek-harness': { command: 'dsh', args: ['--profile', 'acp'] },
+          hermes: { command: 'hermes', args: ['acp'] },
+        },
+      },
+    });
+    expect(JSON.stringify(pluginEntry)).not.toContain('npx');
+  });
+
+  test('keeps the lazy ACPX runtime available for tests while delegation is disabled', () => {
+    expect(buildManagedAcpxPluginEntry(createDefaultExternalAgentSettings())).toMatchObject({
+      enabled: true,
+    });
+    expect(buildManagedOpenClawAcpConfig(createDefaultExternalAgentSettings())).toMatchObject({
+      enabled: false,
+      allowedAgents: [],
+    });
+  });
+
+  test('projects every permission mode and read-only failure policy into ACPX', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.permissionMode = 'deny-all';
+    settings.operationTimeoutSeconds = 300;
+    expect(buildManagedAcpxPluginEntry(settings)).toMatchObject({
+      config: {
+        permissionMode: 'deny-all',
+        nonInteractivePermissions: 'deny',
+        timeoutSeconds: 300,
+      },
+    });
+
+    settings.permissionMode = 'read-only';
+    settings.readOnlyViolationBehavior = 'fail-task';
+    expect(buildManagedAcpxPluginEntry(settings)).toMatchObject({
+      config: {
+        permissionMode: 'approve-reads',
+        nonInteractivePermissions: 'fail',
+      },
+    });
+
+    settings.permissionMode = 'full-access';
+    expect(buildManagedAcpxPluginEntry(settings)).toMatchObject({
+      config: {
+        permissionMode: 'approve-all',
+        nonInteractivePermissions: 'fail',
+      },
+    });
+  });
+
+  test('projects selected tool bridges and enabled stdio MCP servers into ACPX', () => {
+    const settings = createDefaultExternalAgentSettings();
+    settings.pluginToolsMcpBridge = true;
+    settings.openClawToolsMcpBridge = true;
+    settings.shareConfiguredMcpServers = true;
+
+    expect(
+      buildManagedAcpxPluginEntry(settings, [], [
+        {
+          id: 'local',
+          name: 'workspace-tools',
+          description: '',
+          enabled: true,
+          transportType: 'stdio',
+          command: 'node',
+          args: ['server.mjs'],
+          env: { MODE: 'acp' },
+          isBuiltIn: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: 'remote',
+          name: 'remote-tools',
+          description: '',
+          enabled: true,
+          transportType: 'http',
+          url: 'https://example.invalid/mcp',
+          isBuiltIn: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: 'reserved',
+          name: 'openclaw-tools',
+          description: '',
+          enabled: true,
+          transportType: 'stdio',
+          command: 'collision',
+          isBuiltIn: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]),
+    ).toMatchObject({
+      config: {
+        pluginToolsMcpBridge: true,
+        openClawToolsMcpBridge: true,
+        mcpServers: {
+          'workspace-tools': {
+            command: 'node',
+            args: ['server.mjs'],
+            env: { MODE: 'acp' },
+          },
+        },
+      },
+    });
+  });
+
+  test('does not share configured MCP servers until explicitly enabled', () => {
+    const settings = createDefaultExternalAgentSettings();
+    const entry = buildManagedAcpxPluginEntry(settings, [], [
+      {
+        id: 'local',
+        name: 'workspace-tools',
+        description: '',
+        enabled: true,
+        transportType: 'stdio',
+        command: 'node',
+        isBuiltIn: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+
+    expect(entry).toMatchObject({
+      config: {
+        pluginToolsMcpBridge: false,
+        openClawToolsMcpBridge: false,
+      },
+    });
+    expect((entry.config as Record<string, unknown>).mcpServers).toBeUndefined();
   });
 });
 

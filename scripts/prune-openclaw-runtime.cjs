@@ -78,7 +78,7 @@ const DIRS_TO_DELETE = new Set([
 // Callers already have try-catch protection.
 
 const PACKAGES_TO_STUB = [
-  'koffi',            // Windows FFI for terminal PTY — not needed in gateway mode
+  'koffi', // Windows FFI for terminal PTY — not needed in gateway mode
 ];
 
 const GENERIC_STUB_INDEX_CJS = `// Stub (CJS): this package is not needed for headless gateway operation.
@@ -121,7 +121,9 @@ function stubPackage(pkgDir, pkgName, stats) {
   try {
     const origPkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
     version = origPkg.version || version;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Remove all contents
   removeDirectory(pkgDir);
@@ -130,29 +132,45 @@ function stubPackage(pkgDir, pkgName, stats) {
   // Write dual CJS + ESM stub files
   fs.writeFileSync(path.join(pkgDir, 'index.js'), GENERIC_STUB_INDEX_CJS, 'utf8');
   fs.writeFileSync(path.join(pkgDir, 'index.mjs'), GENERIC_STUB_INDEX_ESM, 'utf8');
-  fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({
-    name: pkgName,
-    version,
-    main: 'index.js',
-    exports: {
-      '.': {
-        import: './index.mjs',
-        require: './index.js',
-        default: './index.js',
+  fs.writeFileSync(
+    path.join(pkgDir, 'package.json'),
+    JSON.stringify(
+      {
+        name: pkgName,
+        version,
+        main: 'index.js',
+        exports: {
+          '.': {
+            import: './index.mjs',
+            require: './index.js',
+            default: './index.js',
+          },
+        },
       },
-    },
-  }, null, 2) + '\n', 'utf8');
+      null,
+      2,
+    ) + '\n',
+    'utf8',
+  );
 
   stats.stubbed.push(pkgName);
 }
 
 // ─── File cleanup ───
 
-function shouldDeleteFile(filename) {
-  return PATTERNS_TO_DELETE.some((pattern) => pattern.test(filename));
+function isLegalMetadataFile(filename) {
+  return (
+    /^(?:license|licence|notice|third[_-]party[_-]notices?)(?:\..+)?$/i.test(filename) ||
+    /^readme(?:\.(?:md|txt|rst))?$/i.test(filename)
+  );
 }
 
-function cleanDir(dirPath, stats) {
+function shouldDeleteFile(filename, options = {}) {
+  if (options.preserveLegalFiles && isLegalMetadataFile(filename)) return false;
+  return PATTERNS_TO_DELETE.some(pattern => pattern.test(filename));
+}
+
+function cleanDir(dirPath, stats, options = {}) {
   let entries;
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -169,23 +187,38 @@ function cleanDir(dirPath, stats) {
         stats.dirsRemoved++;
         continue;
       }
-      cleanDir(fullPath, stats);
+      cleanDir(fullPath, stats, options);
       // Remove empty directories
       try {
         const remaining = fs.readdirSync(fullPath);
         if (remaining.length === 0) {
           fs.rmdirSync(fullPath);
         }
-      } catch { /* ignore */ }
-    } else if (entry.isFile() && shouldDeleteFile(entry.name)) {
+      } catch {
+        /* ignore */
+      }
+    } else if (entry.isFile() && shouldDeleteFile(entry.name, options)) {
       try {
         const size = fs.statSync(fullPath).size;
         fs.unlinkSync(fullPath);
         stats.filesRemoved++;
         stats.bytesFreed += size;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
+}
+
+function pruneExtensionDependencies(extensionDir, options = {}) {
+  const nodeModulesDir = path.join(extensionDir, 'node_modules');
+  const stats = { filesRemoved: 0, dirsRemoved: 0, bytesFreed: 0 };
+  if (fs.existsSync(nodeModulesDir)) {
+    cleanDir(nodeModulesDir, stats, {
+      preserveLegalFiles: options.preserveLegalFiles === true,
+    });
+  }
+  return stats;
 }
 
 // ─── Extension pruning policy ───
@@ -202,8 +235,8 @@ function listLocalExtensionIds(repoRoot) {
 
   return fs
     .readdirSync(sourceDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name);
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
 }
 
 function loadExtensionPrunePolicy(repoRoot) {
@@ -317,12 +350,12 @@ function pruneRuntimeExtensions(runtimeRoot, stats, options = {}) {
   }
 
   console.log(
-    `[${label}] Extension keep policy: kept ${policy.keep.length} OpenClaw-managed extensions`
-      + (protectedKept.length > 0 ? `, protected local extensions: ${protectedKept.join(', ')}` : ''),
+    `[${label}] Extension keep policy: kept ${policy.keep.length} OpenClaw-managed extensions` +
+      (protectedKept.length > 0 ? `, protected local extensions: ${protectedKept.join(', ')}` : ''),
   );
   console.log(
-    `[${label}] Removed ${removed.length} extension dirs`
-      + (removed.length > 0 ? `: ${removed.join(', ')}` : ''),
+    `[${label}] Removed ${removed.length} extension dirs` +
+      (removed.length > 0 ? `: ${removed.join(', ')}` : ''),
   );
 
   return { kept: policy.keep, protected: protectedKept, removed };
@@ -345,7 +378,9 @@ function getDirectorySize(dirPath) {
       } else if (entry.isFile()) {
         total += fs.statSync(fullPath).size;
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   return total;
@@ -354,19 +389,19 @@ function getDirectorySize(dirPath) {
 function logSummary(stats) {
   const mbFreed = (stats.bytesFreed / 1024 / 1024).toFixed(1);
   console.log(
-    `[prune-openclaw-runtime] Stubbed: ${stats.stubbed.length > 0 ? stats.stubbed.join(', ') : 'none'}`
+    `[prune-openclaw-runtime] Stubbed: ${stats.stubbed.length > 0 ? stats.stubbed.join(', ') : 'none'}`,
   );
   console.log(
-    `[prune-openclaw-runtime] Removed ${stats.filesRemoved} files, ${stats.dirsRemoved} dirs, `
-      + `${stats.extensionDirsRemoved} extension dirs, freed ${mbFreed} MB`
+    `[prune-openclaw-runtime] Removed ${stats.filesRemoved} files, ${stats.dirsRemoved} dirs, ` +
+      `${stats.extensionDirsRemoved} extension dirs, freed ${mbFreed} MB`,
   );
 }
 
 // ─── Main ───
 
 function main() {
-  const runtimeRoot = process.argv[2]
-    || path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current');
+  const runtimeRoot =
+    process.argv[2] || path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current');
 
   if (!fs.existsSync(runtimeRoot)) {
     console.error(`[prune-openclaw-runtime] Runtime root not found: ${runtimeRoot}`);
@@ -375,7 +410,13 @@ function main() {
 
   console.log(`[prune-openclaw-runtime] Cleaning ${runtimeRoot} ...`);
 
-  const stats = { filesRemoved: 0, dirsRemoved: 0, extensionDirsRemoved: 0, bytesFreed: 0, stubbed: [] };
+  const stats = {
+    filesRemoved: 0,
+    dirsRemoved: 0,
+    extensionDirsRemoved: 0,
+    bytesFreed: 0,
+    stubbed: [],
+  };
 
   const nodeModulesDir = path.join(runtimeRoot, 'node_modules');
   if (!fs.existsSync(nodeModulesDir)) {
@@ -402,7 +443,9 @@ function main() {
           stats.filesRemoved++;
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // Step 2: Clean unnecessary files from node_modules only
@@ -416,10 +459,12 @@ function main() {
         if (!ext.isDirectory()) continue;
         const extNodeModules = path.join(extensionsDir, ext.name, 'node_modules');
         if (fs.existsSync(extNodeModules)) {
-          cleanDir(extNodeModules, stats);
+          cleanDir(extNodeModules, stats, { preserveLegalFiles: ext.name === 'acpx' });
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   logSummary(stats);
@@ -430,5 +475,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  pruneExtensionDependencies,
   pruneRuntimeExtensions,
 };

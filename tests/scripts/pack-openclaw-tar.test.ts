@@ -120,3 +120,37 @@ test('preserves Python runtime and distribution licenses', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('preserves ACPX legal metadata while pruning unrelated package docs', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-acpx-license-tar-'));
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const acpxRoot = path.join(runtimeRoot, 'dist', 'extensions', 'acpx');
+  const dependencyRoot = path.join(acpxRoot, 'node_modules', 'fixture');
+  const unrelatedRoot = path.join(runtimeRoot, 'node_modules', 'fixture');
+  const archivePath = path.join(tempRoot, 'runtime.tar');
+
+  try {
+    fs.mkdirSync(dependencyRoot, { recursive: true });
+    fs.mkdirSync(unrelatedRoot, { recursive: true });
+    fs.writeFileSync(path.join(acpxRoot, 'THIRD_PARTY_NOTICES.md'), 'notices', 'utf8');
+    fs.writeFileSync(path.join(dependencyRoot, 'LICENSE.md'), 'license', 'utf8');
+    fs.writeFileSync(path.join(dependencyRoot, 'README.md'), 'readme', 'utf8');
+    fs.writeFileSync(path.join(unrelatedRoot, 'README.md'), 'pruned', 'utf8');
+
+    packMultipleSources([{ dir: runtimeRoot, prefix: 'cfmind' }], archivePath);
+
+    const entries: string[] = [];
+    listTar({
+      file: archivePath,
+      sync: true,
+      onReadEntry: entry => entries.push(entry.path.replace(/\\/g, '/')),
+    });
+
+    expect(entries).toContain('cfmind/dist/extensions/acpx/THIRD_PARTY_NOTICES.md');
+    expect(entries).toContain('cfmind/dist/extensions/acpx/node_modules/fixture/LICENSE.md');
+    expect(entries).toContain('cfmind/dist/extensions/acpx/node_modules/fixture/README.md');
+    expect(entries).not.toContain('cfmind/node_modules/fixture/README.md');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

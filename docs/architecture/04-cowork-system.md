@@ -187,7 +187,7 @@ Exec/plugin approval 走独立 Gateway approval API，并继续使用阻塞式 m
 
 ## 13. 子任务列表与 Subagent
 
-子任务列表以原生 `tasks.list/get` 与 `task` event 为权威，当前展示会话直接派生的 Subagent 任务；状态稳定化为 `pending/running/done/failed/killed/timeout/blocked`，其中 OpenClaw 的 `completed + terminalOutcome=blocked` 必须保留为 blocked，不能显示成成功。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
+子任务列表以原生 `tasks.list/get` 与 `task` event 为权威，当前展示会话直接派生的原生 Subagent 与外部 Agent 任务；两者共用 OpenClaw task ledger、session recovery 和终态语义，不通过 session key 猜测来源。状态稳定化为 `pending/running/done/failed/killed/timeout/blocked`，其中 OpenClaw 的 `completed + terminalOutcome=blocked` 必须保留为 blocked，不能显示成成功。`runtime=subagent|acp` 只用于内部路由，详情使用 `agentId` 展示具体 Agent，不单独展示协议或执行器分类。`taskName` 是机器标识，`label` 是展示标题，不能把随机 session key 当用户标题。
 
 Main 对 task 查询做 single-flight 和短时缓存，并用版本化 wire validator 检查分页、cursor、状态、进度摘要和 terminal projection；实时 `task` event 会使对应快照失效，并经 IPC 通知 Renderer 立即重读原生 ledger。Renderer 参考 OpenClaw WebChat 使用右侧 rail：进行中任务固定优先展示，结束历史默认展开且可手动折叠，每行固定按状态灯、标题、原始状态值和详情按钮排列；右上角入口在 rail 收起时显示活动数。列表即使收起也会预加载，并在父会话或任一 child 活动时每 5 秒刷新，全部终态后退避到 30 秒，轮询也作为重连或丢事件的兜底；抽屉只在所选 child 活动时持续刷新，终态只做一次确认。查询不再调用 agent 的 `subagents list` 工具，因此不需要旧 patch 049，也不会计入 agent tool-loop。
 

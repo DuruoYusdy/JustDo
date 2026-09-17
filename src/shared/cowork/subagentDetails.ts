@@ -19,6 +19,8 @@ export interface CoworkSubagentDetailTask {
   label: string;
   labelSource: 'taskName' | 'label' | 'task';
   status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
+  runtime?: 'subagent' | 'acp';
+  agentId?: string;
   task?: string;
   runId?: string;
   model?: string;

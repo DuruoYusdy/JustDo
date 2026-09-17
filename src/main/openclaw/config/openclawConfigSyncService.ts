@@ -1134,6 +1134,8 @@ export class OpenClawConfigSyncService {
         getCoworkConfig: () => this.deps.getCoworkStore().getConfig(),
         getAgentRuntimeSettings: () =>
           this.deps.getCoworkStore().getAgentRuntimeSettings(),
+        getExternalAgentSettings: () =>
+          this.deps.getCoworkStore().getExternalAgentSettings(),
         getMcpServers: () => this.deps.getMcpStore().listServers(),
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),

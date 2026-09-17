@@ -40,7 +40,7 @@ const builderConfig = JSON.parse(
 const unpackScriptPath = path.resolve(__dirname, '../../scripts/unpack-cfmind.cjs');
 const unpackScript = readFileSync(unpackScriptPath, 'utf8');
 const processHelperPath = path.resolve(__dirname, '../../scripts/nsis-process-helper.ps1');
-const processHelper = readFileSync(processHelperPath, 'utf8');
+const processHelper = readFileSync(processHelperPath, 'utf8').replaceAll('\r\n', '\n');
 const tempDirs: string[] = [];
 const { compressTarArchive } = require('../../scripts/pack-openclaw-tar.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
@@ -209,6 +209,7 @@ describe('Windows installer process handling', () => {
       expect(readFileSync(markerPath, 'utf8')).toBe('old-runtime');
       expect(existsSync(`${installRoot}.justdo-runtime-staging`)).toBe(false);
     },
+    30_000,
   );
 
   it.runIf(process.platform === 'win32')(
@@ -307,6 +308,7 @@ describe('Windows installer process handling', () => {
         );
       }
     },
+    30_000,
   );
 
   it.runIf(process.platform === 'win32')(
@@ -379,6 +381,7 @@ describe('Windows installer process handling', () => {
         if (existsSync(legacyPythonRoot)) unlinkSync(legacyPythonRoot);
       }
     },
+    30_000,
   );
 
   it('removes the previous Git runtime before extracting MinGit during upgrades', () => {

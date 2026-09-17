@@ -84,6 +84,8 @@ test('maps native task ledger states and keeps task id separate from display lab
       label: 'Readable child title',
       labelSource: 'label',
       status: 'pending',
+      runtime: 'subagent',
+      agentId: undefined,
       task: 'Inspect the implementation.',
       sessionId: 'session-child',
       model: 'gpt-5.6',
@@ -99,6 +101,106 @@ test('maps native task ledger states and keeps task id separate from display lab
       toolUseCount: 3,
     },
   ]);
+});
+
+test('includes ACP tasks with their external agent identity', async () => {
+  const request = vi.fn(async () => ({
+    tasks: [
+      {
+        id: 'task-acp-1',
+        runtime: 'acp',
+        kind: 'acp',
+        agentId: 'claude',
+        status: 'running',
+        title: 'Review with Claude',
+        childSessionKey: 'agent:main:acp:claude-child',
+      },
+    ],
+  }));
+
+  await expect(
+    listGatewaySubagents({
+      client: gatewayClient(request as GatewayClientLike['request']),
+      parentKeys: ['agent:main:justdo:parent'],
+      hydrateDetails: false,
+    }),
+  ).resolves.toMatchObject([
+    {
+      id: 'task-acp-1',
+      runtime: 'acp',
+      agentId: 'claude',
+      status: 'running',
+      label: 'Review with Claude',
+    },
+  ]);
+});
+
+test('collapses the native subagent wrapper around an ACP backing task', async () => {
+  const request = vi.fn(async () => ({
+    tasks: [
+      {
+        id: 'task-wrapper',
+        runtime: 'subagent',
+        agentId: 'codex',
+        runId: 'run-shared',
+        status: 'completed',
+        title: 'Codex task',
+        childSessionKey: 'agent:codex:acp:shared',
+      },
+      {
+        id: 'task-acp',
+        runtime: 'acp',
+        agentId: 'codex',
+        runId: 'run-shared',
+        status: 'completed',
+        title: 'Codex task',
+        childSessionKey: 'agent:codex:acp:shared',
+      },
+    ],
+  }));
+
+  await expect(
+    listGatewaySubagents({
+      client: gatewayClient(request as GatewayClientLike['request']),
+      parentKeys: ['agent:main:justdo:parent'],
+      hydrateDetails: false,
+    }),
+  ).resolves.toMatchObject([
+    {
+      id: 'task-acp',
+      runtime: 'acp',
+      agentId: 'codex',
+      runId: 'run-shared',
+      sessionKey: 'agent:codex:acp:shared',
+    },
+  ]);
+});
+
+test('ignores non-delegated maintenance tasks that use the ACP runtime', async () => {
+  const request = vi.fn(async () => ({
+    tasks: [
+      {
+        id: 'task-maintenance-1',
+        runtime: 'acp',
+        kind: 'maintenance',
+        status: 'running',
+      },
+    ],
+  }));
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+  try {
+    await expect(
+      listGatewaySubagents({
+        client: gatewayClient(request as GatewayClientLike['request']),
+        parentKeys: ['agent:main:justdo:parent'],
+        hydrateDetails: false,
+      }),
+    ).resolves.toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 test.each([

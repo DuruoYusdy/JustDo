@@ -1273,6 +1273,8 @@ if (!gotTheLock) {
     getEngineManager: getOpenClawEngineManager,
     syncOpenClawConfig,
     ensureEngineRunning: ensureOpenClawRunningForCowork,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
     engineNotReadyCode: ENGINE_NOT_READY_CODE,
   });
 

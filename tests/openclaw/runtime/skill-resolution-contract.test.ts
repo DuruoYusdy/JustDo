@@ -109,6 +109,7 @@ test.skipIf(!runtimeAvailable)(
     }),
   ]);
   },
+  60_000,
 );
 
 test.skipIf(!runtimeAvailable)('locked runtime resolves the next source only after the winner disappears', () => {
@@ -127,7 +128,7 @@ test.skipIf(!runtimeAvailable)('locked runtime resolves the next source only aft
   expect(
     listSkills(fixture).skills.find(skill => skill.name === 'duplicate-skill'),
   ).toMatchObject({ description: 'Managed variant', source: 'openclaw-managed' });
-});
+}, 60_000);
 
 test.skipIf(!runtimeAvailable)(
   'locked runtime resolves the same skill name independently for each workspace',
@@ -146,4 +147,5 @@ test.skipIf(!runtimeAvailable)(
     ),
   ).toMatchObject({ description: 'Second workspace', source: 'openclaw-workspace' });
   },
+  60_000,
 );

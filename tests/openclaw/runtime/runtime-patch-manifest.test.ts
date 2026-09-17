@@ -657,6 +657,27 @@ module.exports = { applyPatch, verifyPatch };
     fs.writeFileSync(path.join(runtimeRoot, 'gateway.asar'), 'packaged asar\n');
     fs.writeFileSync(path.join(runtimeRoot, 'package.json'), '{}\n');
     fs.writeFileSync(path.join(runtimeRoot, 'npm-shrinkwrap.json'), '{}\n');
+    fs.writeFileSync(path.join(runtimeRoot, 'openclaw.mjs'), 'export {};\n');
+    fs.writeFileSync(path.join(runtimeRoot, 'node-version.mjs'), 'export default "24";\n');
+    fs.mkdirSync(path.join(runtimeRoot, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, 'dist', 'entry.js'), 'export {};\n');
+    const acpxFixtureFiles = [
+      'dist/extensions/acpx/index.js',
+      'dist/extensions/acpx/package.json',
+      'dist/extensions/acpx/openclaw.plugin.json',
+      'dist/extensions/acpx/.justdo-extension-assembly.json',
+      'dist/extensions/acpx/THIRD_PARTY_NOTICES.md',
+      'dist/extensions/acpx/node_modules/acpx/dist/runtime.js',
+      'dist/extensions/acpx/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js',
+      'dist/extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js',
+      'dist/extensions/acpx/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe',
+      'dist/extensions/acpx/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe',
+    ];
+    for (const relativePath of acpxFixtureFiles) {
+      const filePath = path.join(runtimeRoot, relativePath);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, 'fixture\n');
+    }
     fs.writeFileSync(
       path.join(runtimeRoot, 'runtime-build-info.json'),
       JSON.stringify({

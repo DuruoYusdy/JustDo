@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 import BetterSqlite3 from 'better-sqlite3';
 
 import { createDefaultAgentRuntimeSettings } from '../../shared/openclaw/agentRuntimeSettings';
+import { createDefaultExternalAgentSettings } from '../../shared/openclaw/externalAgents';
 import { CoworkStore } from './coworkStore';
 
 // ---------------------------------------------------------------------------
@@ -117,7 +118,9 @@ test('sessions do not expose a local transcript cache', () => {
 
   expect(store.getSession(sid)).not.toHaveProperty('messages');
   expect(
-    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'").get(),
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
+      .get(),
   ).toBeUndefined();
 });
 
@@ -279,6 +282,28 @@ test('persists versioned Agent runtime settings and recovers from corrupt data',
     'agentRuntimeSettings:v1',
   );
   expect(store.getAgentRuntimeSettings()).toEqual(defaults);
+});
+
+test('persists versioned external Agent settings and recovers from corrupt data', () => {
+  const defaults = createDefaultExternalAgentSettings();
+  expect(store.getExternalAgentSettings()).toEqual(defaults);
+
+  const configured = {
+    ...defaults,
+    permissionMode: 'read-only' as const,
+    agents: {
+      ...defaults.agents,
+      codex: { ...defaults.agents.codex, enabled: false },
+      claude: { enabled: true },
+    },
+  };
+  store.setExternalAgentSettings(configured);
+  expect(store.getExternalAgentSettings()).toEqual(configured);
+
+  db.prepare("UPDATE cowork_config SET value = 'not-json' WHERE key = ?").run(
+    'externalAgentSettings:v1',
+  );
+  expect(store.getExternalAgentSettings()).toEqual(defaults);
 });
 
 test('renames current provider refs across agents, sessions, and runtime settings', () => {

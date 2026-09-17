@@ -27,6 +27,9 @@ describe('openclawExtensionRegistry', () => {
       [OpenClawExtensionId.EMBEDDED_BROWSER]: {
         enabled: false,
       },
+      [OpenClawExtensionId.ACPX]: {
+        enabled: true,
+      },
     });
   });
 });

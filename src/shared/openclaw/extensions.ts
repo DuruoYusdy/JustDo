@@ -6,6 +6,7 @@ export const OpenClawExtensionId = {
   WORKBOARD: 'workboard',
   PLAN_MODE: 'plan-mode',
   EMBEDDED_BROWSER: 'embedded-browser',
+  ACPX: 'acpx',
 } as const;
 
 export const OpenClawToolName = {

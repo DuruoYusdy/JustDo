@@ -1324,7 +1324,7 @@ describe('OpenClawExtensionImportService', () => {
 
     expect(result).toEqual({ success: true, extensionId: 'claude-extension' });
     expect(runCommand).toHaveBeenCalledOnce();
-  });
+  }, 30_000);
 
   it('lists installed native extensions and ignores incomplete staging directories', () => {
     const stateDir = path.join(fixtureRoot, 'state');

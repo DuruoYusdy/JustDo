@@ -20,6 +20,7 @@ import {
   isActiveSubtask,
   mergeSubtaskSnapshots,
   partitionSubtasks,
+  resolveExternalAgentLabel,
   resolveSubtaskElapsedMs,
   type Subtask,
   SUBTASK_STATUS_I18N_KEYS,
@@ -412,6 +413,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           i18nService.t('subtaskInfoStatus'),
           i18nService.t(SUBTASK_STATUS_I18N_KEYS[detailSubtask.status]),
         ],
+        [i18nService.t('subtaskInfoAgentId'), detailSubtask.agentId],
         [i18nService.t('subtaskInfoTask'), detailSubtask.task],
         [i18nService.t('subtaskInfoModel'), detailSubtask.model],
         [
@@ -448,6 +450,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     : [];
 
   const renderSubtask = (subtask: Subtask) => {
+    const externalAgentLabel = resolveExternalAgentLabel(subtask);
     return (
       <div
         key={subtask.id}
@@ -466,6 +469,14 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         >
           {subtask.label}
         </button>
+        {externalAgentLabel && (
+          <span
+            className="shrink-0 rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-300"
+            title={externalAgentLabel}
+          >
+            {externalAgentLabel}
+          </span>
+        )}
         <span className="shrink-0 text-xs text-secondary">
           {i18nService.t(SUBTASK_STATUS_I18N_KEYS[subtask.status])}
         </span>

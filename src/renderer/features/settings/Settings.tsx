@@ -11,6 +11,7 @@ import {
   MicrophoneIcon,
   PaintBrushIcon,
   PencilSquareIcon,
+  PuzzlePieceIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -29,6 +30,10 @@ import {
   createDefaultAgentRuntimeSettings,
 } from '@shared/openclaw/agentRuntimeSettings';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '@shared/openclaw/constants';
+import {
+  createDefaultExternalAgentSettings,
+  type ExternalAgentSettings,
+} from '@shared/openclaw/externalAgents';
 import {
   GatewayPortSetErrorCode,
   GatewayPortValidationCode,
@@ -85,6 +90,10 @@ import AppearanceSettingsTab from '@/features/settings/components/AppearanceSett
 import AppUpdateFrequencySetting from '@/features/settings/components/AppUpdateFrequencySetting';
 import AppUpdateSection from '@/features/settings/components/AppUpdateSection';
 import BrowserSettingsTab from '@/features/settings/components/BrowserSettingsTab';
+import IntegrationSettingsTab, {
+  IntegrationSettingsView,
+  type IntegrationSettingsViewId,
+} from '@/features/settings/components/IntegrationSettingsTab';
 import ModelSettingsTab, { type ModelKind } from '@/features/settings/components/ModelSettingsTab';
 import {
   commitNonLanguageModelConfigurations,
@@ -132,6 +141,7 @@ type TabType =
   | 'usage'
   | 'model'
   | 'runtime'
+  | 'integrations'
   | 'browser'
   | 'voice'
   | 'im'
@@ -395,6 +405,9 @@ const Settings: React.FC<SettingsProps> = ({
   // 状态
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
   const [activeModelKind, setActiveModelKind] = useState<ModelKind>('language');
+  const [activeIntegrationView, setActiveIntegrationView] = useState<IntegrationSettingsViewId>(
+    IntegrationSettingsView.AgentDelegation,
+  );
   const [nonLanguageModelProviders, setNonLanguageModelProviders] =
     useState<NonLanguageModelProviders>(() =>
       structuredClone(configService.getConfig().onlineModelProviders ?? {}),
@@ -520,6 +533,15 @@ const Settings: React.FC<SettingsProps> = ({
   const [agentRuntimeSettingsLoadError, setAgentRuntimeSettingsLoadError] = useState<string | null>(
     null,
   );
+  const [externalAgentSettings, setExternalAgentSettings] = useState<ExternalAgentSettings>(() =>
+    createDefaultExternalAgentSettings(),
+  );
+  const [initialExternalAgentSettings, setInitialExternalAgentSettings] =
+    useState<ExternalAgentSettings | null>(null);
+  const [externalAgentSettingsLoading, setExternalAgentSettingsLoading] = useState(true);
+  const [externalAgentSettingsLoadError, setExternalAgentSettingsLoadError] = useState<
+    string | null
+  >(null);
   const [isRefreshingBuiltinModels, setIsRefreshingBuiltinModels] = useState(false);
   const [isDetectingModels, setIsDetectingModels] = useState(false);
   const [modelDiscoveryMessage, setModelDiscoveryMessage] = useState<string | null>(null);
@@ -548,10 +570,35 @@ const Settings: React.FC<SettingsProps> = ({
     void loadAgentRuntimeSettings();
   }, [loadAgentRuntimeSettings]);
 
+  const loadExternalAgentSettings = useCallback(async () => {
+    setExternalAgentSettingsLoading(true);
+    setExternalAgentSettingsLoadError(null);
+    try {
+      const result = await window.electron.openclaw.externalAgents.getSettings();
+      if (!result.success || !result.settings) {
+        throw new Error(i18nService.t('externalAgentsLoadFailed'));
+      }
+      setExternalAgentSettings(result.settings);
+      setInitialExternalAgentSettings(result.settings);
+    } catch {
+      setExternalAgentSettingsLoadError(i18nService.t('externalAgentsLoadFailed'));
+    } finally {
+      setExternalAgentSettingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadExternalAgentSettings();
+  }, [loadExternalAgentSettings]);
+
   const agentRuntimeModels = useMemo(() => getEnabledProviderModels(providers), [providers]);
   const agentRuntimeSettingsDirty = Boolean(
     initialAgentRuntimeSettings &&
     JSON.stringify(initialAgentRuntimeSettings) !== JSON.stringify(agentRuntimeSettings),
+  );
+  const externalAgentSettingsDirty = Boolean(
+    initialExternalAgentSettings &&
+    JSON.stringify(initialExternalAgentSettings) !== JSON.stringify(externalAgentSettings),
   );
 
   // 创建引用来确保内容区域的滚动
@@ -1375,6 +1422,24 @@ const Settings: React.FC<SettingsProps> = ({
           setAgentRuntimeSettings(savedRuntimeSettings);
           setInitialAgentRuntimeSettings(savedRuntimeSettings);
         },
+        saveExternalAgentSettings: async () => {
+          if (
+            !initialExternalAgentSettings ||
+            JSON.stringify(externalAgentSettings) === JSON.stringify(initialExternalAgentSettings)
+          ) {
+            return;
+          }
+          const result =
+            await window.electron.openclaw.externalAgents.setSettings(externalAgentSettings);
+          if (!result.success) {
+            setActiveIntegrationView(IntegrationSettingsView.AgentDelegation);
+            setActiveTab('integrations');
+            throw new Error(i18nService.t('externalAgentsSaveFailed'));
+          }
+          const savedSettings = result.settings ?? externalAgentSettings;
+          setExternalAgentSettings(savedSettings);
+          setInitialExternalAgentSettings(savedSettings);
+        },
         saveAppConfig: async () => {
           const currentConfig = configService.getConfig();
           normalizedNonLanguageModelProviders = await commitNonLanguageModelConfigurations(
@@ -2084,6 +2149,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
+      key: 'integrations',
+      label: i18nService.t('integrationsTab'),
+      icon: <PuzzlePieceIcon className="h-5 w-5" />,
+    },
+    {
       key: 'voice',
       label: i18nService.t('voiceSettings'),
       icon: <MicrophoneIcon className="h-5 w-5" />,
@@ -2173,6 +2243,7 @@ const Settings: React.FC<SettingsProps> = ({
         return 'max-w-[1440px]';
       case 'usage':
       case 'runtime':
+      case 'integrations':
         return 'max-w-7xl';
       default:
         return 'max-w-4xl';
@@ -2871,6 +2942,19 @@ const Settings: React.FC<SettingsProps> = ({
           />
         );
 
+      case 'integrations':
+        return (
+          <IntegrationSettingsTab
+            activeView={activeIntegrationView}
+            onViewChange={setActiveIntegrationView}
+            externalAgentSettings={externalAgentSettings}
+            onExternalAgentSettingsChange={setExternalAgentSettings}
+            externalAgentSettingsLoading={externalAgentSettingsLoading}
+            externalAgentSettingsLoadError={externalAgentSettingsLoadError}
+            onExternalAgentSettingsRetry={() => void loadExternalAgentSettings()}
+          />
+        );
+
       case 'browser':
         return <BrowserSettingsTab initialPage={browserPage} />;
       case 'voice':
@@ -3014,7 +3098,10 @@ const Settings: React.FC<SettingsProps> = ({
           <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6">
             <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <div className="flex min-w-0 items-center gap-2">
-              {activeTab === 'runtime' && agentRuntimeSettingsDirty && (
+              {((activeTab === 'runtime' && agentRuntimeSettingsDirty) ||
+                (activeTab === 'integrations' &&
+                  activeIntegrationView === IntegrationSettingsView.AgentDelegation &&
+                  externalAgentSettingsDirty)) && (
                 <div className="mr-1 hidden items-center gap-2 sm:flex">
                   <span className="h-2 w-2 rounded-full bg-amber-500" />
                   <span className="text-xs font-medium text-secondary">
@@ -3032,6 +3119,17 @@ const Settings: React.FC<SettingsProps> = ({
                   {i18nService.t('agentRuntimeRestoreDefaults')}
                 </button>
               )}
+              {activeTab === 'integrations' &&
+                activeIntegrationView === IntegrationSettingsView.AgentDelegation && (
+                  <button
+                    type="button"
+                    onClick={() => setExternalAgentSettings(createDefaultExternalAgentSettings())}
+                    className="non-draggable inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-raised hover:text-primary active:scale-[0.98]"
+                  >
+                    <ArrowPathIcon className="h-3.5 w-3.5" />
+                    {i18nService.t('agentRuntimeRestoreDefaults')}
+                  </button>
+                )}
             </div>
           </div>
 
@@ -3072,7 +3170,10 @@ const Settings: React.FC<SettingsProps> = ({
                 disabled={
                   isSaving ||
                   (activeTab === 'runtime' &&
-                    (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings))
+                    (agentRuntimeSettingsLoading || !initialAgentRuntimeSettings)) ||
+                  (activeTab === 'integrations' &&
+                    activeIntegrationView === IntegrationSettingsView.AgentDelegation &&
+                    (externalAgentSettingsLoading || !initialExternalAgentSettings))
                 }
                 className={`inline-flex h-9 min-w-[88px] items-center justify-center gap-1.5 rounded-xl px-5 text-sm font-medium text-white shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 ${
                   saveSucceeded

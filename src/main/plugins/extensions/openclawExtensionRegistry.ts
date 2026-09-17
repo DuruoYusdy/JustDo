@@ -8,6 +8,10 @@ export type OpenClawExtensionDescriptor = {
 
 export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] = [
   {
+    id: OpenClawExtensionId.ACPX,
+    buildEntry: () => ({ enabled: true }),
+  },
+  {
     id: OpenClawExtensionId.ASK_USER_QUESTION,
     buildEntry: () => ({ enabled: true }),
   },

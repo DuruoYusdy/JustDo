@@ -187,6 +187,7 @@ OpenClaw CLI 都通过 `OPENCLAW_BUNDLED_PLUGINS_DIR` 固定到该目录，不�
 - `ask-user-question` 是受保护的内置交互 extension；其启用状态与等待时限由 config sync 管理，不能从通用扩展页禁用或删除；
 - `automation-permission` 是受保护的内置安全 extension，不能从通用扩展页重配置、禁用或删除；Gateway 每次连接都必须验证其 trusted policy 已加载；
 - `plan-mode` 是受保护的内置工作流 extension，持有会话级 Plan 状态、规划提示、明确 mutation 拦截和计划审核请求，不能从通用扩展页禁用或删除；
+- `acpx` 是受保护的内置 ACP runtime extension；源码固定在 `openclaw-extensions/acpx`，与其他本地 extension 一样由资源同步流程装配；其锁定的生产依赖只在临时 staging 中安装，然后随 extension 复制并预编译进 runtime，不使用 `vendor/openclaw-plugins` 持久缓存，已安装应用不执行在线插件安装；
 - 安装成功后重启 Gateway，再由 `plugins.list` 重新列举；CLI 输出或目录存在都不能替代 Gateway 最终状态。
 
 扩展配置表单保存相同值时不重写文件、不重启。内容变化后优先等待原生配置 watcher 热更新；启动中保存则先等待本次启动完成。热更新失败或启停 RPC 明确返回 `restartRequired` 时，优先由原生安全重启 coordinator 执行进程内重启，保留活动工作 deferral；环境/端口变化、代码导入/删除与目录释放仍走受管冷重启路径。配置重启策略和编译缓存见 `05-agent-engine.md`。
@@ -224,6 +225,14 @@ pending promise、同一 session 只允许一个待答请求、timeout/default�
 该 RPC 不是通用文件读取器，不返回 transcript 路径，也不接受任意 session 文件路径。Adapter 先用 `chat.history` 获取原生 display projection，仅对缺失 detail 做补充查询。Renderer 对 tool input 和 compaction detail 均按每批最多 250 个去重 ID 顺序查询；一个批次失败不丢弃历史或其他批次的补全结果。
 
 本地扩展在资源同步后预编译到 `dist/extensions`，`package.json` 的入口同时改为 JavaScript。`beforePack` 会重新同步最新源码，因此必须再次等待预编译完成；此阶段编译失败会阻止打包，避免交付陈旧代码或重新依赖 TypeScript 即时编译。
+
+### 9.1 ACPX 外部 Agent runtime
+
+OpenClaw v2026.9.2 原生拥有 ACP 调度、`runtime=acp` task ledger、child session 与恢复流程；JustDo 不建立第二套任务表、session key 协议或父子关系缓存。受管配置只写 `acp.enabled/dispatch/backend/allowedAgents/defaultAgent`，后端固定为内置 `acpx`。外部任务和原生 Subagent 都由同一 `tasks.list/get` 与 `task` event 投影到子任务 UI。
+
+`acpx` 源码从匹配的 OpenClaw tag vendored 到仓库，仓库声明锁定版本的 Claude/Codex ACP adapter，并为原生支持 ACP 的 OpenCode、DeepSeek Harness、Hermes 注册结构化启动命令；构建时按目标平台安装并通过 target/fingerprint manifest 复用，已安装应用不会在线下载。全新源码构建仍须使用获准 npm registry 或预热 cache。设置页只允许启用产品已经交付的 Agent 和选择权限，不接收适配器命令、路径或参数；这些信息由 `src/shared/openclaw/externalAgentCatalog.ts` 在构建时注册。新增 Agent 时同时补充 catalog、双语文案、adapter 依赖与 lockfile，并按 `docs/features/external-agent-adapters.md` 的模板完成协议和产物测试。catalog 支持 `${NODE_EXECUTABLE}`、`${ACPX_PLUGIN_ROOT}`、`${OPENCLAW_ROOT}` 占位符，ACPX 启动时展开为受管路径。启动 probe 默认关闭，避免未安装或未登录的可选工具让整个后端进入 unhealthy；实际任务启动失败仍由原生 task 记录为失败。
+
+ACP 权限是独立的版本化产品设置：禁止受控操作映射到 `deny-all + deny`，只读映射到 `approve-reads` 并允许用户选择越权请求是 `deny` 后继续还是 `fail` 终止任务，完全访问映射到 `approve-all + fail`。同一设置还管理 ACP 启动与控制操作超时；任务总时长仍由 OpenClaw 的 subagent run timeout 管理。外部 Agent 位于“设置 → 集成 → Agent 委派”，复用页面右下角的统一保存流程；同级“应用接入”保留独立的空白内容槽，后续承接外部工具调用本应用的设置，不与 Agent 委派的配置和持久化耦合。每个 Agent 的“测试”通过 Main 的 catalog allowlist 调用 Gateway `acpx.agent.doctor`，实际启动已注册命令并完成 ACP initialize probe；测试结果只保存在 Renderer 状态中，不改变启用项，也不触发保存。为支持测试未启用的 Agent，ACPX backend 始终以 lazy plugin 启用，但 `acp.enabled/dispatch` 仍严格由已保存的 allowed Agents 决定。工具访问分为插件工具桥接、OpenClaw 内置工具桥接和已配置 MCP Server 共享，三者默认关闭并随统一保存生效；前两者使用 ACPX 的 session-scoped bridge，后者只投影已启用的 stdio Server，因为当前内置 ACPX schema 尚不接受 HTTP/SSE bootstrap。保留名 `openclaw-plugin-tools` 与 `openclaw-tools` 不进入用户 Server 投影，避免覆盖内置桥接。配置保存在 `cowork_config.externalAgentSettings:v1`；同版本旧 payload 缺失新增字段时补齐安全默认值，catalog 新增项也按其安全默认值补齐，已移除项会被丢弃，同步失败时数据库与 Gateway 配置一起回滚。
 
 ## 10. Plan mode Extension
 

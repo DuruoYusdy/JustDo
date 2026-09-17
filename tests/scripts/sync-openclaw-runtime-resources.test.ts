@@ -4,26 +4,263 @@ import path from 'node:path';
 
 import { expect, test, vi } from 'vitest';
 
-const { syncDocChannels, syncGatewayConfigChannels } =
-  require('../../scripts/sync-openclaw-runtime-resources.cjs') as {
-    syncDocChannels: (
-      repoRoot: string,
-      runtimeRoot: string,
-      label: string,
-    ) => {
-      sourceDir: string;
-      targetDir: string;
-      copiedFiles: number;
-    };
-    syncGatewayConfigChannels: (
-      repoRoot: string,
-      runtimeRoot: string,
-      label: string,
-    ) => {
-      sourceFile: string;
-      targetFile: string;
-    };
+const {
+  resolveExtensionInstallTimeoutMs,
+  syncDocChannels,
+  syncGatewayConfigChannels,
+  syncLocalExtensions,
+} = require('../../scripts/sync-openclaw-runtime-resources.cjs') as {
+  resolveExtensionInstallTimeoutMs: (env?: Record<string, string | undefined>) => number;
+  syncDocChannels: (
+    repoRoot: string,
+    runtimeRoot: string,
+    label: string,
+  ) => {
+    sourceDir: string;
+    targetDir: string;
+    copiedFiles: number;
   };
+  syncGatewayConfigChannels: (
+    repoRoot: string,
+    runtimeRoot: string,
+    label: string,
+  ) => {
+    sourceFile: string;
+    targetFile: string;
+  };
+  syncLocalExtensions: (
+    repoRoot: string,
+    runtimeRoot: string,
+    label: string,
+    options?: {
+      installProductionDependencies?: (
+        extensionDir: string,
+        installTarget: { targetId: string; os: string; cpu: string },
+      ) => void;
+      installTarget?: { targetId: string; os: string; cpu: string };
+    },
+  ) => {
+    sourceDir: string;
+    targetDir: string;
+    copied: string[];
+  };
+};
+
+test('uses a bounded configurable timeout for locked extension installs', () => {
+  expect(resolveExtensionInstallTimeoutMs({})).toBe(20 * 60 * 1000);
+  expect(resolveExtensionInstallTimeoutMs({ JUSTDO_EXTENSION_NPM_CI_TIMEOUT_MS: '1800000' })).toBe(
+    30 * 60 * 1000,
+  );
+  expect(() =>
+    resolveExtensionInstallTimeoutMs({ JUSTDO_EXTENSION_NPM_CI_TIMEOUT_MS: '0' }),
+  ).toThrow(/60000 to 3600000/u);
+});
+
+test('stages all local extensions and installs only declared production dependencies', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const extensionsRoot = path.join(repoRoot, 'openclaw-extensions');
+  const targetRoot = path.join(runtimeRoot, 'dist', 'extensions');
+  const installProductionDependencies = vi.fn(
+    (extensionDir: string, _installTarget: { targetId: string; os: string; cpu: string }) => {
+      const dependencyDir = path.join(extensionDir, 'node_modules', 'fixture-dep');
+      fs.mkdirSync(dependencyDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dependencyDir, 'package.json'),
+        JSON.stringify({ name: 'fixture-dep', version: '1.0.0' }),
+      );
+      fs.writeFileSync(path.join(dependencyDir, 'index.js'), 'module.exports = true;', 'utf8');
+    },
+  );
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+  try {
+    fs.mkdirSync(path.join(extensionsRoot, 'dependency-free'), { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionsRoot, 'dependency-free', 'package.json'),
+      JSON.stringify({ name: 'dependency-free', version: '1.0.0' }),
+      'utf8',
+    );
+    fs.mkdirSync(path.join(extensionsRoot, 'with-dependency'), { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionsRoot, 'with-dependency', 'package.json'),
+      JSON.stringify({
+        name: 'with-dependency',
+        version: '1.0.0',
+        dependencies: { 'fixture-dep': '1.0.0' },
+      }),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(extensionsRoot, 'with-dependency', 'package-lock.json'),
+      '{"lockfileVersion":3}',
+      'utf8',
+    );
+    fs.mkdirSync(path.join(targetRoot, 'dependency-free'), { recursive: true });
+    fs.writeFileSync(path.join(targetRoot, 'dependency-free', 'stale.txt'), 'stale', 'utf8');
+
+    const result = syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installProductionDependencies,
+      installTarget: { targetId: 'win-x64', os: 'win32', cpu: 'x64' },
+    });
+
+    expect(result.copied).toEqual(['dependency-free', 'with-dependency']);
+    expect(installProductionDependencies).toHaveBeenCalledOnce();
+    expect(path.basename(installProductionDependencies.mock.calls[0][0])).toBe('with-dependency');
+    expect(installProductionDependencies.mock.calls[0][1]).toEqual({
+      targetId: 'win-x64',
+      os: 'win32',
+      cpu: 'x64',
+    });
+    expect(fs.existsSync(path.join(targetRoot, 'dependency-free', 'stale.txt'))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(targetRoot, 'with-dependency', 'node_modules', 'fixture-dep', 'index.js'),
+      ),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, 'vendor', 'openclaw-plugins'))).toBe(false);
+  } finally {
+    logSpy.mockRestore();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('reuses locked target dependencies without reinstalling them', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const extensionRoot = path.join(repoRoot, 'openclaw-extensions', 'with-dependency');
+  const targetRoot = path.join(runtimeRoot, 'dist', 'extensions', 'with-dependency');
+  const installProductionDependencies = vi.fn(
+    (extensionDir: string, _installTarget: { targetId: string; os: string; cpu: string }) => {
+      const dependencyDir = path.join(extensionDir, 'node_modules', 'fixture-dep');
+      fs.mkdirSync(dependencyDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dependencyDir, 'package.json'),
+        JSON.stringify({ name: 'fixture-dep', version: '1.0.0' }),
+      );
+      fs.writeFileSync(path.join(dependencyDir, 'index.js'), 'first');
+    },
+  );
+  const installTarget = { targetId: 'win-x64', os: 'win32', cpu: 'x64' };
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+  try {
+    fs.mkdirSync(extensionRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionRoot, 'package.json'),
+      JSON.stringify({ name: 'with-dependency', dependencies: { 'fixture-dep': '1.0.0' } }),
+    );
+    fs.writeFileSync(path.join(extensionRoot, 'package-lock.json'), '{"lockfileVersion":3}');
+    fs.writeFileSync(path.join(extensionRoot, 'index.ts'), 'export const revision = 1;');
+
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installProductionDependencies,
+      installTarget,
+    });
+    fs.writeFileSync(path.join(extensionRoot, 'index.ts'), 'export const revision = 2;');
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installProductionDependencies,
+      installTarget,
+    });
+
+    expect(installProductionDependencies).toHaveBeenCalledOnce();
+    expect(fs.readFileSync(path.join(targetRoot, 'index.ts'), 'utf8')).toContain('revision = 2');
+    expect(
+      fs.readFileSync(path.join(targetRoot, 'node_modules', 'fixture-dep', 'index.js'), 'utf8'),
+    ).toBe('first');
+  } finally {
+    logSpy.mockRestore();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rebuilds an assembly when its installed dependency is incomplete', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const extensionRoot = path.join(repoRoot, 'openclaw-extensions', 'with-dependency');
+  const targetDependencyRoot = path.join(
+    runtimeRoot,
+    'dist',
+    'extensions',
+    'with-dependency',
+    'node_modules',
+    'fixture-dep',
+  );
+  const installProductionDependencies = vi.fn((extensionDir: string) => {
+    const dependencyDir = path.join(extensionDir, 'node_modules', 'fixture-dep');
+    fs.mkdirSync(dependencyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dependencyDir, 'package.json'),
+      JSON.stringify({ name: 'fixture-dep', version: '1.0.0' }),
+    );
+  });
+  const installTarget = { targetId: 'win-x64', os: 'win32', cpu: 'x64' };
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+  try {
+    fs.mkdirSync(extensionRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(extensionRoot, 'package.json'),
+      JSON.stringify({ name: 'with-dependency', dependencies: { 'fixture-dep': '1.0.0' } }),
+    );
+    fs.writeFileSync(path.join(extensionRoot, 'package-lock.json'), '{"lockfileVersion":3}');
+
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installProductionDependencies,
+      installTarget,
+    });
+    fs.rmSync(path.join(targetDependencyRoot, 'package.json'));
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test', {
+      installProductionDependencies,
+      installTarget,
+    });
+
+    expect(installProductionDependencies).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(targetDependencyRoot, 'package.json'))).toBe(true);
+    expect(warnSpy).toHaveBeenCalledOnce();
+  } finally {
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('cleans an interrupted owned staging directory before synchronization', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));
+  const repoRoot = path.join(tempRoot, 'repo');
+  const runtimeRoot = path.join(tempRoot, 'runtime');
+  const sourceRoot = path.join(repoRoot, 'openclaw-extensions', 'dependency-free');
+  const residueRoot = path.join(
+    runtimeRoot,
+    'dist',
+    'extensions',
+    '.justdo-extension-acpx-interrupted',
+  );
+  const unrelatedHiddenRoot = path.join(runtimeRoot, 'dist', 'extensions', '.other-extension');
+  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+  try {
+    fs.mkdirSync(sourceRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceRoot, 'package.json'),
+      JSON.stringify({ name: 'dependency-free', version: '1.0.0' }),
+    );
+    fs.mkdirSync(residueRoot, { recursive: true });
+    fs.mkdirSync(unrelatedHiddenRoot, { recursive: true });
+
+    syncLocalExtensions(repoRoot, runtimeRoot, 'test');
+
+    expect(fs.existsSync(residueRoot)).toBe(false);
+    expect(fs.existsSync(unrelatedHiddenRoot)).toBe(true);
+  } finally {
+    logSpy.mockRestore();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 test('replaces OpenClaw doc channels and removes stale target files', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-runtime-resources-'));

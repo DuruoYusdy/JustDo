@@ -52,6 +52,10 @@ type ApprovalResolved = import('../../shared/openclaw/approvals').ApprovalResolv
 type ApprovalDecision = import('../../shared/openclaw/approvals').ApprovalDecision;
 type AgentRuntimeSettings =
   import('../../shared/openclaw/agentRuntimeSettings').AgentRuntimeSettings;
+type ExternalAgentSettings = import('../../shared/openclaw/externalAgents').ExternalAgentSettings;
+type ExternalAgentId = import('../../shared/openclaw/externalAgents').ExternalAgentId;
+type ExternalAgentTestResult =
+  import('../../shared/openclaw/externalAgents').ExternalAgentTestResult;
 type OpenClawSessionMigrationPlan =
   import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationPlan;
 type OpenClawSessionMigrationProgress =
@@ -600,6 +604,19 @@ interface IElectronAPI {
   generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   openclaw: {
+    externalAgents: {
+      getSettings: () => Promise<{
+        success: boolean;
+        settings?: ExternalAgentSettings;
+        error?: string;
+      }>;
+      setSettings: (settings: ExternalAgentSettings) => Promise<{
+        success: boolean;
+        settings?: ExternalAgentSettings;
+        error?: string;
+      }>;
+      test: (agentId: ExternalAgentId) => Promise<ExternalAgentTestResult>;
+    };
     approvals: {
       list: () => Promise<{
         success: boolean;
@@ -946,6 +963,8 @@ interface IElectronAPI {
         label: string;
         labelSource: 'taskName' | 'label' | 'task';
         status: 'pending' | 'running' | 'done' | 'failed' | 'killed' | 'timeout' | 'blocked';
+        runtime?: 'subagent' | 'acp';
+        agentId?: string;
         task?: string;
         runId?: string;
         model?: string;

@@ -23,7 +23,11 @@ const yaml = require('js-yaml');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { ensureLocalTts } = require('./setup-local-tts.js');
-const { syncOpenClawRuntimeResources } = require('./sync-openclaw-runtime-resources.cjs');
+const {
+  resolveRuntimeInstallTarget,
+  syncOpenClawRuntimeResources,
+  verifyAcpxTargetDependencies,
+} = require('./sync-openclaw-runtime-resources.cjs');
 const { precompileOpenClawExtensions } = require('./precompile-openclaw-extensions.cjs');
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
@@ -143,7 +147,7 @@ function syncCurrentOpenClawRuntimeForTarget(context) {
   const currentBuildInfo = readRuntimeBuildInfo(currentRoot);
   if (currentBuildInfo?.target !== targetId) {
     rmSync(currentRoot, { recursive: true, force: true });
-    cpSync(targetRoot, currentRoot, { recursive: true, force: true });
+    cpSync(targetRoot, currentRoot, { recursive: true, force: true, verbatimSymlinks: true });
     console.log(`[electron-builder-hooks] Synced OpenClaw runtime ${targetId} -> current`);
   }
 
@@ -186,6 +190,85 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
   console.log(
     `[electron-builder-hooks] Verified ${plugins.length} preinstalled OpenClaw plugin(s).`,
   );
+}
+
+function verifyBundledLocalExtensions(runtimeRoot, buildHint) {
+  const repoExtensionsRoot = path.join(__dirname, '..', 'openclaw-extensions');
+  if (!existsSync(repoExtensionsRoot)) return;
+
+  const runtimeExtensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
+  const extensionIds = readdirSync(repoExtensionsRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
+  for (const extensionId of extensionIds) {
+    verifyRequiredPathSet(
+      path.join(runtimeExtensionsRoot, extensionId),
+      ['package.json', 'openclaw.plugin.json', 'index.js'],
+      `Bundled local extension ${extensionId}`,
+      buildHint,
+    );
+  }
+  const acpxRoot = path.join(runtimeExtensionsRoot, 'acpx');
+  if (existsSync(acpxRoot)) {
+    verifyRequiredPathSet(
+      acpxRoot,
+      ['.justdo-extension-assembly.json', 'THIRD_PARTY_NOTICES.md', 'node_modules'],
+      'Bundled ACPX extension',
+      buildHint,
+    );
+    verifyAcpxTargetDependencies(acpxRoot, resolveRuntimeInstallTarget(runtimeRoot));
+  }
+  console.log(
+    `[electron-builder-hooks] Verified ${extensionIds.length} bundled local extension(s).`,
+  );
+}
+
+function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHint) {
+  const acpxPrefix = `${prefix}dist/extensions/acpx/`;
+  const sourceManifest = JSON.parse(
+    readFileSync(path.join(__dirname, '..', 'openclaw-extensions', 'acpx', 'package.json'), 'utf8'),
+  );
+  const dependencies = sourceManifest.dependencies || {};
+  const includesClaudeAdapter = Boolean(dependencies['@agentclientprotocol/claude-agent-acp']);
+  const includesCodexAdapter = Boolean(dependencies['@agentclientprotocol/codex-acp']);
+  const requiredEntries = [
+    'index.js',
+    'package.json',
+    'openclaw.plugin.json',
+    '.justdo-extension-assembly.json',
+    'THIRD_PARTY_NOTICES.md',
+    ...(dependencies.acpx ? ['node_modules/acpx/dist/runtime.js'] : []),
+    ...(includesClaudeAdapter
+      ? ['node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js']
+      : []),
+    ...(includesCodexAdapter ? ['node_modules/@agentclientprotocol/codex-acp/dist/index.js'] : []),
+  ].map(entry => `${acpxPrefix}${entry}`);
+  const claudeNativePrefix =
+    `${acpxPrefix}node_modules/@anthropic-ai/` +
+    `claude-agent-sdk-${installTarget.os}-${installTarget.cpu}/`;
+  const codexNativePrefix = `${acpxPrefix}node_modules/@openai/codex-${installTarget.os}-${installTarget.cpu}/`;
+  const missing = requiredEntries.filter(entry => !entryPaths.has(entry));
+  if (
+    includesClaudeAdapter &&
+    !Array.from(entryPaths).some(
+      entry => entry.startsWith(claudeNativePrefix) && /\/claude(?:\.exe)?$/iu.test(entry),
+    )
+  ) {
+    missing.push(`${claudeNativePrefix}**/claude executable`);
+  }
+  if (
+    includesCodexAdapter &&
+    !Array.from(entryPaths).some(
+      entry => entry.startsWith(codexNativePrefix) && /\/codex(?:\.exe)?$/iu.test(entry),
+    )
+  ) {
+    missing.push(`${codexNativePrefix}**/codex executable`);
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `[electron-builder-hooks] Packaged ACPX validation FAILED for ${buildHint}. Missing: ${missing.join(', ')}`,
+    );
+  }
 }
 
 function verifyRequiredPathSet(rootDir, relativePaths, label, buildHint) {
@@ -299,6 +382,7 @@ async function ensureBundledOpenClawRuntime(context) {
   await precompileOpenClawExtensions(runtimeRoot, { required: true });
   syncBundledSkills(path.join(__dirname, '..'), runtimeRoot, 'electron-builder-hooks');
   verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint);
+  verifyBundledLocalExtensions(runtimeRoot, buildHint);
   verifyBundledSkillResources(buildHint);
 
   const requiredExternalPaths = [path.join(runtimeRoot, 'node_modules')];
@@ -510,16 +594,23 @@ function removeBrokenSymlinks(dir) {
 }
 
 /**
- * Clean up broken symlinks in cfmind/extensions to prevent macOS signing failures.
+ * Clean up broken symlinks in cfmind/dist/extensions to prevent macOS signing failures.
  */
 function cleanupBrokenSymlinksInExtensions(appOutDir) {
-  const extensionsDir = path.join(appOutDir, 'Contents', 'Resources', 'cfmind', 'extensions');
+  const extensionsDir = path.join(
+    appOutDir,
+    'Contents',
+    'Resources',
+    'cfmind',
+    'dist',
+    'extensions',
+  );
 
   if (!existsSync(extensionsDir)) {
     return;
   }
 
-  console.log('[electron-builder-hooks] Cleaning up broken symlinks in cfmind/extensions...');
+  console.log('[electron-builder-hooks] Cleaning up broken symlinks in cfmind/dist/extensions...');
 
   let totalRemoved = 0;
   const extensionEntries = readdirSync(extensionsDir, { withFileTypes: true });
@@ -811,6 +902,14 @@ async function beforePack(context) {
     const missingTarEntries = requiredTarEntries.filter(entry => !tarEntryPaths.has(entry));
     const hasBareOpenClawEntry =
       tarEntryPaths.has('cfmind/dist/entry.js') || tarEntryPaths.has('cfmind/dist/entry.mjs');
+    verifyAcpxArtifactEntryPaths(
+      tarEntryPaths,
+      'cfmind/',
+      resolveRuntimeInstallTarget(
+        path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
+      ),
+      'Windows runtime tar',
+    );
     const hasMinGit =
       tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
     const hasPythonPipCommand = [
@@ -1394,13 +1493,18 @@ async function verifyPackagedOpenClawRuntime(context) {
         'cfmind/dist/entry.mjs',
         'cfmind/npm-shrinkwrap.json',
       ]);
+      const archiveEntryPaths = new Set();
       const tarModule = require(path.join(__dirname, '..', 'node_modules', 'tar'));
       await pipeline(
         createReadStream(tarPath),
         createZstdDecompress(),
         tarModule.extract({
           cwd: temporaryRoot,
-          filter: entryPath => requiredEntries.has(entryPath.replace(/^\.\//, '')),
+          filter: entryPath => {
+            const normalized = entryPath.replace(/^\.\//, '').replace(/\\/g, '/');
+            archiveEntryPaths.add(normalized);
+            return requiredEntries.has(normalized);
+          },
         }),
       );
       verifyOpenClawPatchManifest(path.join(temporaryRoot, 'cfmind'), {
@@ -1411,6 +1515,14 @@ async function verifyPackagedOpenClawRuntime(context) {
         path.join(temporaryRoot, 'cfmind'),
         getOpenClawRuntimeBuildHint(resolveOpenClawRuntimeTargetId(context)),
         'Packaged Windows OpenClaw CLI runtime',
+      );
+      verifyAcpxArtifactEntryPaths(
+        archiveEntryPaths,
+        'cfmind/',
+        resolveRuntimeInstallTarget(
+          path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
+        ),
+        'packaged Windows archive',
       );
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
@@ -1425,6 +1537,7 @@ async function verifyPackagedOpenClawRuntime(context) {
       getOpenClawRuntimeBuildHint(resolveOpenClawRuntimeTargetId(context)),
       'Packaged OpenClaw CLI runtime',
     );
+    verifyBundledLocalExtensions(path.join(resourcesRoot, 'cfmind'), 'packaged application');
   }
 
   console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');
@@ -1446,5 +1559,6 @@ module.exports = {
   verifyPackagedNodeRuntime,
   verifyPackagedWindowsNativeModules,
   verifyPackagedOpenClawRuntime,
+  verifyAcpxArtifactEntryPaths,
   verifyPackagedBrowserExtension,
 };

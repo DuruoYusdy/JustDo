@@ -38,6 +38,8 @@
 - [出站请求头配置与 Extension 接入指南](outbound-header-guide/README.md)：包含手工
   `config.json`、`user_info.json`、Extension `outbound-header-policy.json` 样例，以及生效范围、
   本地代理和排错说明。可以将整个 `docs/outbound-header-guide/` 目录直接发送给用户或插件开发者。
+- [新增外部 Agent 接入指南](external-agent-integration-guide.md)：面向 Agent 适配开发者的独立
+  分发文档，覆盖目录登记、ACP adapter、图标与文案、认证、MCP、离线打包、测试和发布验收。
 
 ## 架构文档
 

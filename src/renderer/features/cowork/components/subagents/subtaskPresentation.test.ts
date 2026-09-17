@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   mergeSubtaskSnapshots,
   partitionSubtasks,
+  resolveExternalAgentLabel,
   resolveSubtaskElapsedMs,
   type Subtask,
 } from './subtaskPresentation';
@@ -18,6 +19,20 @@ const subtask = (overrides: Partial<Subtask>): Subtask => ({
 });
 
 describe('subtask presentation', () => {
+  test('shows known external agent names and uses a compact fallback', () => {
+    expect(resolveExternalAgentLabel(subtask({ runtime: 'acp', agentId: 'codex' }))).toBe('Codex');
+    expect(resolveExternalAgentLabel(subtask({ runtime: 'acp', agentId: 'opencode' }))).toBe(
+      'OpenCode',
+    );
+    expect(resolveExternalAgentLabel(subtask({ runtime: 'acp', agentId: 'company-agent' }))).toBe(
+      'ACP',
+    );
+    expect(resolveExternalAgentLabel(subtask({ runtime: 'acp' }))).toBe('ACP');
+    expect(resolveExternalAgentLabel(subtask({ runtime: 'subagent', agentId: 'codex' }))).toBe(
+      undefined,
+    );
+  });
+
   test('keeps active work ahead of finished history and sorts each group by activity', () => {
     const result = partitionSubtasks([
       subtask({ id: 'done', status: 'done', updatedAt: 500 }),

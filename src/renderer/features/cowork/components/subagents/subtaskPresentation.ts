@@ -1,3 +1,5 @@
+import { getExternalAgentDefinition } from '@shared/openclaw/externalAgentCatalog';
+
 import type { SubagentLabelSource } from './subagentLabel';
 
 export const SUBTASK_STATUSES = {
@@ -20,6 +22,8 @@ export type Subtask = {
   label: string;
   labelSource: SubagentLabelSource;
   status: SubtaskStatus;
+  runtime?: 'subagent' | 'acp';
+  agentId?: string;
   task?: string;
   runId?: string;
   model?: string;
@@ -60,6 +64,15 @@ export const SUBTASK_STATUS_I18N_KEYS: Record<SubtaskStatus, string> = {
 
 export const isActiveSubtask = (status?: string): boolean =>
   status === SUBTASK_STATUSES.PENDING || status === SUBTASK_STATUSES.RUNNING;
+
+export const resolveExternalAgentLabel = (
+  subtask: Pick<Subtask, 'runtime' | 'agentId'>,
+): string | undefined => {
+  if (subtask.runtime !== 'acp') return undefined;
+  const agentId = subtask.agentId?.trim();
+  if (!agentId) return 'ACP';
+  return getExternalAgentDefinition(agentId)?.name ?? 'ACP';
+};
 
 export const mergeSubtaskSnapshots = (
   current: Subtask,

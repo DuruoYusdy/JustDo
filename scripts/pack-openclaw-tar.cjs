@@ -73,6 +73,11 @@ const EXCLUDED_ENVFILE = /^\.env(\..+)?$/i;
 
 function shouldExclude(entryPath) {
   const basename = path.basename(entryPath);
+  const normalized = entryPath.replace(/\\/g, '/');
+  const isAcpxLegalMetadata =
+    normalized.includes('dist/extensions/acpx/') &&
+    /^(?:license|licence|notice|third[_-]party[_-]notices?|readme)(?:\..+)?$/i.test(basename);
+  if (isAcpxLegalMetadata) return false;
 
   // Check dir exclusion
   const segments = entryPath.split(/[/\\]/);

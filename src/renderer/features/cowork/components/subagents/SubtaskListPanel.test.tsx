@@ -114,6 +114,32 @@ describe('SubtaskListPanel', () => {
     expect(onClose).toHaveBeenNthCalledWith(2, false);
   });
 
+  it('labels an external subtask with the called agent name instead of ACP', async () => {
+    i18nService.setLanguage('zh', { persist: false });
+    installElectron(
+      vi.fn().mockResolvedValue({
+        success: true,
+        subagents: [
+          {
+            id: 'codex-child',
+            taskName: 'codex-child',
+            sessionKey: 'agent:codex:acp:child-1',
+            label: '实现功能',
+            labelSource: 'label',
+            status: 'running',
+            runtime: 'acp',
+            agentId: 'codex',
+          },
+        ],
+      }),
+    );
+
+    render(<SubtaskListPanel sessionId="parent-1" isOpen onClose={vi.fn()} />);
+
+    expect(await screen.findByText('Codex')).toBeTruthy();
+    expect(screen.queryByText('ACP')).toBeNull();
+  });
+
   it('shows current-instance model-request usage in the subtask detail dialog', async () => {
     i18nService.setLanguage('zh', { persist: false });
     const getSubTaskDetails = vi.fn().mockResolvedValue({

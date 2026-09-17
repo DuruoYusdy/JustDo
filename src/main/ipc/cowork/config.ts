@@ -6,6 +6,12 @@ import {
   validateAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { isPermissionMode, type PermissionMode } from '../../../shared/openclaw/approvals';
+import { getExternalAgentDefinition } from '../../../shared/openclaw/externalAgentCatalog';
+import {
+  ExternalAgentIpc,
+  type ExternalAgentTestResult,
+  validateExternalAgentSettings,
+} from '../../../shared/openclaw/externalAgents';
 import { normalizeMaxGoalContinuationTurns } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
@@ -30,6 +36,7 @@ interface Dependencies {
     restartGatewayIfRunning?: boolean;
   }) => Promise<SyncResult>;
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
+  requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   engineNotReadyCode: string;
 }
 
@@ -53,6 +60,7 @@ export const registerCoworkConfigHandlers = ({
   getEngineManager,
   syncOpenClawConfig,
   ensureEngineRunning,
+  requestGateway,
   engineNotReadyCode,
 }: Dependencies): void => {
   ipcMain.handle('cowork:config:get', async () => {
@@ -147,6 +155,136 @@ export const registerCoworkConfigHandlers = ({
       }
 
       return rollback(syncResult.error || 'Runtime configuration synchronization failed.');
+    }),
+  );
+
+  ipcMain.handle(ExternalAgentIpc.GET_SETTINGS, async () => {
+    try {
+      return { success: true, settings: getCoworkStore().getExternalAgentSettings() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get external agent settings',
+      };
+    }
+  });
+
+  ipcMain.handle(ExternalAgentIpc.TEST, async (_event, agentId: unknown) => {
+    const definition =
+      typeof agentId === 'string' ? getExternalAgentDefinition(agentId) : undefined;
+    if (!definition) {
+      return {
+        success: false,
+        error: 'Unsupported external agent.',
+      } satisfies ExternalAgentTestResult;
+    }
+    try {
+      const currentEngineStatus = getEngineManager().getStatus();
+      const engineStatus =
+        currentEngineStatus.phase === 'running'
+          ? currentEngineStatus
+          : await ensureEngineRunning();
+      if (engineStatus.phase !== 'running') {
+        throw new Error(engineStatus.message || 'The AI engine is not ready.');
+      }
+      const report = await requestGateway<unknown>('acpx.agent.doctor', {
+        agentId: definition.id,
+      });
+      if (!report || typeof report !== 'object' || Array.isArray(report)) {
+        throw new Error('The ACP runtime returned an invalid test result.');
+      }
+      const value = report as Record<string, unknown>;
+      if (typeof value.ok !== 'boolean' || typeof value.message !== 'string') {
+        throw new Error('The ACP runtime returned an invalid test result.');
+      }
+      const details = Array.isArray(value.details)
+        ? value.details
+            .filter((item): item is string => typeof item === 'string')
+            .slice(0, 8)
+            .map(item => item.slice(0, 2_000))
+        : undefined;
+      return {
+        success: true,
+        ready: value.ok,
+        message: value.message.slice(0, 2_000),
+        ...(typeof value.code === 'string' ? { code: value.code } : {}),
+        ...(details?.length ? { details } : {}),
+      } satisfies ExternalAgentTestResult;
+    } catch (error) {
+      return {
+        success: false,
+        error: (error instanceof Error
+          ? error.message
+          : 'Failed to test the external agent.'
+        ).slice(0, 2_000),
+      } satisfies ExternalAgentTestResult;
+    }
+  });
+
+  ipcMain.handle(ExternalAgentIpc.SET_SETTINGS, (_event, input: unknown) =>
+    enqueueCoworkConfigUpdate(async () => {
+      const validation = validateExternalAgentSettings(input);
+      if (validation.ok === false) return { success: false, error: validation.error };
+
+      const store = getCoworkStore();
+      const previous = store.getExternalAgentSettings();
+      const next = validation.settings;
+      if (JSON.stringify(previous) === JSON.stringify(next)) {
+        return { success: true, changed: false, settings: next };
+      }
+
+      const rollback = async (syncError: string) => {
+        try {
+          store.setExternalAgentSettings(previous);
+          const rollbackResult = await syncOpenClawConfig({
+            reason: 'external-agent-settings-change-rollback',
+          });
+          return {
+            success: false,
+            error: rollbackResult.success
+              ? `The external agent configuration was rolled back. ${syncError}`
+              : `The external agent configuration rollback could not be confirmed. ${
+                  rollbackResult.error || syncError
+                }`,
+            engineStatus: getEngineManager().getStatus(),
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: `The external agent configuration rollback could not be confirmed. ${
+              error instanceof Error ? error.message : syncError
+            }`,
+            engineStatus: getEngineManager().getStatus(),
+          };
+        }
+      };
+
+      try {
+        store.setExternalAgentSettings(next);
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to set external agent settings',
+        };
+      }
+      let syncResult: SyncResult;
+      try {
+        syncResult = await syncOpenClawConfig({ reason: 'external-agent-settings-change' });
+      } catch (error) {
+        return rollback(
+          error instanceof Error ? error.message : 'External agent configuration failed.',
+        );
+      }
+      if (syncResult.success) {
+        return {
+          success: true,
+          changed: true,
+          settings: next,
+          engineStatus: syncResult.status,
+        };
+      }
+
+      return rollback(syncResult.error || 'External agent configuration failed.');
     }),
   );
 

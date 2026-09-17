@@ -21,6 +21,14 @@ import { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../shared/openclaw/compaction';
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
+  EXTERNAL_AGENT_CATALOG,
+  type ExternalAgentDefinition,
+} from '../../../shared/openclaw/externalAgentCatalog';
+import {
+  createDefaultExternalAgentSettings,
+  type ExternalAgentSettings,
+} from '../../../shared/openclaw/externalAgents';
+import {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
   normalizeOpenClawProviderId,
@@ -660,6 +668,13 @@ const constrainAgentEntryToAvailableModels = (
   fallbackPrimaryModel: string,
   availableModelRefs: ReadonlySet<string>,
 ): Record<string, unknown> => {
+  const runtime = isRecord(entry.runtime) ? entry.runtime : undefined;
+  if (runtime?.type === 'acp') {
+    // ACP model selection comes from explicit spawn/subagent settings or the
+    // harness default. Injecting the embedded Agent's primary model here turns
+    // an omitted sessions_spawn.model into an invalid ACP model override.
+    return entry;
+  }
   const model = isRecord(entry.model) ? entry.model : {};
   const primary = typeof model.primary === 'string' ? model.primary : '';
   if (primary && availableModelRefs.has(primary)) {
@@ -697,14 +712,32 @@ const getModelProviderId = (model: unknown): string => {
   return separator > 0 ? model.primary.slice(0, separator).toLowerCase() : '';
 };
 
-const mergeAgentEntriesWithManagedMainSettings = (
+export const mergeAgentEntriesWithManagedMainSettings = (
   managedEntries: Record<string, unknown>,
   existingEntries: Record<string, unknown>,
 ): Record<string, unknown> => {
+  const externalAgentIds = new Set<string>(EXTERNAL_AGENT_CATALOG.map(definition => definition.id));
+  const unmanagedExistingEntries = Object.fromEntries(
+    Object.entries(existingEntries).filter(([agentId, entry]) => {
+      if (!externalAgentIds.has(agentId)) {
+        return true;
+      }
+      if (!isRecord(entry) || !isRecord(entry.runtime) || entry.runtime.type !== 'acp') {
+        return true;
+      }
+      const acp = isRecord(entry.runtime.acp) ? entry.runtime.acp : {};
+      return acp.agent !== agentId || acp.backend !== OpenClawExtensionId.ACPX;
+    }),
+  );
   const entries: Record<string, unknown> = {
     ...managedEntries,
-    ...existingEntries,
+    ...unmanagedExistingEntries,
   };
+  for (const [agentId, entry] of Object.entries(managedEntries)) {
+    if (!externalAgentIds.has(agentId)) continue;
+    if (!isRecord(entry) || !isRecord(entry.runtime) || entry.runtime.type !== 'acp') continue;
+    entries[agentId] = entry;
+  }
   const managedMain = isRecord(managedEntries.main) ? managedEntries.main : undefined;
   const managedMainWorkspace =
     typeof managedMain?.workspace === 'string' ? managedMain.workspace.trim() : '';
@@ -1225,6 +1258,7 @@ export const OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT =
 // Allow substantial work while still terminating runaway subagent runs.
 export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS =
   DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.runTimeoutSeconds;
+export const OPENCLAW_ACP_BACKEND = OpenClawExtensionId.ACPX;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
@@ -1260,6 +1294,150 @@ export const buildManagedOpenClawSubagentConfig = (
   ...(settings.subagents.model ? { model: settings.subagents.model } : {}),
   ...(settings.subagents.thinking ? { thinking: settings.subagents.thinking } : {}),
 });
+
+export const buildManagedOpenClawAcpConfig = (
+  settings: ExternalAgentSettings = createDefaultExternalAgentSettings(),
+) => {
+  const allowedAgents = EXTERNAL_AGENT_CATALOG.filter(
+    definition => settings.agents[definition.id].enabled,
+  ).map(definition => definition.id);
+  const enabled = allowedAgents.length > 0;
+  return {
+    enabled,
+    dispatch: { enabled },
+    backend: OPENCLAW_ACP_BACKEND,
+    allowedAgents,
+    ...(allowedAgents[0] ? { defaultAgent: allowedAgents[0] } : {}),
+  };
+};
+
+export const buildManagedExternalAgentEntries = (
+  workspaceDir: string,
+  settings: ExternalAgentSettings = createDefaultExternalAgentSettings(),
+): Record<string, Record<string, unknown>> =>
+  Object.fromEntries(
+    EXTERNAL_AGENT_CATALOG.filter(definition => settings.agents[definition.id].enabled).map(
+      definition => [
+        definition.id,
+        {
+          workspace: workspaceDir,
+          runtime: {
+            type: 'acp',
+            acp: {
+              agent: definition.id,
+              backend: OPENCLAW_ACP_BACKEND,
+              cwd: workspaceDir,
+            },
+          },
+        },
+      ],
+    ),
+  );
+
+const ACPX_RESERVED_MCP_SERVER_NAMES = new Set([
+  'openclaw-plugin-tools',
+  'openclaw-tools',
+]);
+
+const getStringRecord = (value: unknown): Record<string, string> | undefined => {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value);
+  if (!entries.every(([, entry]) => typeof entry === 'string')) return undefined;
+  return Object.fromEntries(entries) as Record<string, string>;
+};
+
+/**
+ * ACPX 0.13.x accepts stdio MCP bootstrap entries only. Project the effective
+ * command fields without forwarding OpenClaw-only configuration such as cwd,
+ * request timeouts, remote transports, or headers.
+ */
+export const buildManagedAcpxMcpServers = (
+  servers: readonly McpServerRecord[],
+): Record<string, Record<string, unknown>> =>
+  Object.fromEntries(
+    servers.flatMap(server => {
+      if (
+        !server.enabled ||
+        server.transportType !== 'stdio' ||
+        ACPX_RESERVED_MCP_SERVER_NAMES.has(server.name)
+      ) {
+        return [];
+      }
+      const overrides = isRecord(server.openClawConfig) ? server.openClawConfig : {};
+      const command =
+        typeof overrides.command === 'string' ? overrides.command.trim() : server.command?.trim();
+      if (!command) return [];
+      const args = Array.isArray(overrides.args)
+        ? overrides.args.filter((value): value is string => typeof value === 'string')
+        : server.args;
+      const env = getStringRecord(overrides.env) ?? server.env;
+      return [
+        [
+          server.name,
+          {
+            command,
+            ...(args && args.length > 0 ? { args: [...args] } : {}),
+            ...(env && Object.keys(env).length > 0 ? { env: { ...env } } : {}),
+          },
+        ],
+      ];
+    }),
+  );
+
+export const buildManagedAcpxPluginEntry = (
+  settings: ExternalAgentSettings = createDefaultExternalAgentSettings(),
+  catalog: readonly ExternalAgentDefinition[] = EXTERNAL_AGENT_CATALOG,
+  mcpServers: readonly McpServerRecord[] = [],
+): Record<string, unknown> => {
+  const agentCommands = Object.fromEntries(
+    catalog.flatMap(definition =>
+      definition.adapter
+        ? [
+            [
+              definition.id,
+              {
+                command: definition.adapter.command,
+                args: [...(definition.adapter.args ?? [])],
+              },
+            ],
+          ]
+        : [],
+    ),
+  );
+  const configuredMcpServers = settings.shareConfiguredMcpServers
+    ? buildManagedAcpxMcpServers(mcpServers)
+    : {};
+  return {
+    // Keep the bundled runtime available for per-agent connection tests even
+    // when ACP delegation itself is disabled.
+    enabled: true,
+    config: {
+      permissionMode:
+        settings.permissionMode === 'full-access'
+          ? 'approve-all'
+          : settings.permissionMode === 'deny-all'
+            ? 'deny-all'
+            : 'approve-reads',
+      nonInteractivePermissions:
+        settings.permissionMode === 'read-only'
+          ? settings.readOnlyViolationBehavior === 'fail-task'
+            ? 'fail'
+            : 'deny'
+          : settings.permissionMode === 'full-access'
+            ? 'fail'
+            : 'deny',
+      timeoutSeconds: settings.operationTimeoutSeconds,
+      pluginToolsMcpBridge: settings.pluginToolsMcpBridge,
+      openClawToolsMcpBridge: settings.openClawToolsMcpBridge,
+      ...(Object.keys(configuredMcpServers).length > 0
+        ? { mcpServers: configuredMcpServers }
+        : {}),
+      startupProbe: false,
+      diagnosticAgents: catalog.map(definition => definition.id),
+      ...(Object.keys(agentCommands).length > 0 ? { agents: agentCommands } : {}),
+    },
+  };
+};
 
 const mergeManagedOpenClawSubagentConfig = (
   existingValue: unknown,
@@ -1837,6 +2015,8 @@ const buildMissingEmbeddedBrowserResult = (configPath: string): OpenClawConfigSy
 const buildManagedBundledExtensionEntries = (
   agentRuntimeSettings: AgentRuntimeSettings,
   browserMode: BrowserModeValue,
+  externalAgentSettings: ExternalAgentSettings,
+  mcpServers: readonly McpServerRecord[],
 ): Record<string, Record<string, unknown>> => {
   const embeddedBrowserEnabled = browserMode === BrowserMode.Embedded;
   return {
@@ -1848,6 +2028,15 @@ const buildManagedBundledExtensionEntries = (
     ...(isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
       ? {
           [OpenClawExtensionId.EMBEDDED_BROWSER]: { enabled: embeddedBrowserEnabled },
+        }
+      : {}),
+    ...(isBundledPluginAvailable(OpenClawExtensionId.ACPX)
+      ? {
+          [OpenClawExtensionId.ACPX]: buildManagedAcpxPluginEntry(
+            externalAgentSettings,
+            EXTERNAL_AGENT_CATALOG,
+            mcpServers,
+          ),
         }
       : {}),
     ...(isBundledPluginAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
@@ -1867,6 +2056,7 @@ type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
   getAgentRuntimeSettings?: () => AgentRuntimeSettings;
+  getExternalAgentSettings?: () => ExternalAgentSettings;
   getMcpServers?: () => McpServerRecord[];
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
@@ -1879,6 +2069,7 @@ export class OpenClawConfigSync {
   private readonly engineManager: OpenClawEngineManager;
   private readonly getCoworkConfig: () => CoworkConfig;
   private readonly getAgentRuntimeSettings: () => AgentRuntimeSettings;
+  private readonly getExternalAgentSettings: () => ExternalAgentSettings;
   private readonly getMcpServers?: () => McpServerRecord[];
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
@@ -1891,6 +2082,8 @@ export class OpenClawConfigSync {
     this.getCoworkConfig = deps.getCoworkConfig;
     this.getAgentRuntimeSettings =
       deps.getAgentRuntimeSettings ?? createDefaultAgentRuntimeSettings;
+    this.getExternalAgentSettings =
+      deps.getExternalAgentSettings ?? createDefaultExternalAgentSettings;
     this.getMcpServers = deps.getMcpServers;
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
@@ -2047,6 +2240,8 @@ export class OpenClawConfigSync {
     ) {
       return buildMissingEmbeddedBrowserResult(configPath);
     }
+    const externalAgentSettings = this.getExternalAgentSettings();
+    const mcpServerRecords = this.getMcpServers?.() ?? [];
     const localTtsConfig = this.getLocalTtsConfig();
     const managedTtsConfig = resolveManagedOpenClawTtsConfig(
       existingConfig,
@@ -2054,7 +2249,12 @@ export class OpenClawConfigSync {
       this.getSpeechOutputState(),
     );
     const bundledExtensionEntries = {
-      ...buildManagedBundledExtensionEntries(agentRuntimeSettings, browserMode),
+      ...buildManagedBundledExtensionEntries(
+        agentRuntimeSettings,
+        browserMode,
+        externalAgentSettings,
+        mcpServerRecords,
+      ),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
     };
@@ -2062,7 +2262,7 @@ export class OpenClawConfigSync {
       ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
       : {};
     const mcpServers = buildOpenClawMcpServers(
-      this.getMcpServers?.() ?? [],
+      mcpServerRecords,
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
     );
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
@@ -2135,8 +2335,14 @@ export class OpenClawConfigSync {
           workspace: resolvedWorkspaceDir,
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
         },
-        ...this.buildAgentsEntries(primaryModel, availableModelRefs, resolvedWorkspaceDir),
+        ...this.buildAgentsEntries(
+          primaryModel,
+          availableModelRefs,
+          resolvedWorkspaceDir,
+          externalAgentSettings,
+        ),
       },
+      acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
       session: buildManagedOpenClawSessionConfig(),
       ...(managedTtsConfig ? { tts: managedTtsConfig } : {}),
       commands: {
@@ -2315,8 +2521,9 @@ export class OpenClawConfigSync {
    *
    * With an explicit v2026.9.2 roster every entry without `workspace`, including
    * `main`, resolves under `<defaults.workspace>/<normalizedAgentId>`. Pin the
-   * main entry to the user's configured directory; non-main agents keep the
-   * native nested workspace behavior.
+   * main entry to the user's configured directory. Native non-main agents keep
+   * the nested workspace behavior, while external ACP runtime owners share the
+   * main workspace because they do not own OpenClaw bootstrap state.
    *
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
@@ -2325,6 +2532,7 @@ export class OpenClawConfigSync {
     defaultPrimaryModel: string,
     availableModelRefs: ReadonlySet<string>,
     mainWorkspaceDir: string,
+    externalAgentSettings: ExternalAgentSettings,
   ): { ownership: 'explicit'; entries: Record<string, Record<string, unknown>> } {
     const agents = (this.getAgents?.() ?? []).filter(agent => agent.id !== ScheduledTaskAgentId);
     const mainAgent = agents.find(agent => agent.id === 'main');
@@ -2347,6 +2555,11 @@ export class OpenClawConfigSync {
         fallbackPrimaryModel: defaultPrimaryModel,
         displayNameMap,
       }),
+      ...Object.entries(
+        buildManagedExternalAgentEntries(mainWorkspaceDir, externalAgentSettings),
+      ).map(
+        ([id, entry]) => ({ id, ...entry }),
+      ),
       {
         id: ScheduledTaskAgentId,
         model: {
@@ -2435,6 +2648,8 @@ export class OpenClawConfigSync {
     ) {
       return buildMissingEmbeddedBrowserResult(configPath);
     }
+    const externalAgentSettings = this.getExternalAgentSettings();
+    const mcpServerRecords = this.getMcpServers?.() ?? [];
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(
       browserMode,
@@ -2442,7 +2657,7 @@ export class OpenClawConfigSync {
     );
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
     const mcpServers = buildOpenClawMcpServers(
-      this.getMcpServers?.() ?? [],
+      mcpServerRecords,
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
     );
     const localTtsConfig = this.getLocalTtsConfig();
@@ -2452,7 +2667,12 @@ export class OpenClawConfigSync {
       this.getSpeechOutputState(),
     );
     const bundledExtensionEntries = {
-      ...buildManagedBundledExtensionEntries(agentRuntimeSettings, browserMode),
+      ...buildManagedBundledExtensionEntries(
+        agentRuntimeSettings,
+        browserMode,
+        externalAgentSettings,
+        mcpServerRecords,
+      ),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
     const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
@@ -2502,8 +2722,10 @@ export class OpenClawConfigSync {
               exec: { host: 'gateway', mode: PermissionMode.Full },
             },
           },
+          ...buildManagedExternalAgentEntries(resolvedWorkspaceDir, externalAgentSettings),
         },
       },
+      acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
       session: buildManagedOpenClawSessionConfig(),
       ...(localTtsConfig ? { tts: localTtsConfig } : {}),
       mcp: {
@@ -2680,6 +2902,7 @@ export class OpenClawConfigSync {
                   existingEntries,
                 ),
               },
+              acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
               session: buildManagedOpenClawSessionConfig(),
               mcp: {
                 servers: mcpServers,

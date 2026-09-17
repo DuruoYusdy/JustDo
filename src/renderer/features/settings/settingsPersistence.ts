@@ -3,6 +3,7 @@ import type { AppConfig } from '@/app/config';
 interface SettingsPersistenceSteps {
   saveCoworkConfig: () => Promise<void>;
   saveRuntimeSettings: () => Promise<void>;
+  saveExternalAgentSettings: () => Promise<void>;
   saveAppConfig: () => Promise<void>;
   onAppConfigCommitted: () => void;
 }
@@ -96,6 +97,7 @@ export const resolveSubagentModelAfterProviderChange = (
 export const persistSettingsInOrder = async ({
   saveCoworkConfig,
   saveRuntimeSettings,
+  saveExternalAgentSettings,
   saveAppConfig,
   onAppConfigCommitted,
 }: SettingsPersistenceSteps): Promise<void> => {
@@ -103,4 +105,5 @@ export const persistSettingsInOrder = async ({
   onAppConfigCommitted();
   await saveCoworkConfig();
   await saveRuntimeSettings();
+  await saveExternalAgentSettings();
 };

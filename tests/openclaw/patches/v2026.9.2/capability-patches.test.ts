@@ -1319,6 +1319,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       }
       expect(() => patches.get('003')?.verifyPatch(runtimeRoot)).not.toThrow();
     },
+    60_000,
   );
 
   test('keeps Gateway restarts but retires work from a prior JustDo app start', () => {

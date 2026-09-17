@@ -130,8 +130,6 @@ import {
   listGatewaySubagentsWithMetadata,
   mergeGatewaySubagentSnapshots,
   SUBAGENT_STATUSES,
-  type SubagentLabelSource,
-  type SubagentStatus,
 } from './subagentGateway';
 import {
   parseChatHistoryCursorResultV2026_9_2,
@@ -4323,30 +4321,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async getSubagentStatuses(sessionId?: string, forceRefresh = false): Promise<{
-    subagents: Array<{
-      id: string;
-      taskName: string;
-      sessionKey: string;
-      sessionId?: string;
-      label: string;
-      labelSource: SubagentLabelSource;
-      status: SubagentStatus;
-      task?: string;
-      runId?: string;
-      model?: string;
-      startedAt?: number;
-      updatedAt?: number;
-      endedAt?: number;
-      runtimeMs?: number;
-      runtimeSampledAt?: number;
-      totalTokens?: number;
-      progressSummary?: string;
-      terminalSummary?: string;
-      error?: string;
-      lastActivity?: string;
-      lastToolName?: string;
-      toolUseCount?: number;
-    }>;
+    subagents: GatewaySubagent[];
   }> {
     if (!sessionId) return { subagents: [] };
     if (forceRefresh) this.invalidateSubagentStatus(sessionId);

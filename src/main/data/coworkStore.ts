@@ -29,6 +29,11 @@ import {
   type PermissionMode,
   resolvePermissionMode,
 } from '../../shared/openclaw/approvals';
+import {
+  type ExternalAgentSettings,
+  parseExternalAgentSettings,
+  validateExternalAgentSettings,
+} from '../../shared/openclaw/externalAgents';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
 import { rewriteOpenClawModelProviderId } from '../../shared/providers';
 import {
@@ -45,6 +50,7 @@ const getDefaultWorkingDirectory = (): string => {
 const TASK_WORKSPACE_CONTAINER_DIR = '.justdo-tasks';
 const GOAL_EXECUTION_CONFIG_PREFIX = 'goalExecution:';
 const AGENT_RUNTIME_SETTINGS_CONFIG_KEY = 'agentRuntimeSettings:v1';
+const EXTERNAL_AGENT_SETTINGS_CONFIG_KEY = 'externalAgentSettings:v1';
 
 const normalizeRecentWorkspacePath = (cwd: string): string => {
   const resolved = path.resolve(cwd);
@@ -1077,6 +1083,34 @@ export class CoworkStore {
       `,
       )
       .run(AGENT_RUNTIME_SETTINGS_CONFIG_KEY, JSON.stringify(validation.settings), Date.now());
+  }
+
+  getExternalAgentSettings(): ExternalAgentSettings {
+    const row = this.getOne<{ value: string }>('SELECT value FROM cowork_config WHERE key = ?', [
+      EXTERNAL_AGENT_SETTINGS_CONFIG_KEY,
+    ]);
+    if (!row?.value) return parseExternalAgentSettings(null);
+    try {
+      return parseExternalAgentSettings(JSON.parse(row.value));
+    } catch {
+      return parseExternalAgentSettings(null);
+    }
+  }
+
+  setExternalAgentSettings(settings: ExternalAgentSettings): void {
+    const validation = validateExternalAgentSettings(settings);
+    if (validation.ok === false) throw new Error(validation.error);
+    this.db
+      .prepare(
+        `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(EXTERNAL_AGENT_SETTINGS_CONFIG_KEY, JSON.stringify(validation.settings), Date.now());
   }
 
   renameCurrentModelProviderRefs(

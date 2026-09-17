@@ -15,6 +15,11 @@ import {
   AgentRuntimeSettingsIpc,
   createDefaultAgentRuntimeSettings,
 } from '../../../shared/openclaw/agentRuntimeSettings';
+import {
+  createDefaultExternalAgentSettings,
+  ExternalAgentIpc,
+  type ExternalAgentSettings,
+} from '../../../shared/openclaw/externalAgents';
 import type { CoworkConfig } from '../../data/coworkStore';
 import { registerCoworkConfigHandlers, waitForCoworkConfigUpdates } from './config';
 
@@ -32,8 +37,13 @@ describe('cowork config IPC', () => {
   const handleEngineConfigChanged = vi.fn();
   const setConfig = vi.fn();
   const setAgentRuntimeSettings = vi.fn();
+  const setExternalAgentSettings = vi.fn();
+  const ensureEngineRunning = vi.fn();
+  const getEngineStatus = vi.fn();
+  const requestGateway = vi.fn();
   let currentConfig: CoworkConfig;
   let currentAgentRuntimeSettings: AgentRuntimeSettings;
+  let currentExternalAgentSettings: ExternalAgentSettings;
 
   beforeEach(() => {
     handlers.clear();
@@ -42,8 +52,15 @@ describe('cowork config IPC', () => {
     handleEngineConfigChanged.mockReset();
     setConfig.mockReset();
     setAgentRuntimeSettings.mockReset();
+    setExternalAgentSettings.mockReset();
+    ensureEngineRunning.mockReset();
+    ensureEngineRunning.mockResolvedValue({ phase: 'running' });
+    getEngineStatus.mockReset();
+    getEngineStatus.mockReturnValue({ phase: 'running' });
+    requestGateway.mockReset();
     currentConfig = { ...baseConfig };
     currentAgentRuntimeSettings = createDefaultAgentRuntimeSettings();
+    currentExternalAgentSettings = createDefaultExternalAgentSettings();
     setConfig.mockImplementation((update: Partial<CoworkConfig>) => {
       currentConfig = {
         ...currentConfig,
@@ -53,6 +70,9 @@ describe('cowork config IPC', () => {
     setAgentRuntimeSettings.mockImplementation((settings: AgentRuntimeSettings) => {
       currentAgentRuntimeSettings = settings;
     });
+    setExternalAgentSettings.mockImplementation((settings: ExternalAgentSettings) => {
+      currentExternalAgentSettings = settings;
+    });
     registerCoworkConfigHandlers({
       getCoworkStore: () =>
         ({
@@ -60,11 +80,14 @@ describe('cowork config IPC', () => {
           setConfig,
           getAgentRuntimeSettings: () => currentAgentRuntimeSettings,
           setAgentRuntimeSettings,
+          getExternalAgentSettings: () => currentExternalAgentSettings,
+          setExternalAgentSettings,
         }) as never,
       getCoworkEngineRouter: () => ({ handleEngineConfigChanged }) as never,
-      getEngineManager: () => ({ getStatus: () => ({ state: 'running' }) }) as never,
+      getEngineManager: () => ({ getStatus: getEngineStatus }) as never,
       syncOpenClawConfig,
-      ensureEngineRunning: vi.fn(),
+      ensureEngineRunning,
+      requestGateway,
       engineNotReadyCode: 'ENGINE_NOT_READY',
     });
   });
@@ -212,5 +235,106 @@ describe('cowork config IPC', () => {
     expect(syncOpenClawConfig).toHaveBeenNthCalledWith(2, {
       reason: 'agent-runtime-settings-change-rollback',
     });
+  });
+
+  it('returns and synchronizes external Agent settings', async () => {
+    await expect(handlers.get(ExternalAgentIpc.GET_SETTINGS)?.({})).resolves.toEqual({
+      success: true,
+      settings: currentExternalAgentSettings,
+    });
+
+    const next = createDefaultExternalAgentSettings();
+    next.agents.claude.enabled = true;
+    const result = await handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, next);
+
+    expect(result).toMatchObject({ success: true, changed: true, settings: next });
+    expect(setExternalAgentSettings).toHaveBeenCalledWith(next);
+    expect(syncOpenClawConfig).toHaveBeenCalledWith({
+      reason: 'external-agent-settings-change',
+    });
+  });
+
+  it('tests a catalog Agent without restarting or synchronizing a running engine', async () => {
+    requestGateway.mockResolvedValue({ ok: true, message: 'ACP runtime is available.' });
+
+    const result = await handlers.get(ExternalAgentIpc.TEST)?.({}, 'hermes');
+
+    expect(ensureEngineRunning).not.toHaveBeenCalled();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    expect(requestGateway).toHaveBeenCalledWith('acpx.agent.doctor', { agentId: 'hermes' });
+    expect(result).toEqual({
+      success: true,
+      ready: true,
+      message: 'ACP runtime is available.',
+    });
+  });
+
+  it('rejects an Agent test outside the build-time catalog', async () => {
+    const result = await handlers.get(ExternalAgentIpc.TEST)?.({}, 'custom-command');
+
+    expect(result).toEqual({ success: false, error: 'Unsupported external agent.' });
+    expect(ensureEngineRunning).not.toHaveBeenCalled();
+    expect(requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not probe an Agent before the Gateway is ready', async () => {
+    getEngineStatus.mockReturnValue({ phase: 'ready' });
+    ensureEngineRunning.mockResolvedValue({ phase: 'error', message: 'Gateway failed to start.' });
+
+    const result = await handlers.get(ExternalAgentIpc.TEST)?.({}, 'codex');
+
+    expect(result).toEqual({ success: false, error: 'Gateway failed to start.' });
+    expect(ensureEngineRunning).toHaveBeenCalledOnce();
+    expect(requestGateway).not.toHaveBeenCalled();
+  });
+
+  it('rolls external Agent settings back when config synchronization fails', async () => {
+    const previous = currentExternalAgentSettings;
+    const next = createDefaultExternalAgentSettings();
+    next.permissionMode = 'full-access';
+    syncOpenClawConfig
+      .mockResolvedValueOnce({ success: false, changed: true, error: 'reload failed' })
+      .mockResolvedValueOnce({ success: true, changed: true });
+
+    const result = await handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, next);
+
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('rolled back') });
+    expect(setExternalAgentSettings).toHaveBeenNthCalledWith(1, next);
+    expect(setExternalAgentSettings).toHaveBeenNthCalledWith(2, previous);
+    expect(currentExternalAgentSettings).toEqual(previous);
+  });
+
+  it('returns a controlled failure when external Agent settings cannot be persisted', async () => {
+    const next = createDefaultExternalAgentSettings();
+    next.agents.claude.enabled = true;
+    setExternalAgentSettings.mockImplementationOnce(() => {
+      throw new Error('database unavailable');
+    });
+
+    const result = await handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, next);
+
+    expect(result).toEqual({ success: false, error: 'database unavailable' });
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+  });
+
+  it('reports an unconfirmed external Agent rollback without rejecting IPC', async () => {
+    const next = createDefaultExternalAgentSettings();
+    next.agents.claude.enabled = true;
+    setExternalAgentSettings
+      .mockImplementationOnce((settings: ExternalAgentSettings) => {
+        currentExternalAgentSettings = settings;
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('rollback database unavailable');
+      });
+    syncOpenClawConfig.mockRejectedValueOnce(new Error('gateway unavailable'));
+
+    const result = await handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, next);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('rollback could not be confirmed'),
+    });
+    expect(currentExternalAgentSettings).toEqual(next);
   });
 });

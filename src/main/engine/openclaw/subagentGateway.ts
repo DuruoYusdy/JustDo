@@ -40,6 +40,8 @@ export type GatewaySubagent = {
   label: string;
   labelSource: SubagentLabelSource;
   status: SubagentStatus;
+  runtime: 'subagent' | 'acp';
+  agentId?: string;
   task?: string;
   runId?: string;
   model?: string;
@@ -144,12 +146,24 @@ const resolveTaskTitle = (
   return { label: task.id, labelSource: SUBAGENT_LABEL_SOURCES.TASK_NAME };
 };
 
-const isSubagentTask = (task: OpenClawTaskSummaryV2026_9_2): boolean =>
-  task.runtime === 'subagent' || task.kind === 'subagent';
+const resolveDelegatedTaskRuntime = (
+  task: OpenClawTaskSummaryV2026_9_2,
+): 'subagent' | 'acp' | null => {
+  const explicitKind = optionalString(task.kind);
+  if (explicitKind && explicitKind !== 'acp' && explicitKind !== 'subagent') return null;
+  if (task.runtime === 'acp' || task.kind === 'acp') return 'acp';
+  if (task.runtime === 'subagent' || task.kind === 'subagent') return 'subagent';
+  return null;
+};
+
+const isDelegatedTask = (task: OpenClawTaskSummaryV2026_9_2): boolean =>
+  resolveDelegatedTaskRuntime(task) !== null;
 
 const toGatewaySubagent = (
   task: OpenClawTaskSummaryV2026_9_2,
 ): GatewaySubagentProjection | null => {
+  const runtime = resolveDelegatedTaskRuntime(task);
+  if (!runtime) return null;
   const sessionKey = optionalString(task.childSessionKey);
   if (!sessionKey) {
     if (!warnedMalformedTaskIds.has(task.id)) {
@@ -173,6 +187,8 @@ const toGatewaySubagent = (
     sessionKey,
     ...resolveTaskTitle(task),
     status: mapTaskStatus(task.status, task.terminalOutcome),
+    runtime,
+    agentId: optionalString(task.agentId),
     task: optionalString(task.prompt) ?? optionalString(task.title),
     runId: optionalString(task.runId),
     startedAt,
@@ -209,7 +225,7 @@ const listTaskPages = async (
         ...(cursor ? { cursor } : {}),
       }),
     );
-    tasks.push(...page.tasks.filter(isSubagentTask));
+    tasks.push(...page.tasks.filter(isDelegatedTask));
     cursor = page.nextCursor;
   } while (cursor);
   return tasks;
@@ -240,6 +256,25 @@ const hydrateTaskDetails = async (
     );
   }
   return hydrated;
+};
+
+const collapseTaskBackingInstances = (
+  tasks: OpenClawTaskSummaryV2026_9_2[],
+): OpenClawTaskSummaryV2026_9_2[] => {
+  const acpByBackingIdentity = new Map<string, OpenClawTaskSummaryV2026_9_2>();
+  for (const task of tasks) {
+    if (resolveDelegatedTaskRuntime(task) !== 'acp') continue;
+    const sessionKey = optionalString(task.childSessionKey);
+    const runId = optionalString(task.runId);
+    if (sessionKey && runId) acpByBackingIdentity.set(`${sessionKey}\u0000${runId}`, task);
+  }
+
+  return tasks.filter(task => {
+    if (resolveDelegatedTaskRuntime(task) !== 'subagent') return true;
+    const sessionKey = optionalString(task.childSessionKey);
+    const runId = optionalString(task.runId);
+    return !sessionKey || !runId || !acpByBackingIdentity.has(`${sessionKey}\u0000${runId}`);
+  });
 };
 
 export const mergeGatewaySubagentSnapshots = (
@@ -477,7 +512,7 @@ export const getGatewaySubagentDetails = async (
   const task = parseTasksGetResultV2026_9_2(
     await client.request('tasks.get', { taskId }),
   ).task;
-  if (!isSubagentTask(task)) return null;
+  if (!isDelegatedTask(task)) return null;
   const subagent = toGatewaySubagent(task);
   if (!subagent || typeof subagent.label !== 'string' || !subagent.labelSource) return null;
   const wellFormedSubagent: GatewaySubagent = {
@@ -593,7 +628,7 @@ const collectGatewaySubagents = async (
       });
     }
   }
-  let subagents = [...tasksById.values()].flatMap(task => {
+  let subagents = collapseTaskBackingInstances([...tasksById.values()]).flatMap(task => {
       const subagent = toGatewaySubagent(task);
       return subagent ? [subagent] : [];
     });
