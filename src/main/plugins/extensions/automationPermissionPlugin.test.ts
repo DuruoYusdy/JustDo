@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import automationPermissionPlugin from '../../../../openclaw-extensions/automation-permission/index';
 
@@ -10,10 +10,11 @@ type PolicyEvaluator = (
 const registerPolicy = (
   permissionMode?: 'read-only' | 'guarded' | 'workspace' | 'full',
   unrestrictedAgentIds: string[] = [],
+  approvalTimeoutMinutes = 2,
 ): PolicyEvaluator => {
   let evaluator: PolicyEvaluator | undefined;
   automationPermissionPlugin.register({
-    pluginConfig: { unrestrictedAgentIds },
+    pluginConfig: { unrestrictedAgentIds, approvalTimeoutMinutes },
     runtime: {
       agent: {
         session: {
@@ -32,10 +33,6 @@ const registerPolicy = (
 };
 
 describe('automation permission extension', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   it.each(['guarded', 'workspace', undefined] as const)(
     'requires one-shot approval for %s session mutations',
     async permissionMode => {
@@ -49,7 +46,7 @@ describe('automation permission extension', () => {
       ).resolves.toMatchObject({
         requireApproval: {
           allowedDecisions: ['allow-once', 'deny'],
-          timeoutBehavior: 'deny',
+          timeoutMs: 120_000,
         },
       });
     },
@@ -108,7 +105,7 @@ describe('automation permission extension', () => {
     });
   });
 
-  it('keeps sensitive mutation parameters only in reviewer-only approval detail', async () => {
+  it('includes a bounded summary of mutation parameters in the approval description', async () => {
     const evaluate = registerPolicy('guarded');
     const privateTarget = 'private-channel-at-the-end';
     const privatePrompt = `private-prompt-${'x'.repeat(700)}`;
@@ -124,28 +121,42 @@ describe('automation permission extension', () => {
       { agentId: 'main', sessionKey: 'agent:main:justdo:session-1' },
     );
 
-    const approval = (result as { requireApproval: { description: string; detail: string } })
-      .requireApproval;
-    expect(approval.description).toContain('Open the desktop app to review full details');
+    const approval = (result as { requireApproval: { description: string } }).requireApproval;
+    expect(approval.description).toContain(privatePrompt.slice(0, 100));
     expect(approval.description).not.toContain(privatePrompt);
-    expect(approval.description).not.toContain(privateTarget);
-    expect(approval.detail).toContain(privatePrompt);
-    expect(approval.detail).toContain(privateTarget);
+    expect(approval.description).toContain(privateTarget);
+    expect(approval.description).toContain('…[truncated]');
+    expect([...approval.description].length).toBeLessThanOrEqual(400);
+    expect(approval).not.toHaveProperty('detail');
   });
 
-  it.each([
-    ['1200000', 1_200_000],
-    ['0', Number.MAX_SAFE_INTEGER],
-  ])('uses the host approval timeout %s', async (configured, expected) => {
-    vi.stubEnv('JUSTDO_EXEC_APPROVAL_TIMEOUT_MS', configured);
+  it('preserves invisible characters for upstream secret detection while budgeting their display cost', async () => {
     const evaluate = registerPolicy('guarded');
+    const splicedSecret = `sk-abc123\u200B${'x'.repeat(700)}`;
+    const result = await evaluate(
+      {
+        toolName: 'automations',
+        params: { action: 'update', name: splicedSecret },
+      },
+      { agentId: 'main', sessionKey: 'agent:main:justdo:session-1' },
+    );
+
+    const approval = (result as { requireApproval: { description: string } }).requireApproval;
+    expect(approval.description).toContain('sk-abc123\u200B');
+    expect(approval.description).not.toContain('\\u{200B}');
+    const upstreamDisplay = approval.description.replace(/\u200B/gu, '\\u{200B}');
+    expect([...upstreamDisplay].length).toBeLessThanOrEqual(400);
+  });
+
+  it('uses the configured scheduled task approval timeout', async () => {
+    const evaluate = registerPolicy('guarded', [], 10);
 
     await expect(
       evaluate(
         { toolName: 'automations', params: { action: 'remove', jobId: 'job-1' } },
         { agentId: 'main', sessionKey: 'agent:main:justdo:session-1' },
       ),
-    ).resolves.toMatchObject({ requireApproval: { timeoutMs: expected } });
+    ).resolves.toMatchObject({ requireApproval: { timeoutMs: 600_000 } });
   });
 
   it.each(['status', 'list', 'get', 'runs'])(

@@ -71,7 +71,7 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 
 v2026.9.2 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的无人值守任务仍逐项显式绑定 `justdo-scheduler`。启动权限验收同样只读取 v2026.9.2 的 `agents.entries`，不能再用已删除的 `agents.list` 判断 scheduler 权限。在 v2026.9.2 中，`tools.sessions.visibility` 的上游隐式默认值是 `all`；跨 Agent 访问仍受默认启用的 `tools.agentToAgent` 约束。JustDo 在“设置 → 配置”开放 `self/tree/agent/all`，并显式固定产品默认值为 `tree`，以保留父子任务树边界并避免 sibling session 在升级后自动相互可见。OpenClaw 默认还会把沙盒会话的有效范围归一为当前任务树：`agent/all` 会被收窄，而 `self` 在沙盒内也按任务树范围执行；设置页必须明确提示这一运行时差异。自定义 provider 的展示名经规范化后同时作为 `app_config.providers` key、Gateway provider ID 和模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；OpenClaw 内置与插件 provider ID 支持由显式 `models.providers.<id>` 配置覆盖，因此设置页允许用户使用这些自然名称，只拒绝 `builtin_models`、`justdo` 与旧版 `custom_数字` 命名空间。记忆检索写入顶层 `memory.search`；OpenClaw 仍以官方配置键 `tools.updatePlan` 控制替代工具 `progress_card` 是否启用，这个键名不是旧 timeline 实现。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
 
-版本化的 `agentRuntimeSettings:v1` 生成 `agents.defaults.timeoutSeconds/maxConcurrent/subagents` 和 `tools.sessions.visibility`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。Agent 客户端 watchdog 动态读取相同的单任务运行时限；总并发为 null 时不写固定值，保留按设备自适应的系统默认。配置同步按字段合并 `subagents`，不会删除设置页未管理的 allowlist、显式 Agent 要求或通知等待策略。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少后来加入的 Agent 时限/并发、SubAgent 委派/归档、会话访问范围、审批、AskUserQuestion 或 MCP 字段时补入产品默认；配置同步失败会恢复上一份数据库值。AskUserQuestion 的分钟数只供自定义交互 extension 在模型显式设置 `timeoutEnabled` 时使用；默认是必须等待，不能把全局数值误解为每次提问都会超时。
+版本化的 `agentRuntimeSettings:v1` 生成 `agents.defaults.timeoutSeconds/maxConcurrent/subagents` 和 `tools.sessions.visibility`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。Agent 客户端 watchdog 动态读取相同的单任务运行时限；总并发为 null 时不写固定值，保留按设备自适应的系统默认。配置同步按字段合并 `subagents`，不会删除设置页未管理的 allowlist、显式 Agent 要求或通知等待策略。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少后来加入的 Agent 时限/并发、SubAgent 委派/归档、会话访问范围、AskUserQuestion、计划任务审批或 MCP 字段时补入产品默认；历史通用审批字段会在规范化时丢弃；配置同步失败会恢复上一份数据库值。AskUserQuestion 的分钟数只供自定义交互 extension 在模型显式设置 `timeoutEnabled` 时使用；计划任务审批分钟数只写入 automation-permission；两者都不改变 exec 或其他插件的等待时限。
 
 ## 5. Fail-closed admission
 
@@ -158,7 +158,7 @@ Goal、required child join、queue admission、审批、thinking、compaction/co
 
 ## 13. Agent runtime settings
 
-Shared contract 对 delegation mode、命令审批等待时限、全局及单 Server MCP request timeout、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。命令审批预设为无限、10、20、30、60 分钟，并通过受管 Gateway 环境作用于后续原生 exec approval；需要 hard restart 的配置会一直通过原生 suspension 屏障等待活动任务结束，不设置强制中断上限，真正重启前 scheduler 与新 admission 已被冻结；MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。
+Shared contract 对 delegation mode、全局及单 Server MCP request timeout、计划任务审批时限、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。需要 hard restart 的配置会一直通过原生 suspension 屏障等待活动任务结束，不设置强制中断上限，真正重启前 scheduler 与新 admission 已被冻结；MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。Exec 使用 OpenClaw 原生 30 分钟期限；automation-permission 仅为计划任务变更设置原生支持的 2/5/10 分钟 `timeoutMs`。
 
 受管字段（例如 scheduler agent 的权限、关键 extension/plugin 配置）不能被通用 settings UI 覆盖。
 
@@ -182,7 +182,7 @@ Plan mode 是独立于 ask/auto/full 执行权限的会话工作流。Renderer �
 
 ## 16. Runtime patches
 
-当前补丁目录为 `scripts/patches/v2026.9.2/`，仅保留二十个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows package runner、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start session/task boundary、forced memory reindex cache bypass、原生 exec/plugin approval 可配置等待时限、plugin approval reviewer detail 转发、暂停中止后的原生 Goal resume 准入、assistant display block replay 过滤、trusted local generic MEDIA、离线官方插件目录、分段 live progress snapshot、mixed tool/commentary 顺序、禁止配置驱动的插件自动安装、OpenAI realtime transcription 自定义 base URL，以及 OpenAI-compatible 媒体 provider 隔离。Chrome connect 前 stderr 捕获已由上游承担。权威处置与删除条件以该目录 README 为准。
+当前补丁目录为 `scripts/patches/v2026.9.2/`，仅保留十九个产品缺口：managed Python、通用 Windows MCP runner、Chrome Windows package runner、最终 system-prompt replacements、agent metadata、compaction/reviewer purpose、app-start session/task boundary、forced memory reindex cache bypass、暂停中止后的原生 Goal resume 准入、assistant display block replay 过滤、trusted local generic MEDIA、离线官方插件目录、分段 live progress snapshot、mixed tool/commentary 顺序、禁止配置驱动的插件自动安装、OpenAI realtime transcription 自定义 base URL、OpenAI-compatible 媒体 provider 隔离、reset 后的 JustDo display history，以及受管 session fork 目标 key/assistant cut。Chrome connect 前 stderr 捕获、exec/plugin approval 期限与 plugin approval dispatch 均使用上游行为。权威处置与删除条件以该目录 README 为准。
 
 补丁不是传统数据库 migration：每次 runtime 都从锁定的 pristine npm tarball 构建，source lock 同时验证 registry integrity 与 tarball SHA-256。安装、source/worker、esbuild bundle 和 prune 后均验证当前 patch shape；旧 marker 或部分应用状态 fail closed，禁止对旧 JustDo runtime 原地升级。开发态 Electron 会在系统临时目录持有按仓库隔离、带心跳的进程租约；已有开发会话未退出时，新的 runtime prepare 必须在下载或目录替换前失败，避免 Windows 对正在执行的 runtime 进行 rename 而产生延迟 `EPERM`。
 

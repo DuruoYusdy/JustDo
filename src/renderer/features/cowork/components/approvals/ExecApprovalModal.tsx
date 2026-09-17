@@ -1,4 +1,3 @@
-import { OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS } from '@shared/openclaw/agentRuntimeSettings';
 import {
   ApprovalDecision,
   type ApprovalDecision as ApprovalDecisionValue,
@@ -56,10 +55,7 @@ export const resolveApprovalDeadline = (
   expiresAtMs: number,
   now: number,
 ): { remainingSeconds: number | null; expired: boolean } => {
-  if (
-    expiresAtMs >= PERSISTENT_APPROVAL_EXPIRES_AT_MS ||
-    expiresAtMs === OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS
-  ) {
+  if (expiresAtMs >= PERSISTENT_APPROVAL_EXPIRES_AT_MS) {
     return { remainingSeconds: null, expired: false };
   }
   const remainingSeconds = Math.max(0, Math.ceil((expiresAtMs - now) / 1000));

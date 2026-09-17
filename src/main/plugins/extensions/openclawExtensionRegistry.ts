@@ -3,7 +3,7 @@ import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 
 export type OpenClawExtensionDescriptor = {
   id: string;
-  buildEntry: () => Record<string, unknown>;
+  buildEntry: (automationApprovalTimeoutMinutes: number) => Record<string, unknown>;
 };
 
 export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] = [
@@ -13,10 +13,11 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
   },
   {
     id: OpenClawExtensionId.AUTOMATION_PERMISSION,
-    buildEntry: () => ({
+    buildEntry: approvalTimeoutMinutes => ({
       enabled: true,
       config: {
         unrestrictedAgentIds: [ScheduledTaskAgentId],
+        approvalTimeoutMinutes,
       },
     }),
   },
@@ -32,10 +33,11 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
 
 export const buildBundledExtensionEntries = (
   isAvailable: (id: string) => boolean,
+  automationApprovalTimeoutMinutes: number,
 ): Record<string, Record<string, unknown>> => {
   return Object.fromEntries(
     bundledOpenClawExtensions
       .filter(extension => isAvailable(extension.id))
-      .map(extension => [extension.id, extension.buildEntry()]),
+      .map(extension => [extension.id, extension.buildEntry(automationApprovalTimeoutMinutes)]),
   );
 };

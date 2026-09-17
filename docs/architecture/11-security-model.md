@@ -58,7 +58,7 @@ Main 在 Linux/Windows启动参数中加入 `no-sandbox` 以处理平台/管理�
 
 Exec 与 plugin approval 分开。allow-once/allow-session/allow-always/deny 只有 Gateway/shared contract允许的组合可提交；session grant 绑定 session key并在 terminal/stop/delete 清理。UI modal 关闭不能等同允许。
 
-命令审批等待时限由 `agentRuntimeSettings:v1` 管理，预设无限、10、20、30、60 分钟。该值通过受管进程环境进入 OpenClaw 原生 exec approval 生命周期；UI 只展示 Gateway 给出的期限，不自行延长后端请求。设置变更只影响后续审批。
+命令与插件审批使用 OpenClaw 原生等待机制；计划任务变更可在原生上限内选择 2/5/10 分钟，不影响 exec 或其他插件。UI 只展示 Gateway 给出的期限，不自行延长后端请求。
 
 OpenClaw 原生 session mode 同时约束管理型文件工具与 exec reviewer。受保护的 `automation-permission` extension 直接读取原生 session mode，补足 scheduled-task mutation 门禁；它不保存独立模式，缺失时 Gateway readiness 失败。无人值守 `justdo-scheduler` 只有在原生 cron-run session key 下才可豁免，普通交互 session 不能继承或冒用该权限。
 

@@ -13,6 +13,12 @@
         "type": "array",
         "items": { "type": "string", "minLength": 1 },
         "uniqueItems": true
+      },
+      "approvalTimeoutMinutes": {
+        "type": "integer",
+        "enum": [2, 5, 10],
+        "default": 2,
+        "description": "Wait time for scheduled task mutation approvals"
       }
     }
   }

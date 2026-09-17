@@ -1,4 +1,3 @@
-import { OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS } from '@shared/openclaw/agentRuntimeSettings';
 import {
   ApprovalDecision,
   ApprovalKind,
@@ -108,13 +107,6 @@ describe('resolveApprovalSummary', () => {
 describe('resolveApprovalDeadline', () => {
   it('does not expose a countdown or expire persistent approvals', () => {
     expect(resolveApprovalDeadline(Number.MAX_SAFE_INTEGER, Date.now())).toEqual({
-      remainingSeconds: null,
-      expired: false,
-    });
-  });
-
-  it('presents the no-expiry sentinel as unlimited', () => {
-    expect(resolveApprovalDeadline(OPENCLAW_INDEFINITE_APPROVAL_EXPIRES_AT_MS, 60_000)).toEqual({
       remainingSeconds: null,
       expired: false,
     });

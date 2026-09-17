@@ -11,7 +11,7 @@ import {
   AgentRuntimeSessionVisibility,
   type AgentRuntimeSettings,
   AgentRuntimeThinkingLevel,
-  APPROVAL_WAIT_TIMEOUT_MINUTES,
+  AUTOMATION_APPROVAL_TIMEOUT_MINUTES,
 } from '@shared/openclaw/agentRuntimeSettings';
 import {
   MAX_MAX_GOAL_CONTINUATION_TURNS,
@@ -144,8 +144,8 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
       ...settings,
       askUserQuestion: { ...settings.askUserQuestion, ...update },
     });
-  const updateApprovals = (update: Partial<AgentRuntimeSettings['approvals']>) =>
-    onChange({ ...settings, approvals: { ...settings.approvals, ...update } });
+  const updateAutomation = (update: Partial<AgentRuntimeSettings['automation']>) =>
+    onChange({ ...settings, automation: { ...settings.automation, ...update } });
   const updateMcp = (update: Partial<AgentRuntimeSettings['mcp']>) =>
     onChange({ ...settings, mcp: { ...settings.mcp, ...update } });
   const updateSessions = (update: Partial<AgentRuntimeSettings['sessions']>) =>
@@ -200,6 +200,12 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
     { value: AgentRuntimeThinkingLevel.Max, label: i18nService.t('agentRuntimeThinkingMax') },
     { value: AgentRuntimeThinkingLevel.Ultra, label: i18nService.t('agentRuntimeThinkingUltra') },
   ];
+  const automationApprovalTimeoutOptions = AUTOMATION_APPROVAL_TIMEOUT_MINUTES.map(minutes => ({
+    value: String(minutes),
+    label: i18nService
+      .t('agentRuntimeScheduledTaskApprovalTimeoutMinutes')
+      .replace('{minutes}', String(minutes)),
+  }));
   const agentThinkingOptions = [
     { value: '', label: i18nService.t('agentRuntimeUseModelDefaultThinking') },
     ...thinkingLevelOptions,
@@ -252,15 +258,6 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
       };
     },
   );
-  const approvalTimeoutOptions = APPROVAL_WAIT_TIMEOUT_MINUTES.map(timeoutMinutes => ({
-    value: String(timeoutMinutes),
-    label:
-      timeoutMinutes === 0
-        ? i18nService.t('agentRuntimeApprovalTimeoutUnlimited')
-        : i18nService
-            .t('agentRuntimeApprovalTimeoutMinutes')
-            .replace('{minutes}', String(timeoutMinutes)),
-  }));
   const sessionVisibilityOptions = [
     {
       value: AgentRuntimeSessionVisibility.Self,
@@ -564,15 +561,21 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
           </label>
         </SettingRow>
         <SettingRow
-          label={i18nService.t('agentRuntimeApprovalTimeoutTitle')}
-          description={i18nService.t('agentRuntimeApprovalTimeoutDescription')}
+          label={i18nService.t('agentRuntimeScheduledTaskApprovalTimeoutTitle')}
+          description={i18nService.t('agentRuntimeScheduledTaskApprovalTimeoutDescription')}
         >
           <ThemedSelect
-            id="agent-runtime-approval-timeout"
-            value={String(settings.approvals.timeoutMinutes)}
-            onChange={value => updateApprovals({ timeoutMinutes: Number(value) })}
-            options={approvalTimeoutOptions}
-            ariaLabel={i18nService.t('agentRuntimeApprovalTimeoutTitle')}
+            id="agent-runtime-scheduled-task-approval-timeout"
+            value={String(settings.automation.approvalTimeoutMinutes)}
+            onChange={value =>
+              updateAutomation({
+                approvalTimeoutMinutes: Number(
+                  value,
+                ) as AgentRuntimeSettings['automation']['approvalTimeoutMinutes'],
+              })
+            }
+            options={automationApprovalTimeoutOptions}
+            ariaLabel={i18nService.t('agentRuntimeScheduledTaskApprovalTimeoutTitle')}
             className="py-2 text-xs"
           />
         </SettingRow>

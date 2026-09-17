@@ -5,7 +5,7 @@ import { buildBundledExtensionEntries } from './openclawExtensionRegistry';
 
 describe('openclawExtensionRegistry', () => {
   it('configures the remaining managed extensions', () => {
-    const entries = buildBundledExtensionEntries(() => true);
+    const entries = buildBundledExtensionEntries(() => true, 5);
 
     expect(entries).toEqual({
       [OpenClawExtensionId.ASK_USER_QUESTION]: {
@@ -15,6 +15,7 @@ describe('openclawExtensionRegistry', () => {
         enabled: true,
         config: {
           unrestrictedAgentIds: ['justdo-scheduler'],
+          approvalTimeoutMinutes: 5,
         },
       },
       [OpenClawExtensionId.RUNTIME_SERVICES]: {

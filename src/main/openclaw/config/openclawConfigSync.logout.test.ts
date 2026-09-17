@@ -432,6 +432,7 @@ describe('OpenClaw auth logout config sync', () => {
     const configPath = path.join(directory, 'openclaw.json');
     const runtimeSettings = createDefaultAgentRuntimeSettings();
     runtimeSettings.askUserQuestion.timeoutMinutes = 45;
+    runtimeSettings.automation.approvalTimeoutMinutes = 10;
 
     expect(
       writeMinimalConfig(
@@ -448,6 +449,13 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.entries['ask-user-question']).toEqual({
       enabled: true,
       config: { timeoutMinutes: 45 },
+    });
+    expect(config.plugins.entries['automation-permission']).toEqual({
+      enabled: true,
+      config: {
+        unrestrictedAgentIds: ['justdo-scheduler'],
+        approvalTimeoutMinutes: 10,
+      },
     });
     expect(config.tools.deny).toContain('ask_user');
     expect(JSON.stringify(config.plugins.entries['ask-user-question'])).not.toContain('callback');

@@ -19,13 +19,10 @@
 | host metadata           | provider request 构造                                            | session/parent/user/purpose metadata                                                 | 保留 006–007                                                      |
 | app-start recovery      | main session 与 durable task recovery                            | JustDo app-start epoch                                                               | 保留 008                                                          |
 | manual reindex          | memory index/cache                                               | 一次性用户意图                                                                       | 保留 009                                                          |
-| exec approval timeout   | 原生 approval request/wait                                       | 用户选择的等待时限                                                                   | 保留 010                                                          |
-| plugin approval detail  | before-tool approval dispatch                                    | reviewer-only 完整变更内容                                                           | 保留 011                                                          |
-| plugin approval timeout | 原生 plugin approval request/wait                                | 用户选择的等待时限                                                                   | 保留 012                                                          |
 
 窗口、tray、update、主题、i18n、session 分组/cwd、SQLite 产品数据、Marketplace、文件 preview 和代理 UI 都属于 JustDo，不应要求 Gateway patch。
 
-## 2. 二十个保留补丁
+## 2. 十九个保留补丁
 
 | 编号 | 能力                                              | 移除条件                                               |
 | ---- | ------------------------------------------------- | ------------------------------------------------------ |
@@ -37,9 +34,6 @@
 | 007  | compaction/reviewer purpose metadata              | 上游为两类请求提供等价 metadata                        |
 | 008  | JustDo app-start session/task recovery boundary   | 上游 durable session/task 支持 host-instance epoch     |
 | 009  | forced CLI memory reindex 绕过 embedding cache    | 上游 forced CLI 原生包含 cache bypass                  |
-| 010  | 原生 exec approval 可配置等待时限                 | 上游提供 exec approval timeout 设置                    |
-| 011  | trusted-policy plugin approval detail 转发        | 上游 before-tool approval 原生转发 `detail`            |
-| 012  | 原生 plugin approval 可配置等待时限               | 上游提供 host plugin approval timeout 设置             |
 | 013  | 暂停中止后的原生 Goal resume 准入                 | 上游原生接受空闲 paused session 的该状态               |
 | 014  | provider replay 排除 display-only assistant block | 上游 provider replay 过滤非 provider assistant content |
 | 015  | trusted local generic MEDIA 与原始引用保留        | 上游支持 trusted generic MEDIA 并暴露原始引用          |
@@ -49,6 +43,8 @@
 | 019  | 禁止配置驱动的插件自动安装                        | 上游提供等价的 host 安装策略                           |
 | 020  | OpenAI realtime transcription 自定义 base URL     | 上游原生支持兼容 provider 的 realtime URL              |
 | 021  | OpenAI-compatible 媒体 provider 隔离              | 上游按能力隔离语言、图像与视频配置                     |
+| 022  | reset 后保留 JustDo display history               | 上游支持 context-only reset 与展示历史独立控制         |
+| 023  | 受管 session fork 目标 key 与 assistant cut       | 上游 `sessions.fork` 提供等价授权与生命周期 fencing    |
 
 当前目录只对 pristine `openclaw@2026.9.2` 有效。旧 marker、历史补丁或部分应用状态必须明确失败；处理方式是从 source lock 重建，而不是原地迁移。
 

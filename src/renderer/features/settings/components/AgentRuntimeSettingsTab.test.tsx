@@ -10,7 +10,6 @@ vi.mock('@/services/i18n', () => ({
   i18nService: {
     t: (key: string) => {
       const values: Record<string, string> = {
-        agentRuntimeApprovalTimeoutMinutes: '{minutes} minutes',
         agentRuntimeThinkingOff: 'Off',
         agentRuntimeThinkingMinimal: 'Minimal',
         agentRuntimeThinkingLow: 'Low',
@@ -21,6 +20,7 @@ vi.mock('@/services/i18n', () => ({
         agentRuntimeThinkingMax: 'Maximum',
         agentRuntimeThinkingUltra: 'Ultra',
         agentRuntimeNestingDepth: 'Depth {depth}',
+        agentRuntimeScheduledTaskApprovalTimeoutMinutes: '{minutes} minutes',
       };
       return values[key] ?? key;
     },
@@ -73,48 +73,6 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     });
   });
 
-  test('offers approval wait presets and emits the selected timeout', () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      bottom: 132,
-      height: 32,
-      left: 20,
-      right: 220,
-      top: 100,
-      width: 200,
-      x: 20,
-      y: 100,
-      toJSON: () => ({}),
-    });
-    const settings = createDefaultAgentRuntimeSettings();
-    const onChange = vi.fn();
-
-    render(
-      <AgentRuntimeSettingsTab
-        settings={settings}
-        models={[]}
-        isLoading={false}
-        loadError={null}
-        onChange={onChange}
-        onRetry={vi.fn()}
-        maxGoalContinuationTurns={10}
-        onMaxGoalContinuationTurnsChange={vi.fn()}
-      />,
-    );
-
-    const select = screen.getByRole('combobox', {
-      name: 'agentRuntimeApprovalTimeoutTitle',
-    });
-    expect(select.textContent).toContain('30 minutes');
-
-    fireEvent.click(select);
-    fireEvent.click(screen.getByRole('option', { name: '20 minutes' }));
-
-    expect(onChange).toHaveBeenCalledWith({
-      ...settings,
-      approvals: { timeoutMinutes: 20 },
-    });
-  });
-
   test('shows tree as the default session scope and emits a broader selection', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 132,
@@ -154,6 +112,48 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     expect(onChange).toHaveBeenCalledWith({
       ...settings,
       sessions: { visibility: 'agent' },
+    });
+  });
+
+  test('configures only the scheduled task approval timeout', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 132,
+      height: 32,
+      left: 20,
+      right: 220,
+      top: 100,
+      width: 200,
+      x: 20,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    const settings = createDefaultAgentRuntimeSettings();
+    const onChange = vi.fn();
+
+    render(
+      <AgentRuntimeSettingsTab
+        settings={settings}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={onChange}
+        onRetry={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByRole('combobox', {
+      name: 'agentRuntimeScheduledTaskApprovalTimeoutTitle',
+    });
+    expect(select.textContent).toContain('2 minutes');
+
+    fireEvent.click(select);
+    fireEvent.click(screen.getByRole('option', { name: '10 minutes' }));
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...settings,
+      automation: { approvalTimeoutMinutes: 10 },
     });
   });
 

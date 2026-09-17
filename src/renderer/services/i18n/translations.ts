@@ -376,11 +376,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeAskUserTimeoutTitle: '提问等待时限',
     agentRuntimeAskUserTimeoutDescription:
       'AskUserQuestion 启用超时后等待用户回答的分钟数，范围 1–1440 分钟。',
-    agentRuntimeApprovalTimeoutTitle: '权限审批等待时限',
-    agentRuntimeApprovalTimeoutDescription:
-      '等待命令和计划任务变更权限审批的时间；修改后会在当前任务结束时重启运行服务，并对后续审批生效。',
-    agentRuntimeApprovalTimeoutUnlimited: '无限等待',
-    agentRuntimeApprovalTimeoutMinutes: '{minutes} 分钟',
+    agentRuntimeScheduledTaskApprovalTimeoutTitle: '计划任务审批时限',
+    agentRuntimeScheduledTaskApprovalTimeoutDescription:
+      '等待计划任务变更审批的时间，不影响命令或其他插件审批。',
+    agentRuntimeScheduledTaskApprovalTimeoutMinutes: '{minutes} 分钟',
     agentRuntimeModelTitle: '模型与思考强度',
     agentRuntimeModelDescription: '为新建的 Subagent 设定默认能力；单次任务仍可使用明确覆盖。',
     agentRuntimeDefaultModel: '默认模型',
@@ -2768,11 +2767,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeAskUserTimeoutTitle: 'Question response timeout',
     agentRuntimeAskUserTimeoutDescription:
       'How many minutes AskUserQuestion waits for an answer when timeout is enabled. Range: 1–1440 minutes.',
-    agentRuntimeApprovalTimeoutTitle: 'Approval wait timeout',
-    agentRuntimeApprovalTimeoutDescription:
-      'How long command and scheduled-task change approvals wait. The runtime service restarts after current work finishes, and the change applies to subsequent approvals.',
-    agentRuntimeApprovalTimeoutUnlimited: 'Wait indefinitely',
-    agentRuntimeApprovalTimeoutMinutes: '{minutes} minutes',
+    agentRuntimeScheduledTaskApprovalTimeoutTitle: 'Scheduled task approval timeout',
+    agentRuntimeScheduledTaskApprovalTimeoutDescription:
+      'How long scheduled task changes wait for approval. This does not affect command or other plugin approvals.',
+    agentRuntimeScheduledTaskApprovalTimeoutMinutes: '{minutes} minutes',
     agentRuntimeModelTitle: 'Model and thinking effort',
     agentRuntimeModelDescription:
       'Set defaults for newly created Subagents. An individual task can still provide an explicit override.',

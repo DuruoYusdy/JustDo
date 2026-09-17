@@ -85,7 +85,7 @@ OpenClaw skill API 是技能元数据和运行状态的权威。`openclawSkillFi
 
 MCP、hooks、extensions 和 Marketplace 属于 JustDo 的插件产品面，但执行语义仍由 OpenClaw。当前 Marketplace service 默认 provider 列表为空；不能仅因存在 adapter 接口就宣称已经接入远程市场。
 
-Runtime patch 位于 `scripts/patches/v2026.9.2/`，只补齐锁定上游仍缺失的二十项产品能力。每个 patch 必须有版本锚点、幂等测试、职责说明和可删除条件；不得重做上游原生 task/history/approval/compaction；008 以稳定 app-start epoch 保留同一应用进程内的 Gateway 恢复并终止跨完整应用重启的旧 session/task，010/012 只让 host 为原生 exec/plugin approval 提供等待期限，011 只转发上游已有的 reviewer-only plugin approval detail，013 只修正暂停中止后的原生 Goal resume 准入，014/015 只修复 provider replay 与可信本地 MEDIA 边界，016 只让官方插件目录读取保持离线，017–021 分别补齐 progress snapshot、tool/commentary 顺序、插件自动安装边界、realtime transcription base URL 和媒体 provider 隔离，均不复制上游状态机。
+Runtime patch 位于 `scripts/patches/v2026.9.2/`，只补齐锁定上游仍缺失的十九项产品能力。每个 patch 必须有版本锚点、幂等测试、职责说明和可删除条件；不得重做上游原生 task/history/approval/compaction；008 以稳定 app-start epoch 保留同一应用进程内的 Gateway 恢复并终止跨完整应用重启的旧 session/task，013 只修正暂停中止后的原生 Goal resume 准入，014/015 只修复 provider replay 与可信本地 MEDIA 边界，016 只让官方插件目录读取保持离线，017–021 分别补齐 progress snapshot、tool/commentary 顺序、插件自动安装边界、realtime transcription base URL 和媒体 provider 隔离，022/023 分别保留 reset 后的 display history 和受管 session fork 目标 key/assistant cut，均不复制上游状态机。Exec/plugin approval 使用上游原生机制；计划任务审批在原生范围内选择 2/5/10 分钟，并把有界参数预览放入 description，不再补丁转发 reviewer-only detail。
 
 ## 8. Scheduled Tasks
 

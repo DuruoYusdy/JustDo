@@ -12,7 +12,6 @@ import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
   DEFAULT_AGENT_RUNTIME_SETTINGS,
-  resolveApprovalWaitTimeoutMs,
 } from '../../../shared/openclaw/agentRuntimeSettings';
 import { PermissionMode } from '../../../shared/openclaw/approvals';
 import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../shared/openclaw/compaction';
@@ -1803,7 +1802,10 @@ const buildManagedBundledExtensionEntries = (
   agentRuntimeSettings: AgentRuntimeSettings,
 ): Record<string, Record<string, unknown>> => ({
   [OpenClawExtensionId.BROWSER]: { enabled: true },
-  ...buildBundledExtensionEntries(isBundledPluginAvailable),
+  ...buildBundledExtensionEntries(
+    isBundledPluginAvailable,
+    agentRuntimeSettings.automation.approvalTimeoutMinutes,
+  ),
   ...(isBundledPluginAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
     ? {
         [OpenClawExtensionId.ASK_USER_QUESTION]: {
@@ -2250,10 +2252,6 @@ export class OpenClawConfigSync {
 
     // Custom keys use file SecretRefs; built-in keys use encrypted exec SecretRefs.
     // No provider API key belongs in the Gateway launch environment.
-
-    env.JUSTDO_EXEC_APPROVAL_TIMEOUT_MS = String(
-      resolveApprovalWaitTimeoutMs(this.getAgentRuntimeSettings().approvals.timeoutMinutes),
-    );
 
     // IM channel secrets removed — channels disabled pending future adaptation
 

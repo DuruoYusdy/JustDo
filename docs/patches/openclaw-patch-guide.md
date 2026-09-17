@@ -32,9 +32,9 @@ Patch 工具拒绝：
 
 历史 `v2026.6.9`、`v2026.6.11`、`v2026.7.1-2`、`v2026.8.1` 与 `v2026.8.2` 目录仅供追溯。不能从旧编号推断当前依赖，也不能复制旧 anchor 伪装成升级。
 
-## 3. 当前二十个能力补丁
+## 3. 当前十九个能力补丁
 
-v2026.9.2 已原生承担 thinking/history/tool directory/大部分 goal/subagent queue+join/approval/compaction/context budget/task query，以及 Chrome MCP connect 前的 stderr 捕获。JustDo 只保留二十个无法在 Adapter/config/extension 层补齐的缺口：
+v2026.9.2 已原生承担 thinking/history/tool directory/大部分 goal/subagent queue+join/approval/compaction/context budget/task query，以及 Chrome MCP connect 前的 stderr 捕获。JustDo 只保留十九个无法在 Adapter/config/extension 层补齐的缺口：
 
 | Patch       | 能力                                                                        |
 | ----------- | --------------------------------------------------------------------------- |
@@ -45,9 +45,6 @@ v2026.9.2 已原生承担 thinking/history/tool directory/大部分 goal/subagen
 | `006`–`007` | agent/session/parent/user-initiated 与 compaction/reviewer purpose metadata |
 | `008`       | 同 app-start 内恢复、跨完整应用重启终止旧 active session/task               |
 | `009`       | 原生 forced CLI memory reindex 一次性绕过 embedding cache                   |
-| `010`       | host 配置 OpenClaw 原生 exec approval 等待时限                              |
-| `011`       | 把 trusted policy 的 reviewer-only detail 转发到原生 plugin approval        |
-| `012`       | host 配置 OpenClaw 原生 plugin approval 等待时限                            |
 | `013`       | 暂停导致上一轮中止后，允许空闲 Goal 会话通过原生 resume 准入                |
 | `014`       | provider replay 排除 display-only assistant blocks                          |
 | `015`       | trusted generic local MEDIA 交付并保留 history 中原始 MEDIA 引用            |
@@ -57,6 +54,8 @@ v2026.9.2 已原生承担 thinking/history/tool directory/大部分 goal/subagen
 | `019`       | 禁止配置驱动的插件自动安装                                                  |
 | `020`       | OpenAI realtime transcription 自定义 base URL                               |
 | `021`       | OpenAI-compatible 媒体 provider 隔离                                        |
+| `022`       | reset 清空模型上下文后保留 JustDo display history                           |
+| `023`       | 授权的受管 session fork 目标 key 与 assistant cut 语义                      |
 
 运行进度、embedding proxy 和只读 history detail 已迁入 `runtime-services`，cron 默认无外发由 JustDo config 显式发送 `{mode:'none'}`，均不应重新加入 patch。若新增能力，先证明公共 plugin/Gateway API 不足，并同步总账、source lock、测试和引用。
 
@@ -233,7 +232,7 @@ Generated bundle 的变量名、顺序和文本随版本变化。Anchor 改变�
 
 ### Approvals
 
-验证可信 ancestry、无限交互等待、run suspension、隐藏恢复、stop/failure 清理。普通 cron/native channel 的上游 timeout 必须保持。
+验证可信 ancestry、exec 原生审批时限、automation-permission 的 2/5/10 分钟原生 `timeoutMs`、run suspension、隐藏恢复、stop/failure 清理。其他 plugin/native channel 的上游 timeout 必须保持。
 
 ### Compaction
 

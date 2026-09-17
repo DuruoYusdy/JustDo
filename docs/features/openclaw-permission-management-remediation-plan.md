@@ -69,7 +69,7 @@ exec、fs 与 host approval fallback 不随会话权限选择器切换。v2026.9
 
 OpenClaw 对非 Full session mode 继续应用 host approval file 的限制；显式 `full` 是需要 `operator.admin` 的原生例外。JustDo Gateway client 具备该 scope。普通 session 仍通过 `exec.approval.*` 展示与解决人工审批，且“本会话允许相同命令”的 grant 只绑定对应 session 和命令身份。
 
-权限审批等待时限保存在 `agentRuntimeSettings:v1.approvals.timeoutMinutes`，可选无限、10、20、30、60 分钟，默认 30 分钟。设置通过受管 Gateway 环境注入原生 exec 与 plugin approval request/wait，包括 CLI native tool、native hook relay 和计划任务变更审批；无限使用显式 no-expiry sentinel，Gateway 的分段 timer 只负责唤醒复检，不会自动拒绝。变更需要 Gateway 重启；Main 使用原生 `gateway.suspend.prepare` 作为 restart admission 屏障，活动任务未结束或屏障不可用时持续延迟，不会因等待过久强制中断任务，设置只影响后续创建的审批。
+Exec 与 plugin approval 使用 OpenClaw 原生 request/wait 机制，包括 CLI native tool、native hook relay 和计划任务变更审批。JustDo 不再覆盖 exec 或全局 plugin 审批时限，也不提供无限等待；设置页只为 automation-permission 的计划任务变更选择原生支持的 2/5/10 分钟。
 
 ## 5. Scheduler
 
@@ -102,7 +102,6 @@ OpenClaw 对非 Full session mode 继续应用 host approval file 的限制；�
 - `ask -> guarded`、`auto -> workspace`、`full -> full` 的精确映射；
 - session root/mode 回读验证及不匹配拒绝；
 - 相同模式仍重放、同 session 切换串行、运行中延迟应用、同步失败不恢复旧值；
-- 审批等待时限的默认值、枚举校验、原生环境注入和无限等待展示；
 - turn 在 session 准备期间停止或被新 turn 取代时不误发；
 - 新会话忽略 Renderer 伪造的 mode，并采用 Main 的默认值；
 - 旧扩展目录与 config registration 清理；

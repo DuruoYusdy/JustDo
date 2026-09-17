@@ -27,9 +27,6 @@ const EXPECTED_PATCH_FILES = [
   '007-request-purpose-metadata.cjs',
   '008-app-startup-task-recovery-boundary.cjs',
   '009-memory-force-reembed-opt-in.cjs',
-  '010-configurable-exec-approval-timeout.cjs',
-  '011-plugin-approval-detail-forwarding.cjs',
-  '012-configurable-plugin-approval-timeout.cjs',
   '013-goal-resume-after-pause.cjs',
   '014-assistant-display-block-replay.cjs',
   '015-trusted-local-file-media.cjs',
@@ -51,6 +48,7 @@ const UPSTREAM_CONTRACTS = [
   'native-task-rpc-and-events',
   'subagent-queue-and-wait',
   'persistent-approval-lifecycle',
+  'native-approval-timeouts',
   'compaction-and-context-budget',
   'openai-visible-stop-tool-safety',
 ] as const;
@@ -145,6 +143,14 @@ function createPristineFixture(): string {
     root,
     'approval-outcome.js',
     'resolveExecApprovalWaitOutcome({ approvalId, resolveTimedOut });',
+  );
+  writeDistFile(
+    root,
+    'approval-timeouts.js',
+    'const DEFAULT_EXEC_APPROVAL_TIMEOUT_MS = 18e5; ' +
+      'const DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS = 12e4; ' +
+      'const MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 6e5; ' +
+      'Math.min(MAX_PLUGIN_APPROVAL_TIMEOUT_MS, Math.max(1, Math.floor(value)));',
   );
   writeDistFile(
     root,

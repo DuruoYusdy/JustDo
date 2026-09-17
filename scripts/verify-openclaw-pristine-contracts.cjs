@@ -199,6 +199,22 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
           'approval resolution and expiry share the native wait lifecycle',
         ),
       ),
+      'native-approval-timeouts': uniqueEvidence(
+        findFileWithAll(
+          files,
+          ['DEFAULT_EXEC_APPROVAL_TIMEOUT_MS = 18e5'],
+          'native exec approvals default to 30 minutes',
+        ),
+        findFileWithAll(
+          files,
+          [
+            'DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS = 12e4',
+            'MAX_PLUGIN_APPROVAL_TIMEOUT_MS = 6e5',
+            'Math.min(MAX_PLUGIN_APPROVAL_TIMEOUT_MS, Math.max(1, Math.floor(',
+          ],
+          'native plugin approvals default to 2 minutes and clamp at 10 minutes',
+        ),
+      ),
       'compaction-and-context-budget': uniqueEvidence(
         findFileWithAll(
           files,

@@ -41,7 +41,6 @@ import {
   OPENCLAW_SESSION_PRUNE_AFTER,
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
-  OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   sanitizeOpenClawV2026_9_2Config,
@@ -175,28 +174,6 @@ describe('OpenClaw provider config', () => {
 
     expect(selection.providerConfig.timeoutSeconds).toBe(OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS);
     expect(selection.providerConfig.timeoutSeconds).toBeGreaterThan(120);
-  });
-});
-
-describe('exec approval timeout environment', () => {
-  test.each([
-    [30, '1800000'],
-    [0, '0'],
-  ])('projects %s minutes into the native runtime environment', (timeoutMinutes, expected) => {
-    const settings = createDefaultAgentRuntimeSettings();
-    settings.approvals.timeoutMinutes = timeoutMinutes;
-    const sync = new OpenClawConfigSync({
-      engineManager: {},
-      getCoworkConfig: () => ({
-        workingDirectory: '',
-        executionMode: 'local',
-        agentEngine: 'openclaw',
-        permissionMode: 'ask',
-      }),
-      getAgentRuntimeSettings: () => settings,
-    } as never);
-
-    expect(sync.collectGatewayLaunchEnvVars().JUSTDO_EXEC_APPROVAL_TIMEOUT_MS).toBe(expected);
   });
 });
 

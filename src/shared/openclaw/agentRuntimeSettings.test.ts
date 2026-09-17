@@ -20,8 +20,8 @@ describe('Agent runtime settings', () => {
       askUserQuestion: {
         timeoutMinutes: 10,
       },
-      approvals: {
-        timeoutMinutes: 30,
+      automation: {
+        approvalTimeoutMinutes: 2,
       },
       mcp: {
         requestTimeoutSeconds: 60,
@@ -115,17 +115,6 @@ describe('Agent runtime settings', () => {
     });
   });
 
-  test('migrates version 1 settings saved before approval wait preferences', () => {
-    const input = createDefaultAgentRuntimeSettings();
-    input.subagents.maxConcurrent = 7;
-    const { approvals: _removed, ...legacyInput } = input;
-
-    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
-      ...input,
-      approvals: { timeoutMinutes: 30 },
-    });
-  });
-
   test('migrates version 1 settings saved before session visibility preferences', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.subagents.maxConcurrent = 7;
@@ -155,6 +144,47 @@ describe('Agent runtime settings', () => {
     });
   });
 
+  test('drops the removed approval timeout from persisted version 1 profiles', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    const legacyInput = {
+      ...input,
+      approvals: { timeoutMinutes: 0 },
+    };
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual(input);
+  });
+
+  test('adds the scheduled task approval timeout to older version 1 profiles', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.subagents.maxConcurrent = 7;
+    const { automation: _removed, ...legacyInput } = input;
+
+    expect(parseAgentRuntimeSettings(legacyInput)).toEqual({
+      ...input,
+      automation: { approvalTimeoutMinutes: 2 },
+    });
+  });
+
+  test.each([2, 5, 10])(
+    'accepts scheduled task approval timeout %s minutes',
+    approvalTimeoutMinutes => {
+      const input = createDefaultAgentRuntimeSettings();
+      input.automation.approvalTimeoutMinutes = approvalTimeoutMinutes as 2 | 5 | 10;
+
+      expect(validateAgentRuntimeSettings(input)).toEqual({ ok: true, settings: input });
+    },
+  );
+
+  test.each([0, 1, 3, 11])(
+    'rejects unsupported scheduled task approval timeout %s',
+    approvalTimeoutMinutes => {
+      const input = createDefaultAgentRuntimeSettings();
+      input.automation.approvalTimeoutMinutes = approvalTimeoutMinutes as 2;
+
+      expect(validateAgentRuntimeSettings(input).ok).toBe(false);
+    },
+  );
+
   test.each(Object.values(AgentRuntimeSessionVisibility))(
     'accepts session visibility %s',
     visibility => {
@@ -168,20 +198,6 @@ describe('Agent runtime settings', () => {
   test('rejects an unsupported session visibility', () => {
     const input = createDefaultAgentRuntimeSettings();
     input.sessions.visibility = 'siblings' as never;
-
-    expect(validateAgentRuntimeSettings(input).ok).toBe(false);
-  });
-
-  test.each([0, 10, 20, 30, 60])('accepts approval wait timeout %s', timeoutMinutes => {
-    const input = createDefaultAgentRuntimeSettings();
-    input.approvals.timeoutMinutes = timeoutMinutes;
-
-    expect(validateAgentRuntimeSettings(input)).toEqual({ ok: true, settings: input });
-  });
-
-  test.each([-1, 1, 15, 61, 1.5])('rejects unsupported approval wait timeout %s', timeoutMinutes => {
-    const input = createDefaultAgentRuntimeSettings();
-    input.approvals.timeoutMinutes = timeoutMinutes;
 
     expect(validateAgentRuntimeSettings(input).ok).toBe(false);
   });
