@@ -423,7 +423,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const retainedPlanInteraction = retainedPlanForSession(planPreviewState, currentSessionId);
   const visiblePlanInteraction = planInteraction ?? retainedPlanInteraction;
-  const planPreviewReadOnly = planInteraction === null && visiblePlanInteraction !== null;
+  const planPreviewReadOnly =
+    visiblePlanInteraction !== null &&
+    (planInteraction === null ||
+      retainedPlanInteraction?.requestId === visiblePlanInteraction.requestId);
   const availableDisplayTabIds = useMemo(
     () => [
       ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
@@ -496,17 +499,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const sessionId = planInteraction.sessionId;
       const retainForImplementation = result.behavior === 'plan' && result.decision === 'implement';
       if (retainForImplementation) {
+        chatWrapperRef.current?.preparePlanImplementationReset({
+          requestId: planInteraction.requestId,
+          toolName: planInteraction.toolName,
+          toolInput: planInteraction.toolInput,
+        });
         dispatchPlanPreview({ type: 'implementation-started', interaction: planInteraction });
       }
 
       const success = await onPlanRespond(result);
       if (!success && retainForImplementation) {
-        dispatchPlanPreview({
-          type: 'implementation-failed',
-          sessionId,
-          requestId: planInteraction.requestId,
-        });
-      } else if (success && !retainForImplementation) {
+        chatWrapperRef.current?.cancelPlanImplementationReset(planInteraction.requestId);
+        dispatchPlanPreview({ type: 'pending-shown', sessionId });
+      }
+      if (success && !retainForImplementation) {
         dispatchPlanPreview({ type: 'resolved-without-implementation', sessionId });
       }
       return success;

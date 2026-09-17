@@ -1,5 +1,3 @@
-import type { BeginCoworkSessionSegmentInput, CoworkSessionSegment } from './sessionSegment';
-
 export const CoworkPlanHandoffState = {
   Presented: 'presented',
   Dispatching: 'dispatching',
@@ -14,7 +12,7 @@ export type CoworkPlanHandoffState =
 export interface CoworkPlanArtifactReference {
   sessionId: string;
   planId: string;
-  workspaceRoot?: string;
+  workspaceRoot: string;
   relativePath: string;
   sha256: string;
   byteLength: number;
@@ -56,18 +54,4 @@ export interface TransitionCoworkPlanHandoffInput {
   implementationGatewaySessionId?: string;
   implementationRunId?: string;
   error?: string;
-}
-
-export interface AdmitCoworkPlanHandoffInput {
-  planId: string;
-  expectedState: typeof CoworkPlanHandoffState.Dispatching;
-  implementationGatewaySessionId: string;
-  implementationRunId: string;
-  implementationSegment: BeginCoworkSessionSegmentInput;
-  admittedAt: number;
-}
-
-export interface AdmittedCoworkPlanHandoff {
-  handoff: CoworkPlanHandoff;
-  segment: CoworkSessionSegment;
 }

@@ -118,4 +118,16 @@ describe('PermissionModeSelector Plan mode', () => {
     await waitFor(() => expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto'));
     expect(mocks.setPlanMode).toHaveBeenCalledWith('session-1', false);
   });
+
+  test('allows leaving Plan mode while the Plan review disables normal input', async () => {
+    mocks.state.cowork.currentSession = { id: 'session-1', permissionMode: 'ask' };
+    mocks.state.cowork.planModeBySession = { 'session-1': true };
+    render(<PermissionModeSelector disabled />);
+
+    openSelector();
+    fireEvent.click(screen.getByText('permissionModeAuto').closest('button')!);
+
+    await waitFor(() => expect(mocks.setPlanMode).toHaveBeenCalledWith('session-1', false));
+    expect(mocks.updatePermissionMode).toHaveBeenCalledWith('auto');
+  });
 });

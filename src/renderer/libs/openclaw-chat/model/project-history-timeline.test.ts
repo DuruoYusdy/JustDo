@@ -136,17 +136,17 @@ describe('projectPersistedTimeline', () => {
     );
   });
 
-  test('projects an implementation phase boundary without joining tool lifecycles across it', () => {
+  test('projects an OpenClaw reset marker as the implementation phase boundary', () => {
     const result = projectPersistedTimeline([
       {
         role: 'assistant',
         runId: 'planning-run',
-        content: [{ type: 'toolcall', toolCallId: 'shared-call', name: 'read' }],
+        content: [{ type: 'toolcall', toolCallId: 'shared-call', name: 'PresentPlan' }],
       },
       {
-        role: 'justdo-phase-boundary',
-        id: 'implementation-start',
-        content: 'Plan approved · Implementation started',
+        role: 'system',
+        content: 'Reset',
+        __openclaw: { kind: 'reset', id: 'implementation-start' },
       },
       {
         role: 'tool',
@@ -158,16 +158,32 @@ describe('projectPersistedTimeline', () => {
     ]);
 
     expect(result.map(item => item.kind)).toEqual([
-      'live-process',
+      'plan-presentation',
       'phase-boundary',
       'process-summary',
     ]);
-    expect(result[1]).toMatchObject({
-      kind: 'phase-boundary',
-      label: 'Plan approved · Implementation started',
-    });
-    expect(result[0]).toMatchObject({ item: { name: 'read', status: 'running' } });
+    expect(result[1]).toMatchObject({ kind: 'phase-boundary', label: '' });
+    expect(result[0]).toMatchObject({ item: { name: 'PresentPlan', status: 'running' } });
     expect(result[2]).toMatchObject({ items: [{ name: 'write', status: 'completed' }] });
+  });
+
+  test('keeps native visible-history clearing for resets unrelated to Plan approval', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'old request' },
+      { role: 'assistant', content: 'old response' },
+      {
+        role: 'system',
+        content: 'Reset',
+        __openclaw: { kind: 'reset', id: 'ordinary-reset' },
+      },
+      { role: 'user', content: 'new request' },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      kind: 'history-message',
+      message: { role: 'user', content: 'new request' },
+    });
   });
 
   test('flattens mixed persisted assistant content around hard Content boundaries', () => {

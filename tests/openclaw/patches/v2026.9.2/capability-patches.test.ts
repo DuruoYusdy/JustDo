@@ -161,7 +161,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the twenty retained capability patches', () => {
+  test('contains exactly the twenty-one retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -183,6 +183,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '019-disable-configured-plugin-auto-install.cjs',
       '020-openai-realtime-transcription-base-url.cjs',
       '021-isolated-openai-compatible-media-providers.cjs',
+      '022-justdo-reset-display-history.cjs',
     ]);
   });
 

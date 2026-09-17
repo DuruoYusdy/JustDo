@@ -15,6 +15,7 @@
 
 import { parseBrowserAnnotationPrompt } from '@shared/browser';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '@shared/cowork/attachments';
+import { isPresentPlanToolName } from '@shared/cowork/planPreview';
 import type { LocalTtsSpeakResult } from '@shared/localTts';
 import {
   normalizeAgentEvent,
@@ -684,6 +685,12 @@ export class ChatController {
   private runProbeToken: symbol | null = null;
   private terminalLifecycleSeen = false;
   private transcriptIdSequence = 0;
+  private expectedPlanImplementationReset: {
+    requestId: string;
+    sessionKey: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+  } | null = null;
   private readonly retainedGoalStartOperations = new Map<
     string,
     {
@@ -2041,6 +2048,20 @@ export class ChatController {
     return this.currentMessageHistory.toArray();
   }
 
+  preparePlanImplementationReset(request: {
+    requestId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+  }): void {
+    this.expectedPlanImplementationReset = { ...request, sessionKey: this.state.sessionKey };
+  }
+
+  cancelPlanImplementationReset(requestId: string): void {
+    if (this.expectedPlanImplementationReset?.requestId === requestId) {
+      this.expectedPlanImplementationReset = null;
+    }
+  }
+
   /** Repoint the current transcript to the state before one persisted user message. */
   async rewindToUserMessage(entryId: string): Promise<RewindEditorDraft> {
     const normalizedEntryId = entryId.trim();
@@ -2146,39 +2167,6 @@ export class ChatController {
         this.notify();
       }
     }
-  }
-
-  /** Load a closed transcript segment without changing the selected live session. */
-  async loadTranscriptSegment(sessionKey: string): Promise<unknown[]> {
-    const normalizedKey = sessionKey.trim();
-    const client = this.state.client;
-    if (!normalizedKey) throw new Error('Transcript segment session key is required');
-    if (!client || !this.state.connected) {
-      throw new Error('OpenClaw gateway is not connected');
-    }
-
-    const pages: unknown[][] = [];
-    const seenOffsets = new Set<number>();
-    let offset: number | undefined;
-    for (;;) {
-      const page = parseChatHistoryPage(
-        await client.request('chat.history', {
-          sessionKey: normalizedKey,
-          limit: CHAT_HISTORY_OLDER_PAGE_LIMIT,
-          maxChars: CHAT_HISTORY_MAX_CHARS,
-          ...(offset === undefined ? {} : { offset }),
-        }),
-      );
-      pages.unshift(page.messages);
-      if (!page.hasMore || !page.nextCursor) break;
-      const nextOffset = decodeHistoryOffsetCursor(page.nextCursor);
-      if (seenOffsets.has(nextOffset) || nextOffset <= (offset ?? -1)) {
-        throw new Error('OpenClaw chat.history pagination cursor did not advance');
-      }
-      seenOffsets.add(nextOffset);
-      offset = nextOffset;
-    }
-    return this.normalizeHistoryPage(pages.flat(), normalizedKey);
   }
 
   private ensureTranscriptSessionIdentity(): void {
@@ -3126,6 +3114,13 @@ export class ChatController {
   /** Switch to a different session */
   async switchSession(sessionKey: string, options: SwitchSessionOptions = {}): Promise<void> {
     const previousSessionKey = this.state.sessionKey;
+    if (
+      this.expectedPlanImplementationReset &&
+      normalizeTranscriptSessionKey(this.expectedPlanImplementationReset.sessionKey) !==
+        normalizeTranscriptSessionKey(sessionKey)
+    ) {
+      this.expectedPlanImplementationReset = null;
+    }
     const promotionSource = options.promoteFromSessionKey?.trim() || null;
     const isTempSessionPromotion = Boolean(
       promotionSource &&
@@ -3960,20 +3955,79 @@ export class ChatController {
         this.pendingHistoryReload = false;
         this.scheduleDeferredHistoryReload(this.state.sessionKey, 'session-identity-rotation');
       } else if (reason === 'reset') {
-        // A native reset can retain the public session id. Its explicit
-        // lifecycle event is authoritative proof that the prior branch no
-        // longer belongs in this pane.
-        this.resetTranscriptForSession(
-          this.state.sessionKey,
-          nextSessionId ?? currentSessionId,
-          false,
-        );
+        const managedSession = /^agent:[^:]+:justdo:[^:]+$/i.test(this.state.sessionKey);
+        const resetSessionId = nextSessionId ?? currentSessionId;
+        const planImplementation = this.expectedPlanImplementationReset;
+        this.expectedPlanImplementationReset = null;
         this.historyPagingGeneration += 1;
         this.resetHistoryPagination(this.state.sessionKey);
         this.displayedHistoryLeafBySession.delete(
           normalizeTranscriptSessionKey(this.state.sessionKey),
         );
-        this.setCurrentSessionMessages([], { resetLoadedHistory: true });
+        if (managedSession) {
+          // OpenClaw keeps the same public session identity for the Plan handoff.
+          // Preserve the loaded display transcript while retiring the planning
+          // turn, and project an immediate reset boundary. Patch 022 makes the
+          // authoritative history snapshot return the same pre-reset rows later.
+          let loadedMessages = this.currentMessageHistory.toArray();
+          let latestResetIndex = -1;
+          loadedMessages.forEach((message, index) => {
+            if (asRecord(asRecord(message)?.__openclaw)?.kind === 'reset') {
+              latestResetIndex = index;
+            }
+          });
+          const hasPersistedPlan = projectPersistedTimeline(
+            loadedMessages.slice(latestResetIndex + 1) as GatewayMessage[],
+          ).some(item => item.kind === 'plan-presentation');
+          if (planImplementation && !hasPersistedPlan) {
+            const livePlanTool = this.state.transcript.activeTurn?.items.find(
+              item => item.type === 'tool' && isPresentPlanToolName(item.name),
+            );
+            loadedMessages = [
+              ...loadedMessages,
+              {
+                role: 'assistant',
+                runId: this.state.transcript.activeTurn?.runId,
+                timestamp: livePlanTool?.startedAt ?? Date.now(),
+                content: [
+                  {
+                    type: 'toolcall',
+                    toolCallId:
+                      livePlanTool?.type === 'tool'
+                        ? livePlanTool.toolCallId
+                        : `plan-${planImplementation.requestId}`,
+                    name: planImplementation.toolName,
+                    input: planImplementation.toolInput,
+                  },
+                ],
+              },
+            ];
+          }
+          const tailMarker = asRecord(loadedMessages[loadedMessages.length - 1])?.__openclaw;
+          const tailMarkerRecord = asRecord(tailMarker);
+          const messages =
+            tailMarkerRecord?.kind === 'reset'
+              ? loadedMessages
+              : [
+                  ...loadedMessages,
+                  {
+                    role: 'system',
+                    content: 'Reset',
+                    timestamp: Date.now(),
+                    __openclaw: {
+                      kind: 'reset',
+                      id: `justdo-live-reset-${Date.now()}`,
+                      ...(planImplementation ? { planImplementation: true } : {}),
+                    },
+                  },
+                ];
+          this.resetTranscriptForSession(this.state.sessionKey, resetSessionId, false);
+          this.setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+        } else {
+          // Native sessions retain OpenClaw's normal reset behavior.
+          this.resetTranscriptForSession(this.state.sessionKey, resetSessionId, false);
+          this.setCurrentSessionMessages([], { resetLoadedHistory: true });
+        }
         this.state.chatRunId = null;
         this.state.chatSending = false;
         this.clearRunActivity();

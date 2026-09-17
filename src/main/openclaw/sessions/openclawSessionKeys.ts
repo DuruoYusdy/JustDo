@@ -1,14 +1,12 @@
 /** OpenClaw managed and cron session-key utilities. */
 
 import {
-  buildCoworkExecutionSessionKey,
   buildCoworkSessionKey,
   DEFAULT_COWORK_AGENT_ID,
   parseCoworkSessionKey,
-} from '../../../shared/cowork/sessionSegment';
+} from '../../../shared/cowork/sessionKey';
 
 export const DEFAULT_MANAGED_AGENT_ID = DEFAULT_COWORK_AGENT_ID;
-export { buildCoworkExecutionSessionKey };
 
 export interface ManagedSessionKey {
   agentId: string | null;

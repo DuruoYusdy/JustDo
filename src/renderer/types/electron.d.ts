@@ -826,11 +826,6 @@ interface IElectronAPI {
       sessionId: string,
       enabled: boolean,
     ) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
-    listSessionSegments: (sessionId: string) => Promise<{
-      success: boolean;
-      segments?: import('@shared/cowork/sessionSegment').CoworkSessionSegment[];
-      error?: string;
-    }>;
     mutateSessionGoal: (
       sessionId: string,
       request: import('@shared/sessionGoal').SessionGoalMutationRequest,

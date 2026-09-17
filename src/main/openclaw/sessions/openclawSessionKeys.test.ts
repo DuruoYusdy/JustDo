@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest';
 
 import {
-  buildCoworkExecutionSessionKey,
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
   isCronSessionKey,
@@ -28,15 +27,6 @@ test('buildManagedSessionKey emits canonical local session keys', () => {
     `agent:${DEFAULT_MANAGED_AGENT_ID}:justdo:abc-123`,
   );
   expect(buildManagedSessionKey('abc-123', 'secondary')).toBe('agent:secondary:justdo:abc-123');
-});
-
-test('execution session keys still resolve to the owning local session', () => {
-  const key = buildCoworkExecutionSessionKey('abc-123', 'implementation-1', 'secondary');
-  expect(parseManagedSessionKey(key)).toEqual({
-    agentId: 'secondary',
-    sessionId: 'abc-123',
-  });
-  expect(isManagedSessionKey(key)).toBe(true);
 });
 
 test('isCronSessionKey recognizes cron session keys', () => {

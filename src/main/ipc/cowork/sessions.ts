@@ -628,13 +628,12 @@ export const registerCoworkSessionHandlers = ({
         .map(handoff => handoff.artifact.workspaceRoot)
         .filter((root): root is string => typeof root === 'string');
       if (persistedSession?.cwd) planWorkspaceRoots.push(persistedSession.cwd);
-      const segmentKeys = store.listSessionSegments(sessionId).map(segment => segment.sessionKey);
       store.deleteSession(sessionId);
       try {
         getCoworkEngineRouter().onSessionDeleted(
           sessionId,
           agentId,
-          segmentKeys,
+          [],
           planWorkspaceRoots,
         );
       } catch {
@@ -682,21 +681,10 @@ export const registerCoworkSessionHandlers = ({
         return { success: false, error: 'Wait for the current session to finish before copying.' };
       }
 
-      const segments = store
-        .listSessionSegments(sourceSessionId)
-        .slice()
-        .sort((left, right) => right.ordinal - left.ordinal);
-      const activeSegment = segments
-        .find(segment => segment.endedAt === undefined);
-      if (segments.length > 0 && !activeSegment) {
-        throw new Error('The source session has no active transcript segment.');
-      }
-      const parentSessionKey =
-        activeSegment?.sessionKey ??
-        buildManagedSessionKey(
-          sourceSessionId,
-          source.agentId || DEFAULT_MANAGED_AGENT_ID,
-        );
+      const parentSessionKey = buildManagedSessionKey(
+        sourceSessionId,
+        source.agentId || DEFAULT_MANAGED_AGENT_ID,
+      );
       copiedSession = store.createSession(
         title,
         source.cwd,
@@ -780,12 +768,6 @@ export const registerCoworkSessionHandlers = ({
           ],
         ]),
       );
-      const segmentKeys = new Map(
-        sessionIds.map(sessionId => [
-          sessionId,
-          store.listSessionSegments(sessionId).map(segment => segment.sessionKey),
-        ]),
-      );
       await Promise.all(
         sessionIds.map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
       );
@@ -796,7 +778,7 @@ export const registerCoworkSessionHandlers = ({
           router.onSessionDeleted(
             sessionId,
             agentIds.get(sessionId) || 'main',
-            segmentKeys.get(sessionId),
+            [],
             planWorkspaceRoots.get(sessionId),
           );
         } catch {

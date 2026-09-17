@@ -152,29 +152,6 @@ describe('ApprovedPlanArtifactStore', () => {
     expect(store.readVerified(otherWorkspace, reference)).toBe('# Bound plan');
   });
 
-  it('reads a legacy AppData artifact so an existing handoff can migrate', () => {
-    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-approved-plan-workspace-'));
-    const legacyUserDataPath = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'justdo-approved-plan-legacy-'),
-    );
-    temporaryDirectories.push(workspaceRoot, legacyUserDataPath);
-    const store = new ApprovedPlanArtifactStore(legacyUserDataPath);
-    const markdown = '# Legacy plan';
-    const relativePath = path.join('plans', 'v1', 'session-1', 'plan-1.md');
-    fs.mkdirSync(path.dirname(path.join(legacyUserDataPath, relativePath)), { recursive: true });
-    fs.writeFileSync(path.join(legacyUserDataPath, relativePath), markdown);
-
-    expect(
-      store.readVerified(workspaceRoot, {
-        sessionId: 'session-1',
-        planId: 'plan-1',
-        relativePath,
-        sha256: crypto.createHash('sha256').update(markdown).digest('hex'),
-        byteLength: Buffer.byteLength(markdown),
-      }),
-    ).toBe(markdown);
-  });
-
   it('enforces the UTF-8 byte limit after line-ending normalization', () => {
     const { store, workspaceRoot } = createStore();
 

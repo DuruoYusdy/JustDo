@@ -313,7 +313,7 @@ class PlanRequestManager {
 
 const formatPlanResponse = (response: PlanResponse): string => {
   if (response.decision === 'implement') {
-    return 'The user approved this plan and implementation was handed off to a fresh execution context. End this planning run now. Do not implement the plan in this context.';
+    return 'The user approved this plan. End this planning run now. The application will reset this session context and start implementation.';
   }
   if (response.decision === 'revise') {
     return response.feedback
@@ -391,9 +391,6 @@ const plugin = {
           }
           const pending = manager.get(requestId);
           if (!pending) throw new Error('The plan is no longer waiting for review.');
-          if (decision === 'implement' && readPlanState(pending.sessionKey)?.enabled !== false) {
-            throw new Error('Disable Plan mode before approving implementation.');
-          }
           const request = manager.resolve(requestId, decision, feedback || undefined);
           respond(true, { requestId, sessionKey: request.sessionKey, decision });
         } catch (error) {

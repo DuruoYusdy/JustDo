@@ -63,13 +63,14 @@ const PermissionModeSelector: React.FC<PermissionModeSelectorProps> = ({
     currentSession ? state.cowork.planModeBySession[currentSession.id] : undefined,
   );
   const planEnabled = currentSession ? (sessionPlanMode ?? false) : newSessionPlanMode;
+  const selectorDisabled = disabled && !planEnabled;
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmingFullAccess, setConfirmingFullAccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const disabledRef = useRef(disabled);
-  disabledRef.current = disabled;
+  const disabledRef = useRef(selectorDisabled);
+  disabledRef.current = selectorDisabled;
   const runActiveRef = useRef(runActive);
   runActiveRef.current = runActive;
 
@@ -110,13 +111,13 @@ const PermissionModeSelector: React.FC<PermissionModeSelectorProps> = ({
   }, [isOpen]);
 
   useEffect(() => {
-    if (!disabled) return;
+    if (!selectorDisabled) return;
     setIsOpen(false);
     setConfirmingFullAccess(false);
-  }, [disabled]);
+  }, [selectorDisabled]);
 
   const handleSelect = async (option: SelectorOption): Promise<void> => {
-    if (disabled || isSaving) return;
+    if (selectorDisabled || isSaving) return;
     if (option.kind === 'plan') {
       if (runActive || planEnabled) {
         setIsOpen(false);
@@ -198,7 +199,7 @@ const PermissionModeSelector: React.FC<PermissionModeSelectorProps> = ({
     <div ref={containerRef} className="relative flex-shrink-0">
       <button
         type="button"
-        disabled={disabled || isSaving}
+        disabled={selectorDisabled || isSaving}
         onClick={() => {
           setError(null);
           setConfirmingFullAccess(false);

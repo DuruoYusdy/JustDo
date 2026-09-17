@@ -6,7 +6,6 @@ import type { CoworkPlanArtifactReference } from '../../../shared/cowork/planHan
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 
 export const APPROVED_PLAN_ARTIFACT_DIRECTORY = path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans');
-const LEGACY_APPROVED_PLAN_ARTIFACT_DIRECTORY = path.join('plans', 'v1');
 export const MAX_APPROVED_PLAN_ARTIFACT_BYTES = 2 * 1024 * 1024;
 
 const MANAGED_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -80,8 +79,6 @@ const syncDirectoryBestEffort = (directory: string): void => {
 };
 
 export class ApprovedPlanArtifactStore {
-  constructor(private readonly legacyUserDataPath?: string) {}
-
   publish(input: PublishApprovedPlanArtifactInput): ApprovedPlanArtifactReference {
     const workspaceRoot = this.assertWorkspaceRoot(input.workspaceRoot);
     assertManagedId(input.sessionId, 'sessionId');
@@ -171,19 +168,6 @@ export class ApprovedPlanArtifactStore {
     const artifactRoot = path.join(resolvedWorkspaceRoot, APPROVED_PLAN_ARTIFACT_DIRECTORY);
     if (!fs.existsSync(artifactRoot)) return false;
     this.assertStorageRoot(resolvedWorkspaceRoot);
-    return this.removeManagedSessionDirectory(artifactRoot, sessionId);
-  }
-
-  removeLegacySessionArtifacts(sessionId: string): boolean {
-    assertManagedId(sessionId, 'sessionId');
-    if (!this.legacyUserDataPath || !path.isAbsolute(this.legacyUserDataPath)) return false;
-    const artifactRoot = path.join(
-      this.legacyUserDataPath,
-      LEGACY_APPROVED_PLAN_ARTIFACT_DIRECTORY,
-    );
-    if (!fs.existsSync(artifactRoot)) return false;
-    assertPlainDirectory(path.join(this.legacyUserDataPath, 'plans'));
-    assertPlainDirectory(artifactRoot);
     return this.removeManagedSessionDirectory(artifactRoot, sessionId);
   }
 
@@ -293,25 +277,7 @@ export class ApprovedPlanArtifactStore {
         'Approved plan artifact metadata is invalid.',
       );
     }
-    const legacyRelativePath = path.join(
-      LEGACY_APPROVED_PLAN_ARTIFACT_DIRECTORY,
-      reference.sessionId,
-      `${reference.planId}.md`,
-    );
-    const isLegacyReference =
-      !reference.workspaceRoot && reference.relativePath === legacyRelativePath;
-    if (isLegacyReference) {
-      if (!this.legacyUserDataPath || !path.isAbsolute(this.legacyUserDataPath)) {
-        throw new ApprovedPlanArtifactError(
-          'invalid_reference',
-          'Legacy approved plan storage is unavailable.',
-        );
-      }
-      return path.resolve(this.legacyUserDataPath, reference.relativePath);
-    }
-    const artifactWorkspaceRoot = reference.workspaceRoot
-      ? this.assertWorkspaceRoot(reference.workspaceRoot)
-      : workspaceRoot;
+    const artifactWorkspaceRoot = this.assertWorkspaceRoot(reference.workspaceRoot);
     const expectedRelativePath = path.join(
       APPROVED_PLAN_ARTIFACT_DIRECTORY,
       reference.sessionId,

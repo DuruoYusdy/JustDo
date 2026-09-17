@@ -88,11 +88,9 @@ describe('cowork interaction responses', () => {
       vi.fn().mockResolvedValue({ success: false, error: 'plan resolve response lost' }),
     ],
     ['rejects the IPC call', vi.fn().mockRejectedValue(new Error('transport closed'))],
-  ])('refreshes session segments when implementation admission %s', async (_name, respond) => {
-    const dispatchEvent = vi.fn();
+  ])('keeps plan approval retryable when implementation admission %s', async (_name, respond) => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.stubGlobal('window', {
-      dispatchEvent,
       electron: {
         cowork: {
           respondToInteraction: respond,
@@ -116,12 +114,6 @@ describe('cowork interaction responses', () => {
       }),
     ).resolves.toBe(false);
 
-    expect(dispatchEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'justdo:plan-implementation-started',
-        detail: { sessionId: 'session-plan' },
-      }),
-    );
     expect(store.getState().cowork.pendingInteractions).toHaveLength(1);
   });
 
@@ -154,6 +146,33 @@ describe('cowork interaction responses', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
     expect(respondToInteraction).toHaveBeenCalledTimes(1);
+  });
+
+  test('cancels a pending Plan review before leaving Plan mode', async () => {
+    const respondToInteraction = vi.fn().mockResolvedValue({ success: true });
+    const setPlanModeIpc = vi.fn().mockResolvedValue({ success: true, enabled: false });
+    vi.stubGlobal('window', {
+      electron: { cowork: { respondToInteraction, setPlanMode: setPlanModeIpc } },
+    });
+    store.dispatch(setPlanMode({ sessionId: 'session-plan', enabled: true }));
+    store.dispatch(
+      enqueuePendingInteraction({
+        sessionId: 'session-plan',
+        requestId: 'plan-switch-mode',
+        toolName: 'PresentPlan',
+        interactionKind: 'plan-approval',
+        toolInput: { plan: 'Review before switching modes' },
+      }),
+    );
+
+    await expect(coworkService.setPlanMode('session-plan', false)).resolves.toBe(true);
+
+    expect(respondToInteraction).toHaveBeenCalledWith({
+      requestId: 'plan-switch-mode',
+      result: { behavior: 'plan', decision: 'cancel' },
+    });
+    expect(setPlanModeIpc).toHaveBeenCalledWith('session-plan', false);
+    expect(store.getState().cowork.pendingInteractions).toHaveLength(0);
   });
 });
 
@@ -256,9 +275,7 @@ describe('cowork session startup', () => {
     });
     expect(
       store.getState().cowork.sessions.filter(session => session.id === canonicalSession.id),
-    ).toEqual([
-      expect.objectContaining({ id: canonicalSession.id, status: 'running' }),
-    ]);
+    ).toEqual([expect.objectContaining({ id: canonicalSession.id, status: 'running' })]);
     expect(store.getState().cowork.currentSessionId).toBe(canonicalSession.id);
   });
 });

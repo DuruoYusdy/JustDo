@@ -543,8 +543,6 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:planMode:get', sessionId),
     setPlanMode: (sessionId: string, enabled: boolean) =>
       ipcRenderer.invoke('cowork:session:planMode:set', { sessionId, enabled }),
-    listSessionSegments: (sessionId: string) =>
-      ipcRenderer.invoke('cowork:session:segments:list', sessionId),
     mutateSessionGoal: (sessionId: string, request: SessionGoalMutationRequest) =>
       ipcRenderer.invoke(SessionGoalIpc.Mutate, sessionId, request),
     getGoalExecution: (sessionId: string) => ipcRenderer.invoke(GoalExecutionIpc.Get, sessionId),

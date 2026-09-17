@@ -143,10 +143,6 @@ export class JustDoChatElement extends LitElement {
   @property({ attribute: false })
   declare activeTurn: AssistantTurn | null;
 
-  /** Read-only transcript segments that precede the active controller session. */
-  @property({ type: Array, attribute: false })
-  declare historyPrefixMessages: GatewayMessage[];
-
   @property({ type: String, attribute: false })
   declare stream: string | null;
 
@@ -223,10 +219,6 @@ export class JustDoChatElement extends LitElement {
   private projectedActiveHistorySource: GatewayMessage[] | null = null;
   private projectedActiveTurnKey = '';
   private projectedActiveMessages: GatewayMessage[] = [];
-  private combinedHistoryPrefix: GatewayMessage[] | null = null;
-  private combinedActiveHistory: GatewayMessage[] | null = null;
-  private combinedPersistedMessages: GatewayMessage[] = [];
-  private historyPrefixRevision = 0;
   private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
@@ -254,7 +246,6 @@ export class JustDoChatElement extends LitElement {
     super();
     this.messages = [];
     this.activeTurn = null;
-    this.historyPrefixMessages = [];
     this.stream = null;
     this.streamStartedAt = null;
     this.isStreaming = false;
@@ -3119,24 +3110,6 @@ export class JustDoChatElement extends LitElement {
       );
     }
     let messages = this.projectedActiveMessages;
-    if (ctrl && this.historyPrefixMessages.length > 0) {
-      if (
-        this.combinedHistoryPrefix !== this.historyPrefixMessages ||
-        this.combinedActiveHistory !== this.projectedActiveMessages
-      ) {
-        this.combinedHistoryPrefix = this.historyPrefixMessages;
-        this.combinedActiveHistory = this.projectedActiveMessages;
-        this.combinedPersistedMessages = [
-          ...this.historyPrefixMessages,
-          ...this.projectedActiveMessages,
-        ];
-      }
-      messages = this.combinedPersistedMessages;
-    } else {
-      this.combinedHistoryPrefix = null;
-      this.combinedActiveHistory = null;
-      this.combinedPersistedMessages = [];
-    }
     const persistedMessages = messages;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
     this.actionableUserEntryId =
@@ -3479,7 +3452,6 @@ export class JustDoChatElement extends LitElement {
 
   protected updated(changedProperties?: Map<string | number | symbol, unknown>): void {
     traceTimelineDom(this._controller?.state.sessionKey ?? '', this.shadowRoot);
-    if (changedProperties?.has('historyPrefixMessages')) this.historyPrefixRevision += 1;
     this.syncActiveTurnClock();
     if (changedProperties?.has('processSummariesExpanded')) {
       this.openProcessSummaryKey = null;
@@ -3530,7 +3502,7 @@ export class JustDoChatElement extends LitElement {
       this.activeSearchIndex = -1;
       this.clearSearchMarks();
     }
-    const searchEnhancementKey = `${this.searchQuery}:${this.searchCaseSensitive}:${transcriptRevision}:${this.historyPrefixRevision}:${activeContentDisplaySignature}`;
+    const searchEnhancementKey = `${this.searchQuery}:${this.searchCaseSensitive}:${transcriptRevision}:${activeContentDisplaySignature}`;
     if (searchEnhancementKey !== this.lastSearchEnhancementKey) {
       this.lastSearchEnhancementKey = searchEnhancementKey;
       requestAnimationFrame(() => this.emitSearchMatchCount());

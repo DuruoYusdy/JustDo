@@ -213,7 +213,7 @@ pending promise、同一 session 只允许一个待答请求、timeout/default�
 
 ## 10. Plan mode Extension
 
-`plan-mode` extension 通过 session extension 的 `justdoPlanMode` 投影读取持久化模式，通过 `agent_turn_prepare` 注入只读规划规则，并注册 `PresentPlan` 阻塞工具。计划审核 pending promise 留在 extension 内；Main 把 `plugin.plan-mode.requested/resolved` 转成既有 interaction IPC，并把计划持久化到当前 workspace 中由 productName 小写派生的隐藏目录。Main 只有在 artifact、handoff 和同一 extension state 中的 `awaitingReview` 标记都已落盘后才展示侧栏。批准后由 Main 创建独立、空 transcript 的 implementation session，并注入 `Implement the plan.`、相对文件路径和完整计划正文；`planMode.resolve` 只让旧规划 run 安全结束。该设计不复制 OpenClaw 消息，也不拥有专用的 Gateway restart-recovery patch；完整应用重启按通用 app-start boundary 中断旧 run，持久 artifact 和 handoff 仍可恢复侧栏。
+`plan-mode` extension 通过 session extension 的 `justdoPlanMode` 投影读取持久化模式，通过 `agent_turn_prepare` 注入只读规划规则，并注册 `PresentPlan` 阻塞工具。计划审核 pending promise 留在 extension 内；Main 把 `plugin.plan-mode.requested/resolved` 转成既有 interaction IPC，并把计划持久化到当前 workspace 中由 productName 小写派生的隐藏目录。Main 只有在 artifact、handoff 和同一 extension state 中的 `awaitingReview` 标记都已落盘后才展示侧栏。批准时 `planMode.resolve` 只让规划 run 安全结束；Main 随后用原生 `sessions.reset` 在同一 session transcript 中建立上下文边界，再注入隐藏的 `Implement the plan.`、相对文件路径和完整计划正文。该设计不复制 OpenClaw 消息，也不拥有专用的 Gateway restart-recovery patch；完整应用重启按通用 app-start boundary 中断旧 run，持久 artifact 和 handoff 仍可恢复侧栏。
 
 ## 11. Marketplace Adapter
 

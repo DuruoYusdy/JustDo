@@ -906,19 +906,6 @@ export class CoworkService {
     } catch (error) {
       console.error('Failed to respond to interaction:', error);
       return false;
-    } finally {
-      if (
-        result.behavior === 'plan' &&
-        result.decision === 'implement' &&
-        interaction &&
-        typeof window.dispatchEvent === 'function'
-      ) {
-        window.dispatchEvent(
-          new CustomEvent('justdo:plan-implementation-started', {
-            detail: { sessionId: interaction.sessionId },
-          }),
-        );
-      }
     }
   }
 
@@ -930,6 +917,24 @@ export class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
     try {
+      if (!enabled) {
+        const pendingPlan = store
+          .getState()
+          .cowork.pendingInteractions.find(
+            interaction =>
+              interaction.sessionId === sessionId &&
+              interaction.interactionKind === 'plan-approval',
+          );
+        if (
+          pendingPlan &&
+          !(await this.respondToInteraction(pendingPlan.requestId, {
+            behavior: 'plan',
+            decision: 'cancel',
+          }))
+        ) {
+          return false;
+        }
+      }
       const result = await cowork.setPlanMode(sessionId, enabled);
       if (!result.success) return false;
       store.dispatch(setPlanModeState({ sessionId, enabled: result.enabled === true }));

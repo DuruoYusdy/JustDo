@@ -71,11 +71,16 @@ export class SqliteStore {
       { value: string } | undefined;
     if (!row) return;
     let config: unknown;
-    try { config = JSON.parse(row.value); } catch { return; }
+    try {
+      config = JSON.parse(row.value);
+    } catch {
+      return;
+    }
     const protectedConfig = transformAppConfigCredentials(config, 'encrypt', safeStorage);
     if (JSON.stringify(config) === JSON.stringify(protectedConfig)) return;
     this.db.pragma('secure_delete = ON');
-    this.db.prepare('UPDATE kv SET value = ?, updated_at = ? WHERE key = ?')
+    this.db
+      .prepare('UPDATE kv SET value = ?, updated_at = ? WHERE key = ?')
       .run(JSON.stringify(protectedConfig), Date.now(), 'app_config');
     this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
@@ -180,43 +185,48 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_session_runs', 'accepted_at', 'INTEGER');
 
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS cowork_session_segments (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        session_key TEXT NOT NULL UNIQUE,
-        gateway_session_id TEXT,
-        phase TEXT NOT NULL,
-        plan_id TEXT,
-        ordinal INTEGER NOT NULL,
-        started_at INTEGER NOT NULL,
-        ended_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE,
-        UNIQUE (session_id, ordinal)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_cowork_session_segments_session_ordinal
-        ON cowork_session_segments(session_id, ordinal);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_session_segments_active
-        ON cowork_session_segments(session_id)
-        WHERE ended_at IS NULL;
-    `);
+    // The former dual-session Plan design stored one globally unique
+    // implementation key per handoff and a separate transcript lineage table.
+    // Same-session reset deliberately does not preserve that Plan-only data.
+    this.db.exec('DROP TABLE IF EXISTS cowork_session_segments;');
+    const existingPlanHandoffColumns = this.db.pragma('table_info(cowork_plan_handoffs)') as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const existingPlanHandoffIndexes = this.db.pragma(
+      'index_list(cowork_plan_handoffs)',
+    ) as Array<{ name: string; unique: number }>;
+    const hasUniqueImplementationSessionKey = existingPlanHandoffIndexes.some(
+      index =>
+        index.unique === 1 &&
+        (
+          this.db
+            .prepare('SELECT name FROM pragma_index_info(?)')
+            .all(index.name) as Array<{ name: string }>
+        ).some(column => column.name === 'implementation_session_key'),
+    );
+    if (
+      existingPlanHandoffColumns.length > 0 &&
+      (existingPlanHandoffColumns.find(column => column.name === 'artifact_workspace_root')
+        ?.notnull !== 1 ||
+        hasUniqueImplementationSessionKey)
+    ) {
+      this.db.exec('DROP TABLE cowork_plan_handoffs;');
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_plan_handoffs (
         plan_id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
         planning_session_key TEXT NOT NULL,
-        artifact_workspace_root TEXT,
+        artifact_workspace_root TEXT NOT NULL,
         artifact_relative_path TEXT NOT NULL UNIQUE,
         artifact_sha256 TEXT NOT NULL,
         artifact_byte_length INTEGER NOT NULL,
         state TEXT NOT NULL CHECK (
           state IN ('presented', 'dispatching', 'admitted', 'resolved', 'failed')
         ),
-        implementation_session_key TEXT UNIQUE,
+        implementation_session_key TEXT,
         implementation_gateway_session_id TEXT,
         implementation_run_id TEXT,
         error TEXT,
@@ -236,7 +246,6 @@ export class SqliteStore {
         ON cowork_plan_handoffs(session_id)
         WHERE state IN ('presented', 'dispatching', 'admitted');
     `);
-    this.ensureColumn('cowork_plan_handoffs', 'artifact_workspace_root', 'TEXT');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_config (
@@ -428,16 +437,15 @@ export class SqliteStore {
       console.warn(`[SqliteStore] Failed to parse stored JSON for ${key}`);
       return undefined;
     }
-    return (key === 'app_config'
-      ? transformAppConfigCredentials(value, 'decrypt', safeStorage)
-      : value) as T;
+    return (
+      key === 'app_config' ? transformAppConfigCredentials(value, 'decrypt', safeStorage) : value
+    ) as T;
   }
 
   set<T = unknown>(key: string, value: T): void {
     const oldValue = this.get<T>(key);
-    const persistedValue = key === 'app_config'
-      ? transformAppConfigCredentials(value, 'encrypt', safeStorage)
-      : value;
+    const persistedValue =
+      key === 'app_config' ? transformAppConfigCredentials(value, 'encrypt', safeStorage) : value;
     const now = Date.now();
     this.db
       .prepare(

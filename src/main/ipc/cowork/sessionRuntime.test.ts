@@ -1000,35 +1000,3 @@ describe('session Plan mode IPC', () => {
     expect(setPlanMode).toHaveBeenCalledWith('session-1', false);
   });
 });
-
-describe('session transcript segments IPC', () => {
-  it('returns ordered segment lineage without transcript messages', async () => {
-    electronMocks.handle.mockClear();
-    const segments = [
-      {
-        id: 'planning-session-1',
-        sessionId: 'session-1',
-        sessionKey: 'agent:main:justdo:session-1',
-        phase: 'planning',
-        ordinal: 0,
-        startedAt: 1,
-        endedAt: 2,
-        createdAt: 1,
-        updatedAt: 2,
-      },
-    ];
-    const listSessionSegments = vi.fn().mockReturnValue(segments);
-    registerCoworkSessionRuntimeHandlers({
-      getCoworkStore: () => ({ listSessionSegments }) as never,
-      getCoworkEngineRouter: vi.fn() as never,
-      getRuntime: () => null,
-      getGatewaySessionUsage: vi.fn() as never,
-    });
-    const handler = electronMocks.handle.mock.calls.find(
-      ([channel]) => channel === 'cowork:session:segments:list',
-    )?.[1] as ((event: unknown, sessionId: string) => unknown) | undefined;
-
-    expect(await handler?.({}, ' session-1 ')).toEqual({ success: true, segments });
-    expect(listSessionSegments).toHaveBeenCalledWith('session-1');
-  });
-});

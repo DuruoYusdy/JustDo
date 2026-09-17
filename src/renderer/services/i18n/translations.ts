@@ -1062,7 +1062,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportFailed: '导出会话失败，请稍后重试',
     coworkExportTooLarge: '导出内容超过 50 MB，请取消附带原始消息后重试',
     coworkExportHistoryLoading: '会话历史仍在加载，请稍后再试',
-    coworkSessionRoutingLoading: '会话执行上下文仍在加载，请稍后再试',
     coworkExportWaitForCompletion: '请等待当前回复完成后再导出',
     coworkCopySession: '复制当前会话',
     coworkCopySessionTitle: '{title}（副本）',
@@ -3487,8 +3486,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkExportFailed: 'Failed to export the session. Please try again.',
     coworkExportTooLarge: 'The export exceeds 50 MB. Try again without raw messages.',
     coworkExportHistoryLoading: 'Session history is still loading. Please try again shortly.',
-    coworkSessionRoutingLoading:
-      'The session execution context is still loading. Please try again shortly.',
     coworkExportWaitForCompletion: 'Wait for the current response to finish before exporting',
     coworkCopySession: 'Copy current session',
     coworkCopySessionTitle: '{title} (copy)',

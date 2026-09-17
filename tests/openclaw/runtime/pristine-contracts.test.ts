@@ -39,6 +39,7 @@ const EXPECTED_PATCH_FILES = [
   '019-disable-configured-plugin-auto-install.cjs',
   '020-openai-realtime-transcription-base-url.cjs',
   '021-isolated-openai-compatible-media-providers.cjs',
+  '022-justdo-reset-display-history.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

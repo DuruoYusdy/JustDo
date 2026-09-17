@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
 import { projectTurnItems } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
 
@@ -2654,45 +2655,6 @@ test('replaces truncated OpenClaw history previews with complete messages', asyn
     sessionKey,
     messageId: 'assistant-2',
     maxChars: 2_000_000,
-  });
-});
-
-test('loads every closed transcript segment page without switching the live session', async () => {
-  const closedKey = 'agent:main:justdo:session-1';
-  const request = vi.fn().mockImplementation((method: string, params: unknown) => {
-    if (method !== 'chat.history') return Promise.resolve({});
-    const offset = (params as { offset?: number }).offset;
-    return offset === undefined
-      ? Promise.resolve({
-          messages: [{ role: 'assistant', id: 'newer', content: 'newer planning message' }],
-          hasMore: true,
-          nextOffset: 1,
-        })
-      : Promise.resolve({
-          messages: [{ role: 'user', id: 'older', content: 'older planning message' }],
-          hasMore: false,
-        });
-  });
-  const controller = new ChatController();
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
-  controller.state.sessionKey = 'agent:main:justdo:session-1:execution:plan-1';
-
-  await expect(controller.loadTranscriptSegment(closedKey)).resolves.toMatchObject([
-    { id: 'older', content: 'older planning message' },
-    { id: 'newer', content: 'newer planning message' },
-  ]);
-  expect(controller.state.sessionKey).toBe('agent:main:justdo:session-1:execution:plan-1');
-  expect(request).toHaveBeenNthCalledWith(1, 'chat.history', {
-    sessionKey: closedKey,
-    limit: 250,
-    maxChars: 500_000,
-  });
-  expect(request).toHaveBeenNthCalledWith(2, 'chat.history', {
-    sessionKey: closedKey,
-    limit: 250,
-    maxChars: 500_000,
-    offset: 1,
   });
 });
 
@@ -9155,6 +9117,69 @@ test('invalidates in-flight history when sessions.changed rotates the session id
   expect(controller.state.currentSessionId).toBe('sid-new');
   expect(controller.state.transcript.historyGeneration).toBe(generation + 1);
   expect(controller.state.transcript.activeTurn).toBeNull();
+});
+
+test('preserves loaded Plan history across a same-session reset and shows the phase boundary immediately', () => {
+  const sessionKey = 'agent:main:justdo:session-1';
+  const messages = [
+    { role: 'user', content: 'plan this change', __openclaw: { id: 'user-1' } },
+  ];
+  const controller = new ChatController();
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = 'sid-1';
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.state.transcript.sessionId = 'sid-1';
+  (
+    controller as unknown as {
+      setCurrentSessionMessages(
+        next: unknown[],
+        options: { resetLoadedHistory: boolean },
+      ): void;
+    }
+  ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
+  beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'planning-run', sessionId: 'sid-1' },
+    { now: () => 1_000, createId: prefix => `${prefix}-1` },
+  );
+  controller.preparePlanImplementationReset({
+    requestId: 'plan-1',
+    toolName: 'PresentPlan',
+    toolInput: { title: 'Plan', plan: '# Plan' },
+  });
+
+  (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey, sessionId: 'sid-1', reason: 'reset' },
+  });
+
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  expect(controller.state.chatMessages).toEqual([
+    ...messages,
+    expect.objectContaining({
+      role: 'assistant',
+      content: [
+        expect.objectContaining({
+          type: 'toolcall',
+          name: 'PresentPlan',
+          input: { title: 'Plan', plan: '# Plan' },
+        }),
+      ],
+    }),
+    expect.objectContaining({
+      role: 'system',
+      __openclaw: expect.objectContaining({ kind: 'reset', planImplementation: true }),
+    }),
+  ]);
+  expect(projectPersistedTimeline(controller.state.chatMessages as never[]).map(item => item.kind)).toEqual([
+    'history-message',
+    'plan-presentation',
+    'phase-boundary',
+  ]);
 });
 
 test('reloads history for a sessions.changed message invalidation without a row payload', async () => {

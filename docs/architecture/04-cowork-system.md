@@ -38,7 +38,7 @@ Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话�
 
 `cowork_session_runs` 用唯一 `client_turn_id` 防止双击或 IPC 重试创建第二个 session；Gateway 接受后将真实 `root_run_id` 绑定到 receipt。事件优先按 run id 映射，必要时再按受管 session key 解析。任意远端 key 不得自动映射到本地 session。
 
-Plan mode 批准后，一个 local `sessionId` 会按顺序关联多个 `cowork_session_segments`。规划段使用原 canonical key；实施段使用 `agent:<agent>:justdo:<localSessionId>:execution:<planId>`。每段都有独立 Gateway session/transcript，active segment 决定后续发送目标；key parser 始终还原同一个 local sessionId。这样实施模型得到干净上下文，同时旧规划 transcript 仍可从 Gateway 分页读取。
+Plan mode 的规划与实施始终使用同一个 canonical Gateway session key 和同一个 Gateway `sessionId`。批准后，Main 先让 `PresentPlan` 返回并等待规划 run 结束，再调用 OpenClaw 原生 `sessions.reset` 写入 transcript reset boundary。Patch 022 只对 `agent:<agent>:justdo:*` 会话调整 display-history window，使 `chat.history` 跨该 boundary 显示规划消息；OpenClaw 的 model-context window 仍从最新 boundary 之后开始。随后 Main 在同一 session 中发送隐藏的 `Implement the plan.` 消息，其中包含持久化计划文件路径和完整正文。
 
 ## 4. Session 数据模型
 
@@ -107,7 +107,7 @@ Renderer 的发送准备、Gateway 受理和 Stop 共享会话级操作身份。
 
 发送明确拒绝会结算 Main receipt 并保留草稿。传输超时或断连只能证明受理结果未知，保留原操作身份，通过 Gateway 活动快照和 `agent.wait` 的权威终态恢复；不得把未知请求伪造为成功受理，也不得直接结算 failed。显式停止确认后可结算从未发出的 aborted receipt；已发出但受理未知的请求通过专用生命周期 IPC 保留取消意图，两个 `no-active-run` 也不能证明该请求以后不会被受理。`agent.wait` 的 yielded 证明已受理但不代表整项任务结束，应交回主任务／后代聚合；取消中的 yielded 先确认会话级清队列和子树停止。
 
-删除 session 的顺序包括停止活动、删除本地 row（级联 runs 和 segment lineage）、通知 adapter 清映射，并递归删除受管 segment/subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
+删除 session 的顺序包括停止活动、删除本地 row（级联 runs 和 Plan handoff）、通知 adapter 清映射，并递归删除受管 session/subagent transcript；不能删除通用 `:main` 或不属于本产品的 Gateway session。
 
 业务终态来自明确 chat/lifecycle/runtime 证据。WebSocket disconnect 只触发连接恢复和必要的错误提示，不能自动将所有 run 标成 error。Renderer 在终态后直接刷新 Gateway history，以权威 final text、usage、thinking 和 tool 结果校正活动 timeline。
 
@@ -147,9 +147,9 @@ Main 不再拥有 `HistoryReconciler` 或消息 CRUD。Renderer controller 统�
 
 这些显示状态不写入 SQLite 或 Redux。导出从当前 controller 的 Gateway 快照生成；会话详情、用量、定时任务结果和 subagent history 由 Main 按需查询 Gateway，查询结果不回填 CoworkStore。
 
-最后一条持久化用户消息的修改与撤回直接使用 OpenClaw `sessions.rewind`。Renderer 只对当前 active segment 中带原生 entry id 的最后一条用户消息显示操作；断连、运行、压缩或 history 换页期间不允许修改。Controller 在发出破坏性请求前再次校验 entry 仍是最后一条持久化用户消息。Gateway 把 branch repoint 到该消息之前，Controller 随即清空旧投影并重新加载权威 history；刷新失败时仍先返回并保存已恢复草稿，再安排 history 重试。修改模式会移除内部 browser context envelope、恢复本地 `MEDIA:` 文件和内联附件，并清除 composer 中不再匹配的浏览器标注；如果用户在请求期间切换会话，草稿只写回源会话。“撤回”丢弃 editor payload。两者都会移除目标消息之后的 assistant/tool 历史，但不会尝试回滚已经发生的文件、命令或外部副作用。
+最后一条持久化用户消息的修改与撤回直接使用 OpenClaw `sessions.rewind`。Renderer 只对当前 transcript 中带原生 entry id 的最后一条用户消息显示操作；断连、运行、压缩或 history 换页期间不允许修改。Controller 在发出破坏性请求前再次校验 entry 仍是最后一条持久化用户消息。Gateway 把 branch repoint 到该消息之前，Controller 随即清空旧投影并重新加载权威 history；刷新失败时仍先返回并保存已恢复草稿，再安排 history 重试。修改模式会移除内部 browser context envelope、恢复本地 `MEDIA:` 文件和内联附件，并清除 composer 中不再匹配的浏览器标注；如果用户在请求期间切换会话，草稿只写回源会话。“撤回”丢弃 editor payload。两者都会移除目标消息之后的 assistant/tool 历史，但不会尝试回滚已经发生的文件、命令或外部副作用。
 
-“复制当前会话”由 Main 同时协调产品元数据与 Gateway transcript：仅在 Main 与 subagent 活动状态可确认且均空闲时，先按原 session 的 cwd、agent、model、permission 和 skills 创建新的 `cowork_sessions` row，再以新 managed key 调用 `sessions.create {parentSessionKey,fork:true}`，复制当前 active branch 的完整已持久化历史。Gateway fork 不显式覆盖 model，使原生 session selection（包括 thinking、context window、tool override 和 auth selection）一并继承；产品 row 仍保存对应的本地 model ref。Plan mode 已产生多 segment 时只复制当前 active segment。创建后再次通过 adapter adoption 核对 workspace/permission 边界；任何失败都会删除新本地 row，并对可能已经创建的远端 key 做 best-effort 清理。复制期间若用户切换会话，新副本仍加入列表但不会抢占当前选择；复制得到独立的新产品会话，不复制本地 run receipt、Goal execution snapshot、分组或置顶状态。
+“复制当前会话”由 Main 同时协调产品元数据与 Gateway transcript：仅在 Main 与 subagent 活动状态可确认且均空闲时，先按原 session 的 cwd、agent、model、permission 和 skills 创建新的 `cowork_sessions` row，再以新 managed key 调用 `sessions.create {parentSessionKey,fork:true}`，复制当前 active branch 的完整已持久化历史。Gateway fork 不显式覆盖 model，使原生 session selection（包括 thinking、context window、tool override 和 auth selection）一并继承；产品 row 仍保存对应的本地 model ref。创建后再次通过 adapter adoption 核对 workspace/permission 边界；任何失败都会删除新本地 row，并对可能已经创建的远端 key 做 best-effort 清理。复制期间若用户切换会话，新副本仍加入列表但不会抢占当前选择；复制得到独立的新产品会话，不复制本地 run receipt、Goal execution snapshot、分组或置顶状态。
 
 会话列表的“会话详情”通过专用 `cowork:session:details` IPC 读取 Gateway 精确 session row。Token 和实际请求模型使用 `sessions.usage` 的 `range=all`、instance 聚合；总 Token 优先使用 OpenClaw 的 canonical `totalTokens`，缺失时才把 input/output/cacheRead/cacheWrite 相加。摘要、可见用户/助手消息和工具调用次数从同一当前实例的完整 `chat.history` 投影计算；history 失败时整次统计失败，不能把原始 usage count 静默标成“可见消息”。同一原始记录跨分页重放时按投影记录身份合并，保证同名并行工具调用不会被去重；全量分页同时校验 `totalMessages` 并在末尾用 `deltaCursor` 追平，后续活动刷新只读取 delta，遇到 reset、compaction、分支或物理实例切换导致的 `kind=reset` 才丢弃快照重建。OpenClaw v2026.9.2 的 usage 外层缓存会 stale-while-revalidate：终态精确 key 查询使用 session revision 作为稳定 discriminator，活动会话每轮使用新 discriminator；一次查询的所有 fresh 重试复用同一值，避免每次重试污染缓存。合法的 `usage=null` 表示当前还没有 Token，而不是查询失败。终态会话的完整 history 只缓存当前一个 revision，`null` 或 reject 都不留失败缓存；活动会话逐次读取 history，避免同一 run 内 Token、消息和工具计数冻结。运行中详情在上一轮查询完成后才调度下一轮刷新。界面中的“最后活动”优先使用 session row 的 `lastActivityAt`，Session ID 只使用 Gateway `sessionId`，不能用通用 row `id` 或 `cowork_sessions.id` 代替。统计范围与当前 Session ID 一致，不跨 reset/rotation 的历史实例。
 

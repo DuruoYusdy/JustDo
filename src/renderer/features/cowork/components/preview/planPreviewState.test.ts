@@ -31,18 +31,13 @@ describe('planPreviewState', () => {
     expect(retainedPlanForSession(implementing, 'session-a')?.requestId).toBe('plan-a');
   });
 
-  test('removes an optimistic preview when implementation submission fails', () => {
+  test('retains an optimistic preview while implementation admission is uncertain', () => {
     const implementing = planPreviewReducer(initialPlanPreviewState, {
       type: 'implementation-started',
       interaction: plan('session-a', 'plan-a'),
     });
-    const failed = planPreviewReducer(implementing, {
-      type: 'implementation-failed',
-      sessionId: 'session-a',
-      requestId: 'plan-a',
-    });
 
-    expect(retainedPlanForSession(failed, 'session-a')).toBeNull();
+    expect(retainedPlanForSession(implementing, 'session-a')?.requestId).toBe('plan-a');
   });
 
   test('keeps retained plans isolated by session and allows reopening', () => {

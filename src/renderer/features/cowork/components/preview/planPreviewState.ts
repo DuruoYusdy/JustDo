@@ -8,7 +8,6 @@ export interface PlanPreviewState {
 export type PlanPreviewAction =
   | { type: 'pending-shown'; sessionId: string }
   | { type: 'implementation-started'; interaction: CoworkInteractionRequest }
-  | { type: 'implementation-failed'; sessionId: string; requestId: string }
   | { type: 'resolved-without-implementation'; sessionId: string }
   | { type: 'preview-opened'; interaction: CoworkInteractionRequest }
   | { type: 'closed' };
@@ -48,15 +47,6 @@ export function planPreviewReducer(
           [action.interaction.sessionId]: action.interaction,
         },
         openSessionId: action.interaction.sessionId,
-      };
-    case 'implementation-failed':
-      return {
-        ...state,
-        retainedBySessionId: withoutSession(
-          state.retainedBySessionId,
-          action.sessionId,
-          action.requestId,
-        ),
       };
     case 'resolved-without-implementation':
       return {

@@ -347,23 +347,6 @@ export const registerCoworkSessionRuntimeHandlers = ({
     SESSION_LOOKUP_CACHE_TTL_MS,
   );
 
-  ipcMain.handle('cowork:session:segments:list', (_event, sessionId: string) => {
-    try {
-      if (typeof sessionId !== 'string' || !sessionId.trim()) {
-        return { success: false, error: 'Session ID is required' };
-      }
-      return {
-        success: true,
-        segments: getCoworkStore().listSessionSegments(sessionId.trim()),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list session segments',
-      };
-    }
-  });
-
   ipcMain.handle(CoworkSessionDetailsIpc.Get, async (_event, sessionId: string) => {
     try {
       return await loadCoworkSessionDetails(

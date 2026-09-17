@@ -4,9 +4,6 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
-  type AdmitCoworkPlanHandoffInput,
-  type AdmittedCoworkPlanHandoff,
-  type CoworkPlanArtifactReference,
   type CoworkPlanHandoff,
   CoworkPlanHandoffState,
   type CreateCoworkPlanHandoffInput,
@@ -17,11 +14,6 @@ import type {
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
-import type {
-  BeginCoworkSessionSegmentInput,
-  CoworkSessionSegment,
-  CoworkSessionSegmentPhase,
-} from '../../shared/cowork/sessionSegment';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
@@ -169,25 +161,11 @@ interface SessionRunRow {
   ended_at: number | null;
 }
 
-interface SessionSegmentRow {
-  id: string;
-  session_id: string;
-  session_key: string;
-  gateway_session_id: string | null;
-  phase: CoworkSessionSegmentPhase;
-  plan_id: string | null;
-  ordinal: number;
-  started_at: number;
-  ended_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
 interface PlanHandoffRow {
   plan_id: string;
   session_id: string;
   planning_session_key: string;
-  artifact_workspace_root: string | null;
+  artifact_workspace_root: string;
   artifact_relative_path: string;
   artifact_sha256: string;
   artifact_byte_length: number;
@@ -217,20 +195,6 @@ const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
   state: row.state,
 });
 
-const mapSessionSegment = (row: SessionSegmentRow): CoworkSessionSegment => ({
-  id: row.id,
-  sessionId: row.session_id,
-  sessionKey: row.session_key,
-  ...(row.gateway_session_id ? { gatewaySessionId: row.gateway_session_id } : {}),
-  phase: row.phase,
-  ...(row.plan_id ? { planId: row.plan_id } : {}),
-  ordinal: row.ordinal,
-  startedAt: row.started_at,
-  ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
-
 const mapPlanHandoff = (row: PlanHandoffRow): CoworkPlanHandoff => ({
   planId: row.plan_id,
   sessionId: row.session_id,
@@ -238,7 +202,7 @@ const mapPlanHandoff = (row: PlanHandoffRow): CoworkPlanHandoff => ({
   artifact: {
     sessionId: row.session_id,
     planId: row.plan_id,
-    ...(row.artifact_workspace_root ? { workspaceRoot: row.artifact_workspace_root } : {}),
+    workspaceRoot: row.artifact_workspace_root,
     relativePath: row.artifact_relative_path,
     sha256: row.artifact_sha256,
     byteLength: row.artifact_byte_length,
@@ -383,144 +347,6 @@ export class CoworkStore {
     return result.changes;
   }
 
-  beginSessionSegment(input: BeginCoworkSessionSegmentInput): CoworkSessionSegment {
-    return this.db.transaction(() => this.insertSessionSegment(input, false))();
-  }
-
-  transitionSessionSegment(
-    input: BeginCoworkSessionSegmentInput,
-    transitionedAt: number = input.startedAt,
-  ): CoworkSessionSegment {
-    return this.db.transaction(() => {
-      const existing = this.getSessionSegment(input.id);
-      if (existing) return this.assertMatchingSessionSegment(existing, input);
-
-      this.db
-        .prepare(
-          `UPDATE cowork_session_segments
-           SET ended_at = ?, updated_at = ?
-           WHERE session_id = ? AND ended_at IS NULL`,
-        )
-        .run(transitionedAt, transitionedAt, input.sessionId);
-      return this.insertSessionSegment(input, true);
-    })();
-  }
-
-  getSessionSegment(id: string): CoworkSessionSegment | undefined {
-    const row = this.getOne<SessionSegmentRow>(
-      'SELECT * FROM cowork_session_segments WHERE id = ?',
-      [id],
-    );
-    return row ? mapSessionSegment(row) : undefined;
-  }
-
-  getActiveSessionSegment(sessionId: string): CoworkSessionSegment | undefined {
-    const row = this.getOne<SessionSegmentRow>(
-      `SELECT * FROM cowork_session_segments
-       WHERE session_id = ? AND ended_at IS NULL
-       ORDER BY ordinal DESC LIMIT 1`,
-      [sessionId],
-    );
-    return row ? mapSessionSegment(row) : undefined;
-  }
-
-  listSessionSegments(sessionId: string): CoworkSessionSegment[] {
-    return this.getAll<SessionSegmentRow>(
-      `SELECT * FROM cowork_session_segments
-       WHERE session_id = ? ORDER BY ordinal, id`,
-      [sessionId],
-    ).map(mapSessionSegment);
-  }
-
-  bindSessionSegmentGatewaySession(
-    id: string,
-    gatewaySessionId: string,
-    updatedAt: number = Date.now(),
-  ): CoworkSessionSegment | undefined {
-    const existing = this.getSessionSegment(id);
-    const normalizedGatewaySessionId = gatewaySessionId.trim();
-    if (!existing) return undefined;
-    if (
-      existing.gatewaySessionId &&
-      normalizedGatewaySessionId &&
-      existing.gatewaySessionId !== normalizedGatewaySessionId
-    ) {
-      throw new Error('This execution segment is already bound to another Gateway session.');
-    }
-    this.db
-      .prepare(
-        `UPDATE cowork_session_segments
-         SET gateway_session_id = ?, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(normalizedGatewaySessionId || null, updatedAt, id);
-    return this.getSessionSegment(id);
-  }
-
-  endSessionSegment(id: string, endedAt: number): CoworkSessionSegment | undefined {
-    this.db
-      .prepare(
-        `UPDATE cowork_session_segments
-         SET ended_at = ?, updated_at = ?
-         WHERE id = ? AND ended_at IS NULL`,
-      )
-      .run(endedAt, endedAt, id);
-    return this.getSessionSegment(id);
-  }
-
-  private insertSessionSegment(
-    input: BeginCoworkSessionSegmentInput,
-    activeAlreadyClosed: boolean,
-  ): CoworkSessionSegment {
-    const existing = this.getSessionSegment(input.id);
-    if (existing) return this.assertMatchingSessionSegment(existing, input);
-    if (!activeAlreadyClosed && this.getActiveSessionSegment(input.sessionId)) {
-      throw new Error('This session already has an active execution segment.');
-    }
-    const ordinal =
-      this.getOne<{ next_ordinal: number }>(
-        `SELECT COALESCE(MAX(ordinal), -1) + 1 AS next_ordinal
-         FROM cowork_session_segments WHERE session_id = ?`,
-        [input.sessionId],
-      )?.next_ordinal ?? 0;
-    const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO cowork_session_segments
-          (id, session_id, session_key, gateway_session_id, phase, plan_id, ordinal,
-           started_at, ended_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-      )
-      .run(
-        input.id,
-        input.sessionId,
-        input.sessionKey,
-        input.gatewaySessionId?.trim() || null,
-        input.phase,
-        input.planId?.trim() || null,
-        ordinal,
-        input.startedAt,
-        now,
-        now,
-      );
-    return this.getSessionSegment(input.id)!;
-  }
-
-  private assertMatchingSessionSegment(
-    existing: CoworkSessionSegment,
-    input: BeginCoworkSessionSegmentInput,
-  ): CoworkSessionSegment {
-    if (
-      existing.sessionId !== input.sessionId ||
-      existing.sessionKey !== input.sessionKey ||
-      existing.phase !== input.phase ||
-      (existing.planId ?? undefined) !== (input.planId?.trim() || undefined)
-    ) {
-      throw new Error('This execution segment already belongs to another session.');
-    }
-    return existing;
-  }
-
   createPlanHandoff(input: CreateCoworkPlanHandoffInput): CoworkPlanHandoff {
     const existing = this.getPlanHandoff(input.planId);
     if (existing) {
@@ -571,43 +397,6 @@ export class CoworkStore {
         now,
       );
     return this.getPlanHandoff(input.planId)!;
-  }
-
-  migratePlanHandoffArtifact(
-    planId: string,
-    artifact: CoworkPlanArtifactReference,
-  ): CoworkPlanHandoff {
-    if (
-      artifact.planId !== planId ||
-      !artifact.workspaceRoot?.trim() ||
-      !path.isAbsolute(artifact.workspaceRoot) ||
-      !artifact.relativePath.trim() ||
-      !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
-      !Number.isSafeInteger(artifact.byteLength) ||
-      artifact.byteLength <= 0
-    ) {
-      throw new Error('Invalid migrated plan handoff artifact metadata.');
-    }
-    const result = this.db
-      .prepare(
-        `UPDATE cowork_plan_handoffs
-         SET artifact_workspace_root = ?, artifact_relative_path = ?, artifact_sha256 = ?,
-             artifact_byte_length = ?, updated_at = ?
-         WHERE plan_id = ? AND session_id = ? AND artifact_workspace_root IS NULL`,
-      )
-      .run(
-        artifact.workspaceRoot,
-        artifact.relativePath,
-        artifact.sha256,
-        artifact.byteLength,
-        Date.now(),
-        planId,
-        artifact.sessionId,
-      );
-    if (result.changes !== 1) {
-      throw new Error('Plan handoff artifact migration lost its expected state.');
-    }
-    return this.getPlanHandoff(planId)!;
   }
 
   getPlanHandoff(planId: string): CoworkPlanHandoff | undefined {
@@ -731,56 +520,6 @@ export class CoworkStore {
       throw new Error(`Plan handoff state changed from ${input.expectedState}.`);
     }
     return handoff;
-  }
-
-  admitPlanHandoffAndTransitionSegment(
-    input: AdmitCoworkPlanHandoffInput,
-  ): AdmittedCoworkPlanHandoff {
-    return this.db.transaction(() => {
-      const handoff = this.getPlanHandoff(input.planId);
-      if (!handoff) throw new Error('Plan handoff not found.');
-      if (
-        input.implementationSegment.sessionId !== handoff.sessionId ||
-        input.implementationSegment.sessionKey !== handoff.implementationSessionKey
-      ) {
-        throw new Error('Implementation segment does not match the plan handoff.');
-      }
-      if (handoff.state === CoworkPlanHandoffState.Admitted) {
-        const segment = this.getSessionSegment(input.implementationSegment.id);
-        if (
-          !segment ||
-          handoff.implementationGatewaySessionId !== input.implementationGatewaySessionId ||
-          handoff.implementationRunId !== input.implementationRunId
-        ) {
-          throw new Error('Admitted plan handoff does not match the replayed identities.');
-        }
-        return { handoff, segment };
-      }
-      if (handoff.state !== input.expectedState) {
-        throw new Error(`Plan handoff state changed from ${input.expectedState}.`);
-      }
-      const segment = this.transitionSessionSegment(
-        {
-          ...input.implementationSegment,
-          gatewaySessionId: input.implementationGatewaySessionId,
-        },
-        input.admittedAt,
-      );
-      this.bindSessionSegmentGatewaySession(
-        segment.id,
-        input.implementationGatewaySessionId,
-        input.admittedAt,
-      );
-      const admitted = this.transitionPlanHandoff({
-        planId: input.planId,
-        expectedState: CoworkPlanHandoffState.Dispatching,
-        nextState: CoworkPlanHandoffState.Admitted,
-        implementationGatewaySessionId: input.implementationGatewaySessionId,
-        implementationRunId: input.implementationRunId,
-        transitionedAt: input.admittedAt,
-      });
-      return { handoff: admitted, segment: this.getSessionSegment(segment.id)! };
-    })();
   }
 
   private getOne<T>(sql: string, params: (string | number | null)[] = []): T | undefined {

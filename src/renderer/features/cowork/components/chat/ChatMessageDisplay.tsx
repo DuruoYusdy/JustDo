@@ -24,7 +24,6 @@ interface ChatMessageDisplayProps {
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
   runTimings?: SessionRunTiming[];
-  historyPrefixMessages?: GatewayMessage[];
   onLastUserMessageAction?: (
     action: UserMessageHistoryAction,
     entryId: string,
@@ -53,7 +52,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   processSummariesExpanded = false,
   onSearchMatchCountChange,
   runTimings = [],
-  historyPrefixMessages = [],
   onLastUserMessageAction,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -109,7 +107,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.workingDirectory = workingDirectory;
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
-    chat.historyPrefixMessages = historyPrefixMessages;
     chat.onLastUserMessageAction = onLastUserMessageAction;
   }, [
     assistantName,
@@ -120,7 +117,6 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     processSummariesExpanded,
     workingDirectory,
     runTimings,
-    historyPrefixMessages,
     onLastUserMessageAction,
   ]);
 

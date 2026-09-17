@@ -53,9 +53,9 @@ Cowork 主工作区在桌面宽度下固定为左侧对话、右侧显示区两�
 
 ## 3. 状态模型
 
-`ChatTranscriptState`：当前 active segment 的 session key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
+`ChatTranscriptState`：当前 canonical session 的 key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
 
-Plan mode 可以让一个产品会话包含多个 Gateway transcript segment。Controller 只订阅 active implementation segment；`loadTranscriptSegment` 通过同一 Renderer Gateway 连接完整分页读取已结束的 planning segment，不改变当前订阅。Lit 在一个滚动容器中依次投影规划消息、阶段分割线和实施消息。分割线会重置 Tool/Thinking 配对 epoch，避免不同 transcript 恰好复用 callId/runId 时串卡；搜索、导出和滚动锚点都覆盖组合后的时间线。SQLite 只保存 segment key、顺序和阶段，不保存消息数组。
+Plan mode 的规划与实施共用一个 canonical Gateway transcript。批准后 OpenClaw 在同一 transcript 写入 reset boundary；Patch 022 让 JustDo session 的 display-history 投影跨该 boundary，Renderer 因此继续通过普通 `chat.history` 分页读取完整可见历史，而 model-context 投影仍只从最新 boundary 后开始。搜索、导出、滚动锚点、会话复制和用量统计都沿用普通会话路径，不需要 Renderer 拼接多份 transcript，也不需要 SQLite 保存消息或 segment 血缘。
 
 `AssistantTurn`绑定 run/session/lifecycle generation，状态 `running|final|aborted|error`，保存 last agent seq、时间、modelRef和有序items。Item分：
 
@@ -266,7 +266,7 @@ Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，�
 
 ## 18. 会话操作与导出
 
-消息操作只绑定当前 active transcript 的最后一个持久化 user entry。渲染层根据 `__openclaw.id` 标记这一条，且在断连、sending、compaction、history load/page load 时隐藏操作；旧 segment 前缀、optimistic message 和缺少原生身份的投影都不可修改。确认后 Controller 再次核对最后一条原生 entry identity，再调用 `sessions.rewind`，使旧 history generation、分页窗口和显示缓存失效，并从 `chat.history` 重建当前 branch。修改模式把清理过内部 envelope 的 editor text、内联媒体和 `MEDIA:` 文件交回 React composer；history 重载失败或用户切换会话都不能丢失源会话草稿。撤回模式不恢复草稿。操作按钮仅发出 action/entry identity，不能在 Lit render 中直接维护业务草稿。
+消息操作只绑定当前 active transcript 的最后一个持久化 user entry。渲染层根据 `__openclaw.id` 标记这一条，且在断连、sending、compaction、history load/page load 时隐藏操作；optimistic message 和缺少原生身份的投影都不可修改。确认后 Controller 再次核对最后一条原生 entry identity，再调用 `sessions.rewind`，使旧 history generation、分页窗口和显示缓存失效，并从 `chat.history` 重建当前 branch。修改模式把清理过内部 envelope 的 editor text、内联媒体和 `MEDIA:` 文件交回 React composer；history 重载失败或用户切换会话都不能丢失源会话草稿。撤回模式不恢复草稿。操作按钮仅发出 action/entry identity，不能在 Lit render 中直接维护业务草稿。
 
 导出使用Cowork session presentation与canonical items生成文本/Markdown等产品格式，包含必要角色、时间和内容；不直接dump internal state、token、approval payload或Gateway原始JSON。导出前需完成当前显示history加载范围的产品约定，避免误称“完整”却只导出窗口。
 

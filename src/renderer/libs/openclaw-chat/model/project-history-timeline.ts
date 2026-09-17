@@ -210,6 +210,7 @@ export function projectPersistedTimeline(
   let lastTimedMessage: Extract<PersistedTimelineItem, { kind: 'history-message' }> | null = null;
   const terminalTimingByProcessId = new Map<string, SessionRunTiming>();
   const supersededTools = new Set<string>();
+  let planPresentedSinceLastReset = false;
 
   const rememberTerminalTiming = (process: ThinkingItem | ToolItem): void => {
     if (!activeTiming) return;
@@ -414,6 +415,7 @@ export function projectPersistedTimeline(
     const input = readToolInput(source);
     if (existing) {
       existing.name = readToolName(source, existing.name);
+      if (isPresentPlanToolName(existing.name)) planPresentedSinceLastReset = true;
       if (input !== undefined && input !== null) existing.input = input;
       existing.updatedAt = Math.max(existing.updatedAt, timestamp);
       existing.lastSeq = Math.max(existing.lastSeq, sequence);
@@ -434,6 +436,7 @@ export function projectPersistedTimeline(
       ...(input !== undefined && input !== null ? { input } : {}),
     };
     archived.push(tool);
+    if (isPresentPlanToolName(tool.name)) planPresentedSinceLastReset = true;
     registerTool(tool);
     rememberTerminalTiming(tool);
     return tool;
@@ -550,14 +553,38 @@ export function projectPersistedTimeline(
     if (runId === messageKey) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
-    if (role === 'justdo-phase-boundary') {
+    const marker =
+      message.__openclaw &&
+      typeof message.__openclaw === 'object' &&
+      !Array.isArray(message.__openclaw)
+        ? (message.__openclaw as Record<string, unknown>)
+        : outer.__openclaw &&
+            typeof outer.__openclaw === 'object' &&
+            !Array.isArray(outer.__openclaw)
+          ? (outer.__openclaw as Record<string, unknown>)
+          : null;
+    if (marker?.kind === 'reset') {
       flushSummary();
-      const label = typeof message.content === 'string' ? message.content.trim() : '';
-      projected.push({
-        kind: 'phase-boundary',
-        key: `history-phase:${messageKey}`,
-        label,
-      });
+      if (planPresentedSinceLastReset || marker.planImplementation === true) {
+        projected.push({
+          kind: 'phase-boundary',
+          key: `history-phase:${messageKey}`,
+          label: '',
+        });
+      } else {
+        // Patch 022 exposes pre-reset rows so Plan history can remain visible.
+        // Preserve native clear semantics for every reset that did not follow
+        // a persisted PresentPlan tool call.
+        projected.length = 0;
+        archived = [];
+        toolsByCallId.clear();
+        allTools.length = 0;
+        syntheticRunIds.clear();
+        claimedTimingIds.clear();
+        terminalTimingByProcessId.clear();
+        supersededTools.clear();
+      }
+      planPresentedSinceLastReset = false;
       toolEpoch += 1;
       activeTiming = null;
       lastTimedMessage = null;
@@ -609,16 +636,6 @@ export function projectPersistedTimeline(
 
     const content = Array.isArray(message.content) ? message.content : null;
     if (!content) {
-      const marker =
-        message.__openclaw &&
-        typeof message.__openclaw === 'object' &&
-        !Array.isArray(message.__openclaw)
-          ? (message.__openclaw as Record<string, unknown>)
-          : outer.__openclaw &&
-              typeof outer.__openclaw === 'object' &&
-              !Array.isArray(outer.__openclaw)
-            ? (outer.__openclaw as Record<string, unknown>)
-            : null;
       const senderLabel = message.senderLabel ?? outer.senderLabel;
       const fallbackText = message.text ?? (message === outer ? undefined : outer.text);
       const hasTranscriptMedia =

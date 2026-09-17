@@ -184,12 +184,12 @@ describe('Plan mode extension', () => {
     });
 
     await expect(execution).resolves.toMatchObject({
-      content: [{ text: expect.stringContaining('fresh execution context') }],
+      content: [{ text: expect.stringContaining('reset this session context') }],
     });
     expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ decision: 'implement' }));
   });
 
-  test('refuses implementation approval until persisted Plan mode is disabled', async () => {
+  test('allows approval while Plan mode remains enabled for the finishing planning turn', async () => {
     const registered = registerPlugin();
     const emit = vi.fn();
     registered.service?.start({ gatewayEvents: { emit } });
@@ -204,13 +204,11 @@ describe('Plan mode extension', () => {
     });
 
     expect(respond).toHaveBeenCalledWith(
-      false,
-      undefined,
-      expect.objectContaining({ message: expect.stringContaining('Disable Plan mode') }),
+      true,
+      expect.objectContaining({ decision: 'implement', sessionKey: 'agent:main:justdo:session-1' }),
     );
-    registered.service?.stop?.();
     await expect(execution).resolves.toMatchObject({
-      content: [{ text: expect.stringContaining('cancelled') }],
+      content: [{ text: expect.stringContaining('reset this session context') }],
     });
   });
 

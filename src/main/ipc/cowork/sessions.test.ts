@@ -79,7 +79,7 @@ test('registers session handlers without reading the not-yet-initialized store',
   expect(getCoworkStore).not.toHaveBeenCalled();
 });
 
-test('copies an idle session from its active transcript segment', async () => {
+test('copies an idle session from its canonical transcript', async () => {
   const source = {
     id: 'source-session',
     title: 'Source',
@@ -97,14 +97,6 @@ test('copies an idle session from its active transcript segment', async () => {
   const copied = { ...source, id: 'copied-session', title: 'Source (copy)' };
   const store = {
     getSession: vi.fn().mockReturnValue(source),
-    listSessionSegments: vi.fn().mockReturnValue([
-      {
-        id: 'segment-1',
-        logicalSessionId: source.id,
-        sessionKey: 'agent:main:justdo:implementation',
-        ordinal: 1,
-      },
-    ]),
     createSession: vi.fn().mockReturnValue(copied),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
@@ -144,7 +136,7 @@ test('copies an idle session from its active transcript segment', async () => {
   );
   expect(requestGateway).toHaveBeenCalledWith('sessions.create', {
     key: 'agent:main:justdo:copied-session',
-    parentSessionKey: 'agent:main:justdo:implementation',
+    parentSessionKey: 'agent:main:justdo:source-session',
     fork: true,
     cwd: source.cwd,
     permissionMode: 'workspace',
@@ -170,7 +162,6 @@ test('rolls back a copied local session when Gateway creation fails', async () =
   const copied = { ...source, id: 'copied-session', title: 'Source (copy)' };
   const store = {
     getSession: vi.fn().mockReturnValue(source),
-    listSessionSegments: vi.fn().mockReturnValue([]),
     createSession: vi.fn().mockReturnValue(copied),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
@@ -251,7 +242,6 @@ test('preserves the copy error when rollback cleanup also fails', async () => {
   const copied = { ...source, id: 'copied-session', title: 'Source (copy)' };
   const store = {
     getSession: vi.fn().mockReturnValue(source),
-    listSessionSegments: vi.fn().mockReturnValue([]),
     createSession: vi.fn().mockReturnValue(copied),
     deleteSession: vi.fn().mockImplementation(() => {
       throw new Error('local cleanup failed');

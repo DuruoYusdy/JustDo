@@ -122,7 +122,7 @@ test('deletes legacy schema database and creates a fresh database', () => {
   const sessionRunsTable = migratedDb
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_runs'")
     .get();
-  const sessionSegmentsTable = migratedDb
+  const removedSessionSegmentsTable = migratedDb
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_session_segments'",
     )
@@ -142,7 +142,7 @@ test('deletes legacy schema database and creates a fresh database', () => {
   expect(cleanupTable).toEqual({ name: 'scheduled_task_result_cleanup' });
   expect(tombstoneTable).toEqual({ name: 'scheduled_task_result_tombstones' });
   expect(sessionRunsTable).toEqual({ name: 'cowork_session_runs' });
-  expect(sessionSegmentsTable).toEqual({ name: 'cowork_session_segments' });
+  expect(removedSessionSegmentsTable).toBeUndefined();
   expect(messageCacheTable).toBeUndefined();
 
   store.close();
@@ -333,355 +333,113 @@ test('rejects a client turn reused by another session and interrupts open runs o
   sqlite.close();
 });
 
-test('persists ordered execution segments without copying gateway messages', () => {
+test('allows consecutive plans to use the same canonical implementation session', () => {
   const dir = createTempDir();
   const sqlite = SqliteStore.create(dir);
   const db = sqlite.getDatabase();
   db.prepare(
     `INSERT INTO cowork_sessions
       (id, title, status, cwd, agent_id, created_at, updated_at)
-     VALUES ('session-segments', 'Session', 'idle', '/tmp', 'main', 1, 1)`,
-  ).run();
+     VALUES ('session-plan', 'Session', 'idle', ?, 'main', 1, 1)`,
+  ).run(dir);
   const store = new CoworkStore(db);
+  const sessionKey = 'agent:main:justdo:session-plan';
 
-  const planning = store.beginSessionSegment({
-    id: 'segment-plan',
-    sessionId: 'session-segments',
-    sessionKey: 'agent:main:justdo:session-segments:execution:plan-1',
-    phase: 'planning',
-    planId: 'plan-1',
-    startedAt: 1_000,
-  });
-  expect(planning).toMatchObject({ ordinal: 0, phase: 'planning', planId: 'plan-1' });
-  expect(
-    store.beginSessionSegment({
-      id: 'segment-plan',
-      sessionId: 'session-segments',
-      sessionKey: planning.sessionKey,
-      phase: 'planning',
-      planId: 'plan-1',
-      startedAt: 9_000,
-    }),
-  ).toEqual(planning);
-  expect(() =>
-    store.beginSessionSegment({
-      id: 'another-active',
-      sessionId: 'session-segments',
-      sessionKey: 'agent:main:justdo:session-segments:execution:other',
-      phase: 'conversation',
-      startedAt: 1_500,
-    }),
-  ).toThrow('active execution segment');
-
-  const implementation = store.transitionSessionSegment({
-    id: 'segment-implementation',
-    sessionId: 'session-segments',
-    sessionKey: 'agent:main:justdo:session-segments:execution:implementation-1',
-    gatewaySessionId: 'gateway-implementation',
-    phase: 'implementation',
-    planId: 'plan-1',
-    startedAt: 2_000,
-  });
-
-  expect(store.listSessionSegments('session-segments')).toMatchObject([
-    { id: 'segment-plan', ordinal: 0, endedAt: 2_000 },
-    {
-      id: 'segment-implementation',
-      ordinal: 1,
-      gatewaySessionId: 'gateway-implementation',
-    },
-  ]);
-  expect(store.getActiveSessionSegment('session-segments')).toEqual(implementation);
-  expect(() =>
-    store.bindSessionSegmentGatewaySession('segment-implementation', 'gateway-2', 2_500),
-  ).toThrow('already bound to another Gateway session');
-  expect(
-    store.bindSessionSegmentGatewaySession(
-      'segment-implementation',
-      'gateway-implementation',
-      2_500,
-    ),
-  ).toMatchObject({ gatewaySessionId: 'gateway-implementation', updatedAt: 2_500 });
-
-  db.prepare("DELETE FROM cowork_sessions WHERE id = 'session-segments'").run();
-  expect(store.listSessionSegments('session-segments')).toEqual([]);
-  expect(
-    db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cowork_messages'")
-      .get(),
-  ).toBeUndefined();
-  sqlite.close();
-});
-
-test('persists and atomically admits recoverable plan handoffs', () => {
-  const dir = createTempDir();
-  const sqlite = SqliteStore.create(dir);
-  const db = sqlite.getDatabase();
-  db.prepare(
-    `INSERT INTO cowork_sessions
-      (id, title, status, cwd, agent_id, created_at, updated_at)
-     VALUES ('session-plan', 'Session', 'idle', '/tmp', 'main', 1, 1)`,
-  ).run();
-  const store = new CoworkStore(db);
-  const workspaceRoot = path.resolve('/tmp');
-  store.beginSessionSegment({
-    id: 'planning-segment',
-    sessionId: 'session-plan',
-    sessionKey: 'agent:main:justdo:session-plan',
-    phase: 'planning',
-    planId: 'plan-1',
-    startedAt: 1_000,
-  });
-
-  const artifact = {
-    sessionId: 'session-plan',
-    planId: 'plan-1',
-    workspaceRoot,
-    relativePath: path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans', 'session-plan', 'plan-1.md'),
-    sha256: 'a'.repeat(64),
-    byteLength: 42,
-  };
-  const presented = store.createPlanHandoff({
-    sessionId: 'session-plan',
-    planId: 'plan-1',
-    planningSessionKey: 'agent:main:justdo:session-plan',
-    artifact,
-    presentedAt: 1_100,
-  });
-  expect(presented).toMatchObject({ state: CoworkPlanHandoffState.Presented, artifact });
-  expect(
+  for (const [index, planId] of ['plan-1', 'plan-2'].entries()) {
     store.createPlanHandoff({
       sessionId: 'session-plan',
-      planId: 'plan-1',
-      planningSessionKey: 'agent:main:justdo:session-plan',
-      artifact,
-      presentedAt: 9_999,
-    }),
-  ).toEqual(presented);
-
-  const implementationSessionKey = 'agent:main:justdo:session-plan:execution:plan-1';
-  expect(
+      planId,
+      planningSessionKey: sessionKey,
+      artifact: {
+        sessionId: 'session-plan',
+        planId,
+        workspaceRoot: dir,
+        relativePath: path.join(
+          `.${PRODUCT_NAME_LOWERCASE}`,
+          'plans',
+          'session-plan',
+          `${planId}.md`,
+        ),
+        sha256: String(index + 1).repeat(64),
+        byteLength: 10,
+      },
+      presentedAt: index + 1,
+    });
     store.transitionPlanHandoff({
-      planId: 'plan-1',
+      planId,
       expectedState: CoworkPlanHandoffState.Presented,
       nextState: CoworkPlanHandoffState.Dispatching,
-      implementationSessionKey,
-      transitionedAt: 1_200,
-    }),
-  ).toMatchObject({
-    state: CoworkPlanHandoffState.Dispatching,
-    implementationSessionKey,
-    dispatchStartedAt: 1_200,
-  });
-
-  const admitted = store.admitPlanHandoffAndTransitionSegment({
-    planId: 'plan-1',
-    expectedState: CoworkPlanHandoffState.Dispatching,
-    implementationGatewaySessionId: 'gateway-session-1',
-    implementationRunId: 'run-1',
-    implementationSegment: {
-      id: 'implementation-segment',
-      sessionId: 'session-plan',
-      sessionKey: implementationSessionKey,
-      phase: 'implementation',
-      planId: 'plan-1',
-      startedAt: 1_300,
-    },
-    admittedAt: 1_300,
-  });
-  expect(admitted.handoff).toMatchObject({
-    state: CoworkPlanHandoffState.Admitted,
-    implementationGatewaySessionId: 'gateway-session-1',
-    implementationRunId: 'run-1',
-  });
-  expect(admitted.segment).toMatchObject({
-    id: 'implementation-segment',
-    ordinal: 1,
-    gatewaySessionId: 'gateway-session-1',
-  });
-  expect(store.listRecoverablePlanHandoffs()).toHaveLength(1);
-  expect(store.listSessionSegments('session-plan')[0]).toMatchObject({ endedAt: 1_300 });
-
-  expect(
+      implementationSessionKey: sessionKey,
+      transitionedAt: index + 10,
+    });
     store.transitionPlanHandoff({
-      planId: 'plan-1',
+      planId,
+      expectedState: CoworkPlanHandoffState.Dispatching,
+      nextState: CoworkPlanHandoffState.Admitted,
+      implementationGatewaySessionId: 'gateway-session-1',
+      implementationRunId: `run-${index + 1}`,
+      transitionedAt: index + 20,
+    });
+    store.transitionPlanHandoff({
+      planId,
       expectedState: CoworkPlanHandoffState.Admitted,
       nextState: CoworkPlanHandoffState.Resolved,
-      transitionedAt: 1_400,
-    }),
-  ).toMatchObject({ state: CoworkPlanHandoffState.Resolved, resolvedAt: 1_400 });
-  expect(store.listRecoverablePlanHandoffs()).toEqual([]);
+      transitionedAt: index + 30,
+    });
+  }
 
-  store.createPlanHandoff({
-    sessionId: 'session-plan',
-    planId: 'plan-2',
-    planningSessionKey: 'agent:main:justdo:session-plan',
-    artifact: {
-      ...artifact,
-      planId: 'plan-2',
-      relativePath: path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans', 'session-plan', 'plan-2.md'),
-    },
-    presentedAt: 1_500,
-  });
-  store.transitionPlanHandoff({
-    planId: 'plan-2',
-    expectedState: CoworkPlanHandoffState.Presented,
-    nextState: CoworkPlanHandoffState.Failed,
-    transitionedAt: 1_600,
-    error: 'retryable failure',
-  });
-  expect(store.listRecoverablePlanHandoffs()).toEqual([
-    expect.objectContaining({ planId: 'plan-2', state: CoworkPlanHandoffState.Failed }),
-  ]);
-  store.createPlanHandoff({
-    sessionId: 'session-plan',
-    planId: 'plan-3',
-    planningSessionKey: 'agent:main:justdo:session-plan',
-    artifact: {
-      ...artifact,
-      planId: 'plan-3',
-      relativePath: path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans', 'session-plan', 'plan-3.md'),
-    },
-    presentedAt: 1_700,
-  });
-  store.transitionPlanHandoff({
-    planId: 'plan-3',
-    expectedState: CoworkPlanHandoffState.Presented,
-    nextState: CoworkPlanHandoffState.Resolved,
-    transitionedAt: 1_800,
-  });
-  expect(store.listRecoverablePlanHandoffs()).toEqual([]);
-  expect(
-    store.transitionPlanHandoff({
-      planId: 'plan-2',
-      expectedState: CoworkPlanHandoffState.Failed,
-      nextState: CoworkPlanHandoffState.Resolved,
-      transitionedAt: 1_900,
-    }),
-  ).toMatchObject({ state: CoworkPlanHandoffState.Resolved });
-
-  db.prepare("DELETE FROM cowork_sessions WHERE id = 'session-plan'").run();
-  expect(store.getPlanHandoff('plan-1')).toBeUndefined();
+  expect(store.listPlanHandoffs('session-plan')).toHaveLength(2);
   sqlite.close();
 });
 
-test('migrates a legacy plan handoff to a workspace-bound artifact', () => {
+test('rebuilds the obsolete unique implementation-session Plan table', () => {
   const dir = createTempDir();
-  const sqlite = SqliteStore.create(dir);
-  const db = sqlite.getDatabase();
-  db.prepare(
-    `INSERT INTO cowork_sessions
-      (id, title, status, cwd, agent_id, created_at, updated_at)
-     VALUES ('session-plan', 'Session', 'idle', '/tmp', 'main', 1, 1)`,
-  ).run();
-  db.prepare(
-    `INSERT INTO cowork_plan_handoffs
-      (plan_id, session_id, planning_session_key, artifact_relative_path,
-       artifact_sha256, artifact_byte_length, state, presented_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'presented', ?, ?, ?)`,
-  ).run(
-    'plan-legacy',
-    'session-plan',
-    'agent:main:justdo:session-plan',
-    path.join('plans', 'v1', 'session-plan', 'plan-legacy.md'),
-    'c'.repeat(64),
-    10,
-    1,
-    1,
-    1,
-  );
-  const store = new CoworkStore(db);
-  expect(store.getPlanHandoff('plan-legacy')?.artifact.workspaceRoot).toBeUndefined();
-  const workspaceRoot = path.resolve('/tmp');
-  const migrated = store.migratePlanHandoffArtifact('plan-legacy', {
-    sessionId: 'session-plan',
-    planId: 'plan-legacy',
-    workspaceRoot,
-    relativePath: path.join(
-      `.${PRODUCT_NAME_LOWERCASE}`,
-      'plans',
-      'session-plan',
-      'plan-legacy.md',
-    ),
-    sha256: 'c'.repeat(64),
-    byteLength: 10,
-  });
-
-  expect(migrated.artifact.workspaceRoot).toBe(workspaceRoot);
-  expect(() => store.migratePlanHandoffArtifact('plan-legacy', migrated.artifact)).toThrow(
-    'lost its expected state',
-  );
-  sqlite.close();
-});
-
-test('rolls back the segment switch when plan admission loses its state fence', () => {
-  const dir = createTempDir();
-  const sqlite = SqliteStore.create(dir);
-  const db = sqlite.getDatabase();
-  db.prepare(
-    `INSERT INTO cowork_sessions
-      (id, title, status, cwd, agent_id, created_at, updated_at)
-     VALUES ('session-plan', 'Session', 'idle', '/tmp', 'main', 1, 1)`,
-  ).run();
-  const store = new CoworkStore(db);
-  const workspaceRoot = path.resolve('/tmp');
-  store.beginSessionSegment({
-    id: 'planning-segment',
-    sessionId: 'session-plan',
-    sessionKey: 'agent:main:justdo:session-plan',
-    phase: 'planning',
-    startedAt: 1_000,
-  });
-  store.createPlanHandoff({
-    sessionId: 'session-plan',
-    planId: 'plan-1',
-    planningSessionKey: 'agent:main:justdo:session-plan',
-    artifact: {
-      sessionId: 'session-plan',
-      planId: 'plan-1',
-      workspaceRoot,
-      relativePath: path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans', 'session-plan', 'plan-1.md'),
-      sha256: 'b'.repeat(64),
-      byteLength: 10,
-    },
-    presentedAt: 1_100,
-  });
-  const implementationSessionKey = 'agent:main:justdo:session-plan:execution:plan-1';
-  store.transitionPlanHandoff({
-    planId: 'plan-1',
-    expectedState: CoworkPlanHandoffState.Presented,
-    nextState: CoworkPlanHandoffState.Dispatching,
-    implementationSessionKey,
-    transitionedAt: 1_200,
-  });
-  db.exec(`
-    CREATE TRIGGER reject_test_plan_admission
-    BEFORE UPDATE OF state ON cowork_plan_handoffs
-    WHEN NEW.state = 'admitted'
-    BEGIN
-      SELECT RAISE(ABORT, 'forced admission failure');
-    END;
+  const initial = SqliteStore.create(dir);
+  initial.close();
+  const dbPath = path.join(dir, DB_FILENAME);
+  const legacy = new BetterSqlite3(dbPath);
+  legacy.exec(`
+    DROP TABLE cowork_plan_handoffs;
+    CREATE TABLE cowork_plan_handoffs (
+      plan_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      planning_session_key TEXT NOT NULL,
+      artifact_workspace_root TEXT NOT NULL,
+      artifact_relative_path TEXT NOT NULL UNIQUE,
+      artifact_sha256 TEXT NOT NULL,
+      artifact_byte_length INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      implementation_session_key TEXT UNIQUE,
+      implementation_gateway_session_id TEXT,
+      implementation_run_id TEXT,
+      error TEXT,
+      presented_at INTEGER NOT NULL,
+      dispatch_started_at INTEGER,
+      admitted_at INTEGER,
+      resolved_at INTEGER,
+      failed_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+    );
   `);
+  legacy.close();
 
-  expect(() =>
-    store.admitPlanHandoffAndTransitionSegment({
-      planId: 'plan-1',
-      expectedState: CoworkPlanHandoffState.Dispatching,
-      implementationGatewaySessionId: 'gateway-session-1',
-      implementationRunId: 'run-1',
-      implementationSegment: {
-        id: 'implementation-segment',
-        sessionId: 'session-plan',
-        sessionKey: implementationSessionKey,
-        phase: 'implementation',
-        startedAt: 1_300,
-      },
-      admittedAt: 1_300,
-    }),
-  ).toThrow('forced admission failure');
-  expect(store.getActiveSessionSegment('session-plan')).toMatchObject({ id: 'planning-segment' });
-  expect(store.getPlanHandoff('plan-1')).toMatchObject({
-    state: CoworkPlanHandoffState.Dispatching,
+  const reopened = SqliteStore.create(dir);
+  const implementationIndexes = (
+    reopened.getDatabase().pragma('index_list(cowork_plan_handoffs)') as Array<{
+      name: string;
+      unique: number;
+    }>
+  ).filter(index => {
+    if (index.unique !== 1) return false;
+    const columns = reopened
+      .getDatabase()
+      .prepare('SELECT name FROM pragma_index_info(?)')
+      .all(index.name) as Array<{ name: string }>;
+    return columns.some(column => column.name === 'implementation_session_key');
   });
-  sqlite.close();
+
+  expect(implementationIndexes).toEqual([]);
+  reopened.close();
 });

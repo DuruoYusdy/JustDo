@@ -42,14 +42,13 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 3. Schema 总表
 
-当前共有 13 张核心表：
+当前共有 12 张核心表：
 
 | 表                                 | 用途                         | Owner                      |
 | ---------------------------------- | ---------------------------- | -------------------------- |
 | `kv`                               | 应用配置与内部同步元数据     | `SqliteStore`、领域 store  |
 | `cowork_sessions`                  | 产品会话索引/元数据          | `CoworkStore`              |
 | `cowork_session_runs`              | client turn/root run receipt | `CoworkStore`              |
-| `cowork_session_segments`          | execution transcript 血缘    | `CoworkStore`              |
 | `cowork_plan_handoffs`             | Plan artifact/handoff 状态   | `CoworkStore`              |
 | `cowork_config`                    | Cowork/runtime 设置          | `CoworkStore`              |
 | `agents`                           | Agent 产品定义               | `CoworkStore`              |
@@ -131,15 +130,9 @@ OpenClaw v2026.9.2 对接不再由 JustDo 直接读写 agent `sessions.json`。G
 
 `idx_cowork_session_runs_session_started` 支持时间线；partial unique `idx_cowork_session_runs_open` 保证每个 session 最多一个 `ended_at IS NULL` 的 receipt。Start 先查 client turn 实现幂等，Adapter 收到真实 run id 后 bind；终态填 ended_at。启动 `interruptOpenSessionRuns(now)` 把上一应用进程遗留的开口 receipt 记为零时长 `aborted` checkpoint，避免恢复期间误报运行且不把离线时间算入耗时；若 Gateway 随后确认该 session 仍有 active work，runtime reconciliation 会重新打开该 checkpoint（root run id 暂缺时也原位恢复）并从当前进程重新计时。首次对账前若用户提交新 turn，main 进程会强制刷新该 checkpoint 的 Gateway 状态：active 时恢复旧 receipt 并拒绝新建，unknown 时 fail closed，只有 confirmed idle 才创建新 receipt。
 
-### 7.1 `cowork_session_segments`
+### 7.1 `cowork_plan_handoffs`
 
-该表只保存一个产品会话使用过的 OpenClaw execution 血缘：稳定 segment id、Gateway session key/id、`conversation`/`planning`/`implementation` 阶段、可选 plan id、顺序和起止时间。它不保存消息正文。Renderer 仍按每个 `session_key` 从 Gateway 读取权威 transcript，再按 `ordinal` 在同一个滚动时间线中组合。
-
-`idx_cowork_session_segments_session_ordinal` 支持稳定排序；partial unique `idx_cowork_session_segments_active` 保证每个产品会话只有一个 `ended_at IS NULL` 的当前 execution。切换到干净实施上下文时，`transitionSessionSegment` 在同一 SQLite transaction 中结束旧 segment 并建立新 segment；删除产品会话通过外键级联删除血缘记录，Gateway transcript 仍由 OpenClaw 清理流程负责。
-
-### 7.2 `cowork_plan_handoffs`
-
-该表保存 Plan request、workspace artifact 的创建时 workspace root、相对路径、SHA-256、字节数、planning key、implementation key/Gateway session/run identity，以及 `presented`、`dispatching`、`admitted`、`resolved`、`failed` 状态和阶段时间。artifact 位于 `<workspace>/.<productName lowercase>/plans/<sessionId>/<planId>.md`；产品名通过共享元数据派生。它不保存第二份消息 transcript。每个产品会话最多有一个未终结 handoff；状态更新使用 expected-state CAS。Gateway 接受实施 run 后，handoff 进入 `admitted` 与 active segment 切换在同一 SQLite transaction 内提交，使启动恢复能够识别发送前、发送后和已完成 handoff。
+该表保存 Plan request、workspace artifact 的创建时 workspace root、相对路径、SHA-256、字节数、canonical session key、Gateway session/run identity，以及 `presented`、`dispatching`、`admitted`、`resolved`、`failed` 状态和阶段时间。artifact 位于 `<workspace>/.<productName lowercase>/plans/<sessionId>/<planId>.md`；产品名通过共享元数据派生。它不保存消息 transcript。每个产品会话最多有一个未终结 handoff；状态更新使用 expected-state CAS。Gateway 接受同一 session 上的实施 run 后，handoff 进入 `admitted`，使启动恢复能够识别发送前、发送后和已完成 handoff。
 
 ## 8. `cowork_config`
 

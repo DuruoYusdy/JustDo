@@ -36,7 +36,7 @@ export class CoworkEngineService {
           this.deps.getCoworkStore(),
           this.deps.getOpenClawEngineManager(),
           this.deps.fetchSessionTitle,
-          new ApprovedPlanArtifactStore(this.deps.getUserDataPath()),
+          new ApprovedPlanArtifactStore(),
         );
       }
       this.router = new CoworkEngineRouter({
