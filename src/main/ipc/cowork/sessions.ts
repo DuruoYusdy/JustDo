@@ -816,6 +816,7 @@ export const registerCoworkSessionHandlers = ({
         gatewaySessionId: prepared.gatewaySessionId || gatewaySessionId,
         agentId: copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       });
+      store.copyTerminalSessionRuns(source.id, copiedSession.id);
       return { success: true, session: copiedSession, planModeEnabled: copyPlanMode };
     } catch (error) {
       if (copiedSession) {
@@ -916,6 +917,7 @@ export const registerCoworkSessionHandlers = ({
         gatewaySessionId: prepared.gatewaySessionId,
         agentId: forkedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       });
+      store.copyTerminalSessionRuns(source.id, forkedSession.id);
       return { success: true, session: forkedSession };
     } catch (error) {
       if (forkedSession) {

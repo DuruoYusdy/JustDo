@@ -28,4 +28,24 @@ describe('Plan implementation transcript boundary', () => {
       ),
     ).toBe(true);
   });
+
+  test('infers the implementation boundary from a persisted PresentPlan followed by reset', () => {
+    const inferredBoundaryMessages = [
+      { role: 'user', __openclaw: { id: 'planning-user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolcall', name: 'PresentPlan', input: { plan: 'Ship it' } }],
+        __openclaw: { id: 'planning-assistant' },
+      },
+      { role: 'system', __openclaw: { id: 'native-reset', kind: 'reset' } },
+      { role: 'user', __openclaw: { id: 'implementation-user' } },
+    ];
+
+    expect(
+      isEntryAfterLatestPlanImplementationReset(inferredBoundaryMessages, 'planning-user'),
+    ).toBe(false);
+    expect(
+      isEntryAfterLatestPlanImplementationReset(inferredBoundaryMessages, 'implementation-user'),
+    ).toBe(true);
+  });
 });

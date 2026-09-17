@@ -57,6 +57,23 @@ function setupDb(): void {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS cowork_session_runs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      client_turn_id TEXT NOT NULL UNIQUE,
+      root_run_id TEXT,
+      model_ref TEXT,
+      state TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      accepted_at INTEGER,
+      ended_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -130,6 +147,34 @@ test('persists fork provenance, follows a live source title, and keeps a snapsho
     title: 'Original',
     entryId: 'entry-1',
   });
+});
+
+test('copies terminal run metadata with stable transcript run ids', () => {
+  const source = store.createSession('Source', '/tmp');
+  const target = store.createSession('Target', '/tmp');
+  const completed = store.beginSessionRun({
+    sessionId: source.id,
+    clientTurnId: 'justdo-1700000000000-source',
+    startedAt: 1_700_000_000_000,
+    modelRef: 'provider/model',
+  });
+  store.bindSessionRunRootRun(completed.id, 'gateway-run-1');
+  store.finishSessionRun(completed.id, 'completed', 1_700_000_002_000);
+
+  expect(store.copyTerminalSessionRuns(source.id, target.id)).toBe(1);
+  expect(store.getSessionRuns(target.id)).toEqual([
+    expect.objectContaining({
+      sessionId: target.id,
+      rootRunId: 'gateway-run-1',
+      modelRef: 'provider/model',
+      state: 'completed',
+      startedAt: 1_700_000_000_000,
+      endedAt: 1_700_000_002_000,
+    }),
+  ]);
+  expect(store.getSessionRuns(target.id)[0]?.clientTurnId).not.toBe(
+    'justdo-1700000000000-source',
+  );
 });
 
 test('session metadata updates do not change recent activity time', () => {

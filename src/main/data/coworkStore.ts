@@ -305,6 +305,44 @@ export class CoworkStore {
     return row ? mapSessionRun(row) : undefined;
   }
 
+  copyTerminalSessionRuns(sourceSessionId: string, targetSessionId: string): number {
+    const sourceRuns = this.getAll<SessionRunRow>(
+      `SELECT * FROM cowork_session_runs
+       WHERE session_id = ? AND ended_at IS NOT NULL
+       ORDER BY started_at, id`,
+      [sourceSessionId],
+    );
+    if (sourceRuns.length === 0) return 0;
+
+    const insert = this.db.prepare(
+      `INSERT INTO cowork_session_runs
+        (id, session_id, client_turn_id, root_run_id, model_ref, state,
+         started_at, accepted_at, ended_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const copy = this.db.transaction(() => {
+      const now = Date.now();
+      for (const run of sourceRuns) {
+        const id = uuidv4();
+        insert.run(
+          id,
+          targetSessionId,
+          `justdo-${run.started_at}-${id}`,
+          run.root_run_id,
+          run.model_ref,
+          run.state,
+          run.started_at,
+          run.accepted_at,
+          run.ended_at,
+          now,
+          now,
+        );
+      }
+    });
+    copy();
+    return sourceRuns.length;
+  }
+
   bindSessionRunRootRun(id: string, rootRunId: string): SessionRunTiming | undefined {
     const now = Date.now();
     this.db

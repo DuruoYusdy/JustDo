@@ -1,4 +1,12 @@
+import { isPresentPlanToolName } from '@shared/cowork/planPreview';
+
 import { FAILED_RUN_MESSAGE_ID } from '@/libs/openclaw-chat/model/failed-run-message';
+import {
+  asToolRecord,
+  attachedToolMessages,
+  readToolName,
+  unwrapToolMessage,
+} from '@/libs/openclaw-chat/model/tool-message-adapter';
 
 export interface TranscriptIdentity {
   kind: 'openclaw-id' | 'openclaw-seq' | 'durable-id';
@@ -59,15 +67,40 @@ export function isEntryAfterLatestPlanImplementationReset(
   if (!normalizedEntryId) return false;
   let latestResetIndex = -1;
   let targetIndex = -1;
+  let planPresentedSinceLastReset = false;
   messages.forEach((message, index) => {
     const record = asRecord(message);
     const marker = asRecord(record?.__openclaw);
-    if (marker?.kind === 'reset' && marker.planImplementation === true) {
-      latestResetIndex = index;
+    if (marker?.kind === 'reset') {
+      if (marker.planImplementation === true || planPresentedSinceLastReset) {
+        latestResetIndex = index;
+      }
+      planPresentedSinceLastReset = false;
+    } else if (containsPresentPlanTool(message)) {
+      planPresentedSinceLastReset = true;
     }
     if (readScalar(marker?.id) === normalizedEntryId) targetIndex = index;
   });
   return targetIndex >= 0 && (latestResetIndex < 0 || targetIndex > latestResetIndex);
+}
+
+function containsPresentPlanTool(value: unknown): boolean {
+  const message = unwrapToolMessage(value);
+  if (!message) return false;
+  const candidates = [
+    message,
+    ...(Array.isArray(message.content)
+      ? message.content.flatMap(block => {
+          const record = asToolRecord(block);
+          return record ? [record] : [];
+        })
+      : []),
+    ...attachedToolMessages(message).flatMap(attached => {
+      const record = unwrapToolMessage(attached);
+      return record ? [record] : [];
+    }),
+  ];
+  return candidates.some(candidate => isPresentPlanToolName(readToolName(candidate)));
 }
 
 /**

@@ -99,6 +99,7 @@ test('copies an idle session from its canonical transcript', async () => {
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(copied),
+    copyTerminalSessionRuns: vi.fn().mockReturnValue(1),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
   const router = {
@@ -181,6 +182,7 @@ test('copies an idle session from its canonical transcript', async () => {
     }),
   );
   expect(store.deleteSession).not.toHaveBeenCalled();
+  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(source.id, copied.id);
 });
 
 test('preserves enabled Plan mode when copying the canonical session', async () => {
@@ -201,6 +203,7 @@ test('preserves enabled Plan mode when copying the canonical session', async () 
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(copied),
+    copyTerminalSessionRuns: vi.fn().mockReturnValue(0),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
   const router = {
@@ -412,6 +415,7 @@ test('forks after a historical assistant response by cutting before the next use
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(forked),
+    copyTerminalSessionRuns: vi.fn().mockReturnValue(1),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
   const router = {
@@ -501,6 +505,7 @@ test('forks after a historical assistant response by cutting before the next use
     }),
   );
   expect(store.deleteSession).not.toHaveBeenCalled();
+  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(source.id, forked.id);
 });
 
 test('forks the latest completed assistant response at its exact entry', async () => {
@@ -524,6 +529,7 @@ test('forks the latest completed assistant response at its exact entry', async (
   const store = {
     getSession: vi.fn().mockReturnValue(source),
     createSession: vi.fn().mockReturnValue(forked),
+    copyTerminalSessionRuns: vi.fn().mockReturnValue(1),
     deleteSession: vi.fn(),
   } as unknown as CoworkStore;
   const router = {
@@ -567,6 +573,7 @@ test('forks the latest completed assistant response at its exact entry', async (
     targetKey: 'agent:main:justdo:forked-session',
     includeEntry: true,
   });
+  expect(store.copyTerminalSessionRuns).toHaveBeenCalledWith(source.id, forked.id);
   expect(requestGateway).not.toHaveBeenCalledWith('sessions.create', expect.anything());
   expect(store.deleteSession).not.toHaveBeenCalled();
 });

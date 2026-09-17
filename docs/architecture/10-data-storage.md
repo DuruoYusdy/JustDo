@@ -110,9 +110,9 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 Main 与 Redux 也不再维护 transcript projection。Renderer 的 chat controller 直接消费 Gateway history、in-flight snapshot 和实时 Thinking/Tool/Content 事件，并只在页面生命周期内保存有界的显示状态。会话导出必须从 controller 的 Gateway 快照生成；全文搜索、历史详情、定时任务结果和 subagent timeline 均按需查询 Gateway。产品侧 `CoworkSession` 契约不再包含 `messages` 字段，避免空数组被误当作可用 transcript 或降级数据源。
 
-会话复制只新增一条独立的 `cowork_sessions` 元数据记录；正文复制由 OpenClaw transcript fork 完成，不写入 `justdo.sqlite`。复制失败时删除这条新记录，因此不需要新表或消息缓存。普通“复制当前会话”保持独立，不记录分叉来源。
+会话复制新增一条独立的 `cowork_sessions` 元数据记录；正文复制由 OpenClaw transcript fork 完成，不写入 `justdo.sqlite`。源会话已结束的 `cowork_session_runs` 会以新的本地 id/client-turn id 复制到目标，并保留 `root_run_id` 与时间字段，供继承历史继续展示模型、完成时间、耗时和分叉资格；开口 receipt 不复制，也不表示目标发生过新的执行。复制失败时删除新 session，外键级联删除这些 receipt，因此不需要新表或消息缓存。普通“复制当前会话”保持独立，不记录分叉来源。
 
-从完整助手回复创建分叉时，正文仍由 OpenClaw transcript fork 完成；JustDo 只在新 `cowork_sessions` row 中记录来源本地会话、来源标题快照和所选助手回复的原生 entry id。Plan 尚未发生实施 reset 时允许规划回复分叉；reset 后只允许实施 boundary 后的回复，不创建或查询 segment row。来源会话仍存在时，展示标题从来源 row 动态读取，因此重命名会立即反映；来源被删除后，self foreign key 通过 `ON DELETE SET NULL` 避免悬空引用，标题快照仍可用于不可点击的来源说明。Gateway 分叉失败、返回非预期 target key 或新会话 adoption 失败时，新产品 row 会被删除。最后一条用户消息修改/撤回只改变 OpenClaw 的 active transcript branch，不更新本 schema。
+从完整助手回复创建分叉时，正文仍由 OpenClaw transcript fork 完成；JustDo 在新 `cowork_sessions` row 中记录来源本地会话、来源标题快照和所选助手回复的原生 entry id，并复制已结束 run 的显示 receipt，使继承回复仍可再次分叉。Plan 尚未发生实施 reset 时允许规划回复分叉；reset 后只允许实施 boundary 后的回复，不创建或查询 segment row。来源会话仍存在时，展示标题从来源 row 动态读取，因此重命名会立即反映；来源被删除后，self foreign key 通过 `ON DELETE SET NULL` 避免悬空引用，标题快照仍可用于不可点击的来源说明。Gateway 分叉失败、返回非预期 target key 或新会话 adoption 失败时，新产品 row 会被删除。最后一条用户消息修改/撤回只改变 OpenClaw 的 active transcript branch，不更新本 schema。
 
 OpenClaw v2026.9.2 对接不再由 JustDo 直接读写 agent `sessions.json`。Gateway history、session model 与 task state 分别通过 `chat.history`、`sessions.patch`、`tasks.list/get` 获取；受限 history detail 由内置 runtime services RPC 投影。
 

@@ -220,7 +220,7 @@ describe('justdo-chat last user message actions', () => {
     });
   });
 
-  test('hides edit and withdraw when the latest visible user message is before a Plan reset', async () => {
+  test('hides edit and withdraw when native Plan history resets before implementation', async () => {
     const controller = new ChatController();
     controller.state.sessionKey = 'agent:main:justdo:session-1';
     controller.state.connected = true;
@@ -235,9 +235,16 @@ describe('justdo-chat last user message actions', () => {
       [
         { role: 'user', content: 'plan this', __openclaw: { id: 'planning-user' } },
         {
+          role: 'assistant',
+          content: [
+            { type: 'toolcall', name: 'PresentPlan', input: { plan: 'Implementation plan' } },
+          ],
+          __openclaw: { id: 'planning-assistant' },
+        },
+        {
           role: 'system',
           content: '',
-          __openclaw: { id: 'plan-reset', kind: 'reset', planImplementation: true },
+          __openclaw: { id: 'plan-reset', kind: 'reset' },
         },
         { role: 'assistant', content: 'implementation finished', __openclaw: { id: 'result' } },
       ],

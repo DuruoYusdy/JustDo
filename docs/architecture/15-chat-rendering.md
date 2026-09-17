@@ -266,7 +266,7 @@ Goal card 位于 chat 周边，Goal 内容/状态来自 Gateway session row，�
 
 ## 18. 会话操作与导出
 
-编辑与撤回只绑定 canonical transcript 的最后一个持久化 user entry，用户消息 footer 不承载分叉入口。“从此处分支”绑定已完成助手回复，在模型、完成时间和运行时长之后渲染独立图标；只有原生 entry id、成功完成的 run timing 和稳定空闲 history 同时存在时才显示。Plan 尚未发生实施 reset 时 transcript 连续，规划阶段的完整助手回复可分叉；发生 `planImplementation` reset 后，Lit 以最新 marker 为边界，只给其后的实施阶段助手回复显示分叉。实施刚开始而最后一条可见用户消息仍属于规划阶段时不显示编辑/撤回，Controller 也拒绝任何跨 reset 的 `sessions.rewind`，因为 transcript 回退不会同步回滚 Plan 插件状态、本地 handoff 状态或已经发生的工作区副作用。所有操作在断连、sending、compaction、history load/page load、optimistic message 或缺少原生身份时隐藏。
+编辑与撤回只绑定 canonical transcript 的最后一个持久化 user entry，用户消息 footer 不承载分叉入口。“从此处分支”绑定已完成助手回复，在模型、完成时间和运行时长之后渲染独立图标；只有原生 entry id、成功完成的 run timing 和稳定空闲 history 同时存在时才显示。Plan 尚未发生实施 reset 时 transcript 连续，规划阶段的完整助手回复可分叉；实施 reset 既可由显式 `planImplementation` marker 识别，也可由 reset 前已持久化的 `PresentPlan` 推断，边界出现后 Lit 只给其后的实施阶段助手回复显示分叉。实施刚开始而最后一条可见用户消息仍属于规划阶段时不显示编辑/撤回，Controller 也拒绝任何跨 reset 的 `sessions.rewind`，因为 transcript 回退不会同步回滚 Plan 插件状态、本地 handoff 状态或已经发生的工作区副作用。所有操作在断连、sending、compaction、history load/page load、optimistic message 或缺少原生身份时隐藏。
 
 确认编辑/撤回后 Controller 再次核对最后一条原生 entry identity 和 Plan 边界，再调用 `sessions.rewind`，使旧 history generation、分页窗口和显示缓存失效，并从 `chat.history` 重建当前 branch。助手分叉不恢复用户草稿：Renderer 传递所点助手 entry id，Gateway 在生命周期锁和 SQLite transaction 内原子验证并复制截至该完整回复的 active-path 前缀，新会话以空 composer 打开。来源跳转按助手 entry id 加载 canonical history、滚动并短暂高亮原回复。history 重载失败或用户切换会话都不能丢失源会话草稿；撤回模式不恢复草稿。
 
