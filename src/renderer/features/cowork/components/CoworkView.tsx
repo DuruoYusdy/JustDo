@@ -1,6 +1,7 @@
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
   ChatBubbleLeftEllipsisIcon,
   CheckCircleIcon,
   ClipboardDocumentCheckIcon,
@@ -69,6 +70,7 @@ import { inferInitialGoalObjective } from '@/features/cowork/components/goals/go
 import type { GoalRunProgress } from '@/features/cowork/components/goals/goalRunProgress';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
+  type CoworkDisplayTabCloseActions,
 } from '@/features/cowork/components/preview/CoworkDisplayPanel';
 import DisplayPanelLauncher from '@/features/cowork/components/preview/DisplayPanelLauncher';
 import { getAdjacentDisplayTabId } from '@/features/cowork/components/preview/displayTabSelection';
@@ -85,7 +87,6 @@ import {
   retainedPlanForSession,
 } from '@/features/cowork/components/preview/planPreviewState';
 import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
-import TerminalTabContextMenu from '@/features/cowork/components/preview/TerminalTabContextMenu';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
@@ -200,6 +201,16 @@ interface CoworkSideChatTab {
   messages: SideChatMessage[];
   sessionId: string;
 }
+
+const getSystemTerminalLabel = (): string => {
+  if (window.electron.platform === 'win32') {
+    return i18nService.t('coworkOpenWindowsSystemTerminal');
+  }
+  if (window.electron.platform === 'darwin') {
+    return i18nService.t('coworkOpenMacSystemTerminal');
+  }
+  return i18nService.t('coworkOpenSystemTerminal');
+};
 function resolveProgressCardRunState(
   card: ProgressCard,
   runtimeRunning: boolean,
@@ -312,11 +323,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [browserTabs, setBrowserTabs] = useState<BrowserPanelTab[]>([]);
   const [browserTabCreationSequence, setBrowserTabCreationSequence] = useState(0);
   const [terminalTabs, setTerminalTabs] = useState<CoworkTerminalTab[]>([]);
-  const [terminalTabMenu, setTerminalTabMenu] = useState<{
-    cwd: string;
-    x: number;
-    y: number;
-  } | null>(null);
   const [preferredDisplayTabId, setPreferredDisplayTabId] = useState<string | null>(null);
   const [sideChatTabs, setSideChatTabs] = useState<CoworkSideChatTab[]>([]);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
@@ -1128,13 +1134,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }, []);
 
   const closeFilePreview = useCallback(
-    async (filePath: string): Promise<void> => {
+    async (filePath: string): Promise<boolean> => {
       const tabId = fileDisplayTabId(filePath);
       const canClose =
         (await filePreviewDrawerRefs.current.get(tabId)?.requestTransition()) ?? true;
-      if (!canClose) return;
+      if (!canClose) return false;
       setFilePreviews(current => current.filter(preview => preview.filePath !== filePath));
       selectAdjacentDisplayTabAfterClose(tabId);
+      return true;
     },
     [selectAdjacentDisplayTabAfterClose],
   );
@@ -1644,7 +1651,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   );
 
   const handleOpenSystemTerminal = useCallback(async (cwd: string) => {
-    setTerminalTabMenu(null);
     try {
       const result = await window.electron.openclaw.engine.openTerminal(cwd);
       if (result.success) return;
@@ -2070,8 +2076,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             ),
             onSelect: () => handleBrowserTargetChange(tab.targetId),
             onClose: () => browserPanelRef.current?.closeTab(tab.targetId),
-            onContextMenu: ({ x, y }: { x: number; y: number }) =>
-              browserPanelRef.current?.openTabContextMenu(tab.targetId, x, y),
+            onContextMenu: (
+              { x, y }: { x: number; y: number },
+              closeActions: CoworkDisplayTabCloseActions,
+            ) => browserPanelRef.current?.openTabContextMenu(tab.targetId, x, y, closeActions),
           }))
         : []),
       ...terminalTabs.map(tab => ({
@@ -2083,15 +2091,21 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           setPreferredDisplayTabId(tab.id);
         },
         onClose: () => closeTerminalTab(tab.id),
-        onContextMenu: ({ x, y }: { x: number; y: number }) =>
-          setTerminalTabMenu({ cwd: tab.cwd, x, y }),
+        contextMenuItems: [
+          {
+            id: 'open-system-terminal',
+            label: getSystemTerminalLabel(),
+            icon: <ArrowTopRightOnSquareIcon className="h-4 w-4 shrink-0" />,
+            onSelect: () => handleOpenSystemTerminal(tab.cwd),
+          },
+        ],
       })),
       ...filePreviews.map(preview => ({
         id: fileDisplayTabId(preview.filePath),
         label: preview.filePath.split(/[\\/]/).pop() || preview.filePath,
         icon: <DocumentTextIcon className="h-4 w-4" />,
         onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
-        onClose: () => void closeFilePreview(preview.filePath),
+        onClose: () => closeFilePreview(preview.filePath),
       })),
       ...unsupportedFilePreviews.map(filePath => ({
         id: fileDisplayTabId(filePath),
@@ -2716,14 +2730,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
             </CoworkDisplayPanel>
           )}
-          {terminalTabMenu && (
-            <TerminalTabContextMenu
-              x={terminalTabMenu.x}
-              y={terminalTabMenu.y}
-              onDismiss={() => setTerminalTabMenu(null)}
-              onOpenSystemTerminal={() => void handleOpenSystemTerminal(terminalTabMenu.cwd)}
-            />
-          )}
           <ExportSessionModal
             isOpen={isSessionExportOpen}
             sessionTitle={currentSession.title}
@@ -2791,8 +2797,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           ),
           onSelect: () => handleBrowserTargetChange(tab.targetId),
           onClose: () => browserPanelRef.current?.closeTab(tab.targetId),
-          onContextMenu: ({ x, y }: { x: number; y: number }) =>
-            browserPanelRef.current?.openTabContextMenu(tab.targetId, x, y),
+          onContextMenu: (
+            { x, y }: { x: number; y: number },
+            closeActions: CoworkDisplayTabCloseActions,
+          ) => browserPanelRef.current?.openTabContextMenu(tab.targetId, x, y, closeActions),
         }))
       : []),
     ...terminalTabs.map(tab => ({
@@ -2801,15 +2809,21 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       icon: <CommandLineIcon className="h-4 w-4" />,
       onSelect: () => setPreferredDisplayTabId(tab.id),
       onClose: () => closeTerminalTab(tab.id),
-      onContextMenu: ({ x, y }: { x: number; y: number }) =>
-        setTerminalTabMenu({ cwd: tab.cwd, x, y }),
+      contextMenuItems: [
+        {
+          id: 'open-system-terminal',
+          label: getSystemTerminalLabel(),
+          icon: <ArrowTopRightOnSquareIcon className="h-4 w-4 shrink-0" />,
+          onSelect: () => handleOpenSystemTerminal(tab.cwd),
+        },
+      ],
     })),
     ...filePreviews.map(preview => ({
       id: fileDisplayTabId(preview.filePath),
       label: preview.filePath.split(/[\\/]/).pop() || preview.filePath,
       icon: <DocumentTextIcon className="h-4 w-4" />,
       onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
-      onClose: () => void closeFilePreview(preview.filePath),
+      onClose: () => closeFilePreview(preview.filePath),
     })),
     ...unsupportedFilePreviews.map(filePath => ({
       id: fileDisplayTabId(filePath),
@@ -2981,14 +2995,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               />
             ))}
           </CoworkDisplayPanel>
-        )}
-        {terminalTabMenu && (
-          <TerminalTabContextMenu
-            x={terminalTabMenu.x}
-            y={terminalTabMenu.y}
-            onDismiss={() => setTerminalTabMenu(null)}
-            onOpenSystemTerminal={() => void handleOpenSystemTerminal(terminalTabMenu.cwd)}
-          />
         )}
       </div>
     </div>

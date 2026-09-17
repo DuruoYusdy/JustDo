@@ -253,8 +253,22 @@ const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
 
 export interface BrowserPanelHandle {
   closeTab: (targetId: string) => void;
-  openTabContextMenu: (targetId: string, x: number, y: number) => void;
+  openTabContextMenu: (
+    targetId: string,
+    x: number,
+    y: number,
+    closeActions?: BrowserTabCloseActions,
+  ) => void;
   openTab: (url?: string, options?: Omit<BrowserOpenTabOptions, 'insertAfterTargetId'>) => void;
+}
+
+export interface BrowserTabCloseActions {
+  canCloseOthers: boolean;
+  canCloseRight: boolean;
+  close: () => void | Promise<void>;
+  closeOthers: () => void | Promise<void>;
+  closeRight: () => void | Promise<void>;
+  restoreFocus?: () => void;
 }
 
 interface BrowserPanelProps {
@@ -315,7 +329,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [isCapturing, setIsCapturing] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [isCommentComposerOpen, setIsCommentComposerOpen] = useState(false);
-  const [tabMenu, setTabMenu] = useState<{ targetId: string; x: number; y: number } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{
+    targetId: string;
+    x: number;
+    y: number;
+    closeActions?: BrowserTabCloseActions;
+  } | null>(null);
   const [renamingTargetId, setRenamingTargetId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [overflowMenuAnchor, setOverflowMenuAnchor] = useState<{
@@ -570,10 +589,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     [clearAnnotations, onActiveTargetChange],
   );
 
-  const openTabContextMenu = useCallback((targetId: string, x: number, y: number) => {
-    if (!tabsRef.current.some(tab => tab.targetId === targetId)) return;
-    setTabMenu({ targetId, x, y });
-  }, []);
+  const openTabContextMenu = useCallback(
+    (targetId: string, x: number, y: number, closeActions?: BrowserTabCloseActions) => {
+      if (!tabsRef.current.some(tab => tab.targetId === targetId)) return;
+      setTabMenu({ targetId, x, y, closeActions });
+    },
+    [],
+  );
 
   useImperativeHandle(
     ref,
@@ -1178,6 +1200,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const handleTabMenuAction = async (action: BrowserTabMenuAction) => {
     const targetId = tabMenu?.targetId;
+    const externalCloseActions = tabMenu?.closeActions;
     setTabMenu(null);
     if (!targetId) return;
     const tab = tabsRef.current.find(candidate => candidate.targetId === targetId);
@@ -1242,7 +1265,19 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return;
     }
     if (action === 'close') {
+      if (externalCloseActions) {
+        await externalCloseActions.close();
+        return;
+      }
       closeTab(targetId);
+      return;
+    }
+    if (action === 'close-others' && externalCloseActions) {
+      await externalCloseActions.closeOthers();
+      return;
+    }
+    if (action === 'close-right' && externalCloseActions) {
+      await externalCloseActions.closeRight();
       return;
     }
     const targetIndex = tabsRef.current.findIndex(candidate => candidate.targetId === targetId);
@@ -2060,10 +2095,14 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           copyAddressLabel={
             isAtSourcePreview(menuTab) ? i18nService.t('browserTabMenuCopyFilePath') : undefined
           }
-          canCloseOthers={tabs.length > 1}
-          canCloseRight={menuTabIndex >= 0 && menuTabIndex < tabs.length - 1}
+          canCloseOthers={tabMenu.closeActions?.canCloseOthers ?? tabs.length > 1}
+          canCloseRight={
+            tabMenu.closeActions?.canCloseRight ??
+            (menuTabIndex >= 0 && menuTabIndex < tabs.length - 1)
+          }
           onAction={action => void handleTabMenuAction(action)}
           onDismiss={() => setTabMenu(null)}
+          onRestoreFocus={tabMenu.closeActions?.restoreFocus}
         />
       )}
       {annotationToolMenuAnchor && (

@@ -42,6 +42,7 @@ export default function BrowserTabContextMenu({
   canCloseRight,
   onAction,
   onDismiss,
+  onRestoreFocus,
 }: {
   x: number;
   y: number;
@@ -51,6 +52,7 @@ export default function BrowserTabContextMenu({
   canCloseRight: boolean;
   onAction: (action: BrowserTabMenuAction) => void;
   onDismiss: () => void;
+  onRestoreFocus?: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const iconClass = 'h-4 w-4 shrink-0';
@@ -127,10 +129,20 @@ export default function BrowserTabContextMenu({
     return () => trigger?.focus();
   }, []);
 
+  const dismissAndRestoreFocus = () => {
+    onDismiss();
+    if (onRestoreFocus) requestAnimationFrame(onRestoreFocus);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
-      onDismiss();
+      dismissAndRestoreFocus();
+      return;
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      dismissAndRestoreFocus();
       return;
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
@@ -155,12 +167,14 @@ export default function BrowserTabContextMenu({
     <>
       <button
         type="button"
+        tabIndex={-1}
+        aria-hidden="true"
         className="fixed inset-0 z-[109] cursor-default"
         aria-label={i18nService.t('browserTabMenuDismiss')}
-        onClick={onDismiss}
+        onClick={dismissAndRestoreFocus}
         onContextMenu={event => {
           event.preventDefault();
-          onDismiss();
+          dismissAndRestoreFocus();
         }}
       />
       <div

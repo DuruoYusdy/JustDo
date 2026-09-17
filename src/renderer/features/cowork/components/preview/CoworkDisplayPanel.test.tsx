@@ -100,7 +100,10 @@ describe('CoworkDisplayPanel', () => {
       clientX: 48,
       clientY: 72,
     });
-    expect(openBrowserMenu).toHaveBeenCalledWith({ x: 48, y: 72 });
+    expect(openBrowserMenu).toHaveBeenCalledWith(
+      { x: 48, y: 72 },
+      expect.objectContaining({ canCloseOthers: true, canCloseRight: true }),
+    );
     fireEvent.keyDown(screen.getByRole('tab', { name: 'notes.md' }), { key: 'ArrowLeft' });
     expect(selectBrowser).toHaveBeenCalledTimes(2);
     await waitFor(() =>
@@ -113,6 +116,162 @@ describe('CoworkDisplayPanel', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('520');
     fireEvent.keyDown(separator, { key: 'ArrowRight' });
     expect(separator.getAttribute('aria-valuenow')).toBe('496');
+  });
+
+  it('offers close, close-other, and close-right actions for display tabs', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);
+    const selectMiddle = vi.fn();
+    const closeLeft = vi.fn();
+    const closeMiddle = vi.fn();
+    const closeRight = vi.fn();
+    const openSystemTerminal = vi.fn();
+
+    render(
+      <CoworkDisplayPanel
+        activeTabId="middle"
+        isOpen
+        onClose={vi.fn()}
+        tabs={[
+          {
+            id: 'left',
+            label: 'Left',
+            icon: <span>L</span>,
+            onSelect: vi.fn(),
+            onClose: closeLeft,
+          },
+          {
+            id: 'middle',
+            label: 'Middle',
+            icon: <span>M</span>,
+            onSelect: selectMiddle,
+            onClose: closeMiddle,
+            contextMenuItems: [
+              {
+                id: 'open-system-terminal',
+                label: 'Open system terminal',
+                onSelect: openSystemTerminal,
+              },
+            ],
+          },
+          {
+            id: 'right',
+            label: 'Right',
+            icon: <span>R</span>,
+            onSelect: vi.fn(),
+            onClose: closeRight,
+          },
+        ]}
+      >
+        <div>Content</div>
+      </CoworkDisplayPanel>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'Middle' }), {
+      clientX: 40,
+      clientY: 50,
+    });
+    expect(screen.getByRole('menu', { name: 'Tab menu' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Open system terminal' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open system terminal' }));
+    expect(openSystemTerminal).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Middle' })),
+    );
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'Middle' }), {
+      clientX: 40,
+      clientY: 50,
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close tabs to the right' }));
+    await waitFor(() => expect(closeRight).toHaveBeenCalledTimes(1));
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'Middle' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close other tabs' }));
+    await waitFor(() => {
+      expect(selectMiddle).toHaveBeenCalledTimes(1);
+      expect(closeLeft).toHaveBeenCalledTimes(1);
+      expect(closeRight).toHaveBeenCalledTimes(2);
+    });
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'Middle' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close' }));
+    await waitFor(() => expect(closeMiddle).toHaveBeenCalledTimes(1));
+  });
+
+  it('stops a bulk close when a tab rejects its close transition', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);
+    const rejectClose = vi.fn().mockResolvedValue(false);
+    const laterClose = vi.fn();
+
+    render(
+      <CoworkDisplayPanel
+        activeTabId="target"
+        isOpen
+        onClose={vi.fn()}
+        tabs={[
+          {
+            id: 'target',
+            label: 'Target',
+            icon: <span>T</span>,
+            onSelect: vi.fn(),
+            onClose: vi.fn(),
+          },
+          {
+            id: 'dirty-file',
+            label: 'Dirty file',
+            icon: <span>D</span>,
+            onSelect: vi.fn(),
+            onClose: rejectClose,
+          },
+          {
+            id: 'later',
+            label: 'Later',
+            icon: <span>L</span>,
+            onSelect: vi.fn(),
+            onClose: laterClose,
+          },
+        ]}
+      >
+        <div>Content</div>
+      </CoworkDisplayPanel>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'Target' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close tabs to the right' }));
+
+    await waitFor(() => expect(rejectClose).toHaveBeenCalledTimes(1));
+    expect(laterClose).not.toHaveBeenCalled();
+  });
+
+  it('dismisses a portaled tab menu when the display panel is hidden', () => {
+    i18nService.setLanguage('en', { persist: false });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);
+    const tabs = [
+      {
+        id: 'file',
+        label: 'notes.md',
+        icon: <span>F</span>,
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+      },
+    ];
+    const view = render(
+      <CoworkDisplayPanel activeTabId="file" isOpen onClose={vi.fn()} tabs={tabs}>
+        <div>Content</div>
+      </CoworkDisplayPanel>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'notes.md' }));
+    expect(screen.getByRole('menu', { name: 'Tab menu' })).toBeTruthy();
+
+    view.rerender(
+      <CoworkDisplayPanel activeTabId="file" isOpen={false} onClose={vi.fn()} tabs={tabs}>
+        <div>Content</div>
+      </CoworkDisplayPanel>,
+    );
+    expect(screen.queryByRole('menu', { name: 'Tab menu' })).toBeNull();
   });
 
   it('docks the workspace tree beside preview content without adding a tab', async () => {

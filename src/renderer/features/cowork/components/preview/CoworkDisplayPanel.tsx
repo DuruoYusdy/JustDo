@@ -5,13 +5,28 @@ import { i18nService } from '@/services/i18n';
 import RightSidebarIcon from '@/shared/components/icons/RightSidebarIcon';
 import WorkspaceFullscreenIcon from '@/shared/components/icons/WorkspaceFullscreenIcon';
 
+import DisplayTabContextMenu, { type DisplayTabContextMenuItem } from './DisplayTabContextMenu';
+
 export interface CoworkDisplayTab {
   id: string;
   label: string;
   icon: React.ReactNode;
-  onClose?: () => void;
-  onContextMenu?: (position: { x: number; y: number }) => void;
+  contextMenuItems?: DisplayTabContextMenuItem[];
+  onClose?: () => void | boolean | Promise<void | boolean>;
+  onContextMenu?: (
+    position: { x: number; y: number },
+    closeActions: CoworkDisplayTabCloseActions,
+  ) => void;
   onSelect: () => void;
+}
+
+export interface CoworkDisplayTabCloseActions {
+  canCloseOthers: boolean;
+  canCloseRight: boolean;
+  close: () => Promise<void>;
+  closeOthers: () => Promise<void>;
+  closeRight: () => Promise<void>;
+  restoreFocus: () => void;
 }
 
 interface CoworkDisplayPanelProps {
@@ -48,6 +63,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
 }) => {
   const [width, setWidth] = useState(DISPLAY_PANEL_DEFAULT_WIDTH);
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(false);
+  const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const hasSidePanel = Boolean(sidePanel);
   const panelRef = useRef<HTMLElement>(null);
   const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -78,6 +94,10 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     if (!hasSidePanel) return;
     setWidth(current => clampWidth(Math.max(current, 760)));
   }, [clampWidth, hasSidePanel]);
+
+  useEffect(() => {
+    if (!isOpen) setTabMenu(null);
+  }, [isOpen]);
 
   const handleTabKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, tabIndex: number) => {
@@ -133,6 +153,55 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     [clampWidth],
   );
 
+  const closeTabs = useCallback(async (closingTabs: CoworkDisplayTab[]): Promise<boolean> => {
+    for (const tab of closingTabs) {
+      if ((await tab.onClose?.()) === false) return false;
+    }
+    return true;
+  }, []);
+
+  const focusTab = useCallback((tabId: string | undefined) => {
+    if (!tabId) return;
+    requestAnimationFrame(() => tabButtonRefs.current.get(tabId)?.focus());
+  }, []);
+
+  const getCloseActions = useCallback(
+    (tab: CoworkDisplayTab, tabIndex: number): CoworkDisplayTabCloseActions => {
+      const otherTabs = tabs.filter(candidate => candidate.id !== tab.id && candidate.onClose);
+      const rightTabs = tabs.slice(tabIndex + 1).filter(candidate => candidate.onClose);
+      const adjacentTab = tabs[tabIndex + 1] ?? tabs[tabIndex - 1];
+      return {
+        canCloseOthers: otherTabs.length > 0,
+        canCloseRight: rightTabs.length > 0,
+        close: async () => {
+          const closed = (await tab.onClose?.()) !== false;
+          focusTab(closed ? adjacentTab?.id : tab.id);
+        },
+        closeOthers: async () => {
+          tab.onSelect();
+          await closeTabs(otherTabs);
+          focusTab(tab.id);
+        },
+        closeRight: async () => {
+          await closeTabs(rightTabs);
+          focusTab(tab.id);
+        },
+        restoreFocus: () => focusTab(tab.id),
+      };
+    },
+    [closeTabs, focusTab, tabs],
+  );
+
+  const menuTabIndex = tabMenu ? tabs.findIndex(tab => tab.id === tabMenu.tabId) : -1;
+  const menuTab = menuTabIndex >= 0 ? tabs[menuTabIndex] : undefined;
+  const menuCloseActions = menuTab ? getCloseActions(menuTab, menuTabIndex) : undefined;
+
+  const dismissTabMenu = (restoreFocus = true) => {
+    const triggerTabId = tabMenu?.tabId;
+    setTabMenu(null);
+    if (restoreFocus) focusTab(triggerTabId);
+  };
+
   return (
     <aside
       id="cowork-display-panel"
@@ -185,9 +254,23 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
                       tab.onContextMenu
                         ? event => {
                             event.preventDefault();
-                            tab.onContextMenu?.({ x: event.clientX, y: event.clientY });
+                            setTabMenu(null);
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const position =
+                              event.clientX || event.clientY
+                                ? { x: event.clientX, y: event.clientY }
+                                : { x: rect.left, y: rect.bottom };
+                            tab.onContextMenu?.(position, getCloseActions(tab, tabIndex));
                           }
-                        : undefined
+                        : event => {
+                            event.preventDefault();
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            setTabMenu({
+                              tabId: tab.id,
+                              x: event.clientX || event.clientY ? event.clientX : rect.left,
+                              y: event.clientX || event.clientY ? event.clientY : rect.bottom,
+                            });
+                          }
                     }
                   >
                     <button
@@ -284,6 +367,21 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
           </div>
         )}
       </div>
+      {isOpen && tabMenu && menuTab && menuCloseActions && (
+        <DisplayTabContextMenu
+          x={tabMenu.x}
+          y={tabMenu.y}
+          items={menuTab.contextMenuItems}
+          canClose={Boolean(menuTab.onClose)}
+          canCloseOthers={menuCloseActions.canCloseOthers}
+          canCloseRight={menuCloseActions.canCloseRight}
+          onActionComplete={() => focusTab(menuTab.id)}
+          onDismiss={dismissTabMenu}
+          onClose={menuCloseActions.close}
+          onCloseOthers={menuCloseActions.closeOthers}
+          onCloseRight={menuCloseActions.closeRight}
+        />
+      )}
     </aside>
   );
 };

@@ -937,6 +937,53 @@ describe('BrowserPanel embedded webview', () => {
     expect(screen.getByRole('textbox', { name: 'Rename tab' })).toBeTruthy();
   });
 
+  it('delegates shared display-bar close actions to the full tab strip', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    const close = vi.fn();
+    const closeOthers = vi.fn();
+    const closeRight = vi.fn();
+    const restoreFocus = vi.fn();
+    render(
+      <BrowserPanelHarness
+        embedded
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={onTabsChange}
+      />,
+    );
+
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    const latestTabs = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0];
+    const targetId = latestTabs?.[0]?.targetId;
+    const closeActions = {
+      canCloseOthers: true,
+      canCloseRight: true,
+      close,
+      closeOthers,
+      closeRight,
+      restoreFocus,
+    };
+
+    act(() => panelHandle?.openTabContextMenu(targetId, 40, 40, closeActions));
+    fireEvent.keyDown(screen.getByRole('menu', { name: 'Tab menu' }), { key: 'Tab' });
+    expect(screen.queryByRole('menu', { name: 'Tab menu' })).toBeNull();
+    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+
+    act(() => panelHandle?.openTabContextMenu(targetId, 40, 40, closeActions));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close tabs to the right' }));
+    expect(closeRight).toHaveBeenCalledTimes(1);
+
+    act(() => panelHandle?.openTabContextMenu(targetId, 40, 40, closeActions));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close other tabs' }));
+    expect(closeOthers).toHaveBeenCalledTimes(1);
+
+    act(() => panelHandle?.openTabContextMenu(targetId, 40, 40, closeActions));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close tab' }));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('offers tab management actions from the tab context menu', async () => {
     const { container } = render(<BrowserPanelHarness />);
     const tab = container.querySelector('[data-browser-tab-id]')!;
