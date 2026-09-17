@@ -14,7 +14,10 @@ import {
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
 import {
+  BROWSER_AGENT_INTERACTION_ACK_TIMEOUT_MS,
+  BROWSER_AGENT_PANEL_TARGET_ID,
   BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH,
+  type BrowserAgentInteractionState,
   type BrowserAnnotationDraft,
   serializeBrowserAnnotationContext,
 } from '@shared/browser';
@@ -51,9 +54,17 @@ import {
 import BrowserPanel, {
   BROWSER_PANEL_DEFAULT_WIDTH,
   type BrowserPanelHandle,
+  createBrowserPanelTab,
   getBrowserTabDisplayTitle,
 } from '@/features/browser/BrowserPanel';
-import { promoteBrowserPanelTabs } from '@/features/browser/browserPanelRetention';
+import {
+  browserAgentPanelOperationKey,
+  isAgentBrowserSessionAvailable,
+  type PendingBrowserAgentPanelState,
+  promoteBrowserPanelTabs,
+  promotePendingBrowserPanelItems,
+  takeAvailableBrowserAgentPanelStates,
+} from '@/features/browser/browserPanelRetention';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
@@ -352,6 +363,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     BROWSER_PANEL_DEFAULT_WIDTH,
     config.maxRetainedDisplayTabs ?? DEFAULT_MAX_RETAINED_DISPLAY_TABS,
     isInitialized ? sessions.map(session => session.id) : undefined,
+    sessions.filter(session => session.status === 'running').map(session => session.id),
   );
   const subtaskListToggleRef = useRef<HTMLButtonElement>(null);
   const displayPanelToggleRef = useRef<HTMLButtonElement>(null);
@@ -391,15 +403,34 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const sessionSearchPanelRef = useRef<HTMLDivElement>(null);
   const browserPanelRefs = useRef(new Map<string, BrowserPanelHandle>());
-  const pendingBrowserTabsRef = useRef<
-    Array<{
-      url?: string;
-      sourceFilePath?: string;
-      sourcePreviewUrl?: string;
-      sourceRootPath?: string;
-      sourcePreviewRootUrl?: string;
-    }>
-  >([]);
+  const [browserAgentPanelStates, setBrowserAgentPanelStates] = useState(
+    () => new Map<string, Map<string, BrowserAgentInteractionState>>(),
+  );
+  const pendingBrowserAgentPanelStatesRef = useRef(
+    new Map<string, PendingBrowserAgentPanelState>(),
+  );
+  const pendingBrowserTabsRef = useRef(
+    new Map<
+      string,
+      Array<{
+        url?: string;
+        sourceFilePath?: string;
+        sourcePreviewUrl?: string;
+        sourceRootPath?: string;
+        sourcePreviewRootUrl?: string;
+      }>
+    >(),
+  );
+  const availableAgentBrowserSessionIdsRef = useRef<string[]>([]);
+  availableAgentBrowserSessionIdsRef.current = sessions.map(session => session.id);
+  const promotePendingBrowserTabs = useCallback((fromSessionKey: string, toSessionKey: string) => {
+    promotePendingBrowserPanelItems(
+      pendingBrowserTabsRef.current,
+      fromSessionKey,
+      toSessionKey,
+      MAX_BROWSER_TABS,
+    );
+  }, []);
   const terminalSequenceRef = useRef(0);
   const sideChatSequenceRef = useRef(0);
   const sideChatTabsRef = useRef(sideChatTabs);
@@ -544,7 +575,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [onPlanRespond, planInteraction],
   );
   const handleAddBrowserAnnotation = useCallback(
-    (annotation: BrowserAnnotationDraft, comment: string): boolean => {
+    (annotation: BrowserAnnotationDraft): boolean => {
       if (currentSessionId?.startsWith('temp-')) return false;
       const draftKey = currentSessionId ?? '__home__';
       const state = store.getState();
@@ -563,7 +594,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         return false;
       }
       dispatch(addDraftBrowserAnnotation({ draftKey, annotation }));
-      const nextComment = comment.trim();
+      const nextComment = annotation.comment?.trim() ?? '';
       if (nextComment) promptInputRef.current?.appendValue(nextComment);
       requestAnimationFrame(() => promptInputRef.current?.focus());
       return true;
@@ -826,6 +857,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // Immediately show the session detail page with user message
       promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, tempSessionId);
       promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+      promotePendingBrowserTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
       dispatch(setCurrentSession(tempSession));
       dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
       dispatch(setStreaming(true));
@@ -865,6 +897,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               pendingStartRef.current.canonicalSessionId = session.id;
             promoteDisplaySession(tempSessionId, session.id);
             promoteBrowserPanelTabs(tempSessionId, session.id);
+            promotePendingBrowserTabs(tempSessionId, session.id);
             const sourceAgentId = currentAgentId?.trim() || 'main';
             const targetAgentId = session.agentId?.trim() || sourceAgentId;
             chatWrapperRef.current?.registerSessionPromotion(
@@ -963,13 +996,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     return stopped;
   };
 
-  const handleSubtasksChange = useCallback((nextSubtasks: Subtask[]) => {
-    setSubtasks(nextSubtasks);
-    setSelectedSubagent(current => {
-      if (!current) return null;
-      return nextSubtasks.find(subtask => subtask.id === current.id) ?? null;
-    });
-  }, [setSelectedSubagent]);
+  const handleSubtasksChange = useCallback(
+    (nextSubtasks: Subtask[]) => {
+      setSubtasks(nextSubtasks);
+      setSelectedSubagent(current => {
+        if (!current) return null;
+        return nextSubtasks.find(subtask => subtask.id === current.id) ?? null;
+      });
+    },
+    [setSelectedSubagent],
+  );
 
   const closeSubtaskList = useCallback((restoreFocus = true) => {
     setIsSubtaskListOpen(false);
@@ -984,26 +1020,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     requestAnimationFrame(() => displayPanelToggleRef.current?.focus());
   }, [setIsBrowserPanelOpen, setPreferredDisplayTabId]);
 
-  const handleBrowserTargetChange = useCallback((targetId: string | null) => {
-    setBrowserPanelTargetId(targetId);
-    if (targetId) {
-      setIsWorkspaceFilesOpen(false);
-      setPreferredDisplayTabId(browserDisplayTabId(targetId));
-    }
-  }, [setBrowserPanelTargetId, setIsWorkspaceFilesOpen, setPreferredDisplayTabId]);
+  const handleBrowserTargetChange = useCallback(
+    (targetId: string | null) => {
+      setBrowserPanelTargetId(targetId);
+      if (targetId) {
+        setIsWorkspaceFilesOpen(false);
+        setPreferredDisplayTabId(browserDisplayTabId(targetId));
+      }
+    },
+    [setBrowserPanelTargetId, setIsWorkspaceFilesOpen, setPreferredDisplayTabId],
+  );
 
-  const openSubtask = useCallback((subtask: Subtask) => {
-    setSelectedSubagent(subtask);
-    setIsWorkspaceFilesOpen(false);
-    setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
-    setIsDisplayPanelOpen(true);
-    setIsSubtaskListOpen(false);
-  }, [
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
-    setPreferredDisplayTabId,
-    setSelectedSubagent,
-  ]);
+  const openSubtask = useCallback(
+    (subtask: Subtask) => {
+      setSelectedSubagent(subtask);
+      setIsWorkspaceFilesOpen(false);
+      setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
+      setIsDisplayPanelOpen(true);
+      setIsSubtaskListOpen(false);
+    },
+    [setIsDisplayPanelOpen, setIsWorkspaceFilesOpen, setPreferredDisplayTabId, setSelectedSubagent],
+  );
 
   const openDisplayPanel = useCallback(() => {
     setIsSubtaskListOpen(false);
@@ -1430,12 +1467,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const terminalWorkingDirectory = currentSessionFolderPath || homeWorkspaceFolderPath;
 
   const handleCreateBrowserTab = useCallback(() => {
+    const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
     if (
       currentSessionId?.startsWith('temp-') ||
-      browserTabs.length + pendingBrowserTabsRef.current.length >= MAX_BROWSER_TABS
+      browserTabs.length + pendingTabs.length >= MAX_BROWSER_TABS
     )
       return;
-    pendingBrowserTabsRef.current.push({});
+    pendingTabs.push({});
+    pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
     setIsWorkspaceFilesOpen(false);
     setIsDisplayPanelOpen(true);
     setHasBrowserPanelOpened(true);
@@ -1444,6 +1483,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }, [
     browserTabs.length,
     currentSessionId,
+    displaySessionKey,
     setBrowserTabCreationSequence,
     setHasBrowserPanelOpened,
     setIsBrowserPanelOpen,
@@ -1452,17 +1492,169 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   ]);
 
   useEffect(() => {
-    if (browserTabCreationSequence === 0) return;
-    const pendingTabs = pendingBrowserTabsRef.current.splice(0);
-    pendingTabs.forEach(pendingTab => {
-      browserPanelRefs.current.get(displaySessionKey)?.openTab(pendingTab.url, {
-        sourceFilePath: pendingTab.sourceFilePath,
-        sourcePreviewUrl: pendingTab.sourcePreviewUrl,
-        sourceRootPath: pendingTab.sourceRootPath,
-        sourcePreviewRootUrl: pendingTab.sourcePreviewRootUrl,
+    if (browserTabCreationSequence === 0 && pendingBrowserTabsRef.current.size === 0) return;
+    for (const [sessionKey, pendingTabs] of pendingBrowserTabsRef.current) {
+      const panel = browserPanelRefs.current.get(sessionKey);
+      if (!panel) continue;
+      pendingBrowserTabsRef.current.delete(sessionKey);
+      pendingTabs.forEach(pendingTab => {
+        panel.openTab(pendingTab.url, {
+          sourceFilePath: pendingTab.sourceFilePath,
+          sourcePreviewUrl: pendingTab.sourcePreviewUrl,
+          sourceRootPath: pendingTab.sourceRootPath,
+          sourcePreviewRootUrl: pendingTab.sourcePreviewRootUrl,
+        });
       });
+    }
+  }, [browserTabCreationSequence, displayStates]);
+
+  const applyBrowserAgentPanelState = useCallback(
+    (event: BrowserAgentInteractionState) => {
+      setBrowserAgentPanelStates(current => {
+        const next = new Map(current);
+        const sessionStates = new Map(next.get(event.sessionId) ?? []);
+        if (event.busy) sessionStates.set(event.operationId!, event);
+        else sessionStates.delete(event.operationId!);
+        if (sessionStates.size) next.set(event.sessionId, sessionStates);
+        else next.delete(event.sessionId);
+        return next;
+      });
+      if (event.busy) {
+        setSessionField(event.sessionId, 'hasBrowserPanelOpened', true);
+      }
+    },
+    [setSessionField],
+  );
+
+  useEffect(() => {
+    const available = takeAvailableBrowserAgentPanelStates(
+      pendingBrowserAgentPanelStatesRef.current,
+      sessions.map(session => session.id),
+    );
+    for (const pending of available) {
+      window.clearTimeout(pending.timeoutId);
+      applyBrowserAgentPanelState(pending.event);
+    }
+  }, [applyBrowserAgentPanelState, sessions]);
+
+  useEffect(
+    () => () => {
+      for (const pending of pendingBrowserAgentPanelStatesRef.current.values()) {
+        window.clearTimeout(pending.timeoutId);
+      }
+      pendingBrowserAgentPanelStatesRef.current.clear();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const removeInteractionListener = window.electron.browser.onAgentInteractionState(event => {
+      if (
+        event.targetId !== BROWSER_AGENT_PANEL_TARGET_ID ||
+        !event.operationId ||
+        !event.sessionId ||
+        event.sessionId.startsWith('temp-')
+      ) {
+        return;
+      }
+      const operationKey = browserAgentPanelOperationKey(event)!;
+      const existingPending = pendingBrowserAgentPanelStatesRef.current.get(operationKey);
+      if (existingPending) {
+        window.clearTimeout(existingPending.timeoutId);
+        pendingBrowserAgentPanelStatesRef.current.delete(operationKey);
+      }
+      if (
+        !isAgentBrowserSessionAvailable(
+          availableAgentBrowserSessionIdsRef.current,
+          event.sessionId,
+        )
+      ) {
+        if (event.busy) {
+          const timeoutId = window.setTimeout(() => {
+            pendingBrowserAgentPanelStatesRef.current.delete(operationKey);
+          }, BROWSER_AGENT_INTERACTION_ACK_TIMEOUT_MS);
+          pendingBrowserAgentPanelStatesRef.current.set(operationKey, { event, timeoutId });
+        }
+        return;
+      }
+      applyBrowserAgentPanelState(event);
     });
-  }, [browserTabCreationSequence, displaySessionKey]);
+    const removeEnsureListener = window.electron.browser.onAgentEnsureTab(event => {
+      if (
+        !isAgentBrowserSessionAvailable(availableAgentBrowserSessionIdsRef.current, event.sessionId)
+      ) {
+        return;
+      }
+      const tab = createBrowserPanelTab(event.url, {
+        targetId: event.targetId,
+        customTitle: event.label,
+        profile: event.profile,
+      });
+      setSessionField(event.sessionId, 'browserTabs', current => {
+        const existingTab = event.targetId
+          ? current.find(candidate => candidate.targetId === event.targetId)
+          : current[0];
+        return existingTab ? current : [...current, tab];
+      });
+      setSessionField(event.sessionId, 'browserPanelTargetId', tab.targetId);
+      setSessionField(event.sessionId, 'preferredDisplayTabId', browserDisplayTabId(tab.targetId));
+      setSessionField(event.sessionId, 'hasBrowserPanelOpened', true);
+      setSessionField(event.sessionId, 'isBrowserPanelOpen', true);
+      if (event.sessionId === displaySessionKey) {
+        setIsWorkspaceFilesOpen(false);
+        setIsDisplayPanelOpen(true);
+      }
+    });
+    const removeFocusListener = window.electron.browser.onAgentFocusTab(event => {
+      if (event.sessionId !== displaySessionKey) {
+        setSessionField(event.sessionId, 'browserPanelTargetId', event.targetId);
+        setSessionField(
+          event.sessionId,
+          'preferredDisplayTabId',
+          browserDisplayTabId(event.targetId),
+        );
+        setSessionField(event.sessionId, 'hasBrowserPanelOpened', true);
+        setSessionField(event.sessionId, 'isBrowserPanelOpen', true);
+        return;
+      }
+      setIsWorkspaceFilesOpen(false);
+      setIsDisplayPanelOpen(true);
+      setHasBrowserPanelOpened(true);
+      setIsBrowserPanelOpen(true);
+      handleBrowserTargetChange(event.targetId);
+    });
+    const removeCloseListener = window.electron.browser.onAgentCloseTab(event => {
+      const panel = browserPanelRefs.current.get(event.sessionId);
+      if (panel) {
+        panel.closeTab(event.targetId);
+        return;
+      }
+      setSessionField(event.sessionId, 'browserTabs', current =>
+        current.filter(tab => tab.targetId !== event.targetId),
+      );
+      setSessionField(event.sessionId, 'browserPanelTargetId', current =>
+        current === event.targetId ? null : current,
+      );
+      setSessionField(event.sessionId, 'preferredDisplayTabId', current =>
+        current === browserDisplayTabId(event.targetId) ? null : current,
+      );
+    });
+    return () => {
+      removeInteractionListener();
+      removeEnsureListener();
+      removeFocusListener();
+      removeCloseListener();
+    };
+  }, [
+    applyBrowserAgentPanelState,
+    displaySessionKey,
+    handleBrowserTargetChange,
+    setHasBrowserPanelOpened,
+    setIsBrowserPanelOpen,
+    setIsDisplayPanelOpen,
+    setIsWorkspaceFilesOpen,
+    setSessionField,
+  ]);
 
   useEffect(() => {
     const handleOpenLocalHtml = async (event: Event) => {
@@ -1487,13 +1679,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           );
           return;
         }
-        pendingBrowserTabsRef.current.push({
+        const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
+        pendingTabs.push({
           url: result.url,
           sourceFilePath: result.filePath,
           sourcePreviewUrl: result.url,
           sourceRootPath: result.rootPath,
           sourcePreviewRootUrl: result.previewRootUrl,
         });
+        pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
         setIsDisplayPanelOpen(true);
         setHasBrowserPanelOpened(true);
         setIsBrowserPanelOpen(true);
@@ -1507,6 +1701,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     window.addEventListener('cowork:open-local-html', handleOpenLocalHtml);
     return () => window.removeEventListener('cowork:open-local-html', handleOpenLocalHtml);
   }, [
+    displaySessionKey,
     setBrowserTabCreationSequence,
     setHasBrowserPanelOpened,
     setIsBrowserPanelOpen,
@@ -1579,45 +1774,51 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [dispatch, selectAdjacentDisplayTabAfterClose, setSideChatTabs],
   );
 
-  const handleSideChatResult = useCallback((result: SideChatResult) => {
-    setSideChatTabs(current =>
-      current.map(tab => {
-        const index = tab.messages.findIndex(message => message.runId === result.runId);
-        if (index < 0) return tab;
-        const messages = [...tab.messages];
-        const previousMessage = messages[index];
-        messages[index] = {
-          ...previousMessage,
-          runId: result.runId,
-          question: result.question,
-          answer: result.text || i18nService.t('sideChatRunInterrupted'),
-          activeTurn: undefined,
-          answeredAt: previousMessage.activeTurn?.endedAt ?? Date.now(),
-          modelRef: previousMessage.activeTurn?.modelRef ?? previousMessage.modelRef,
-          startedAt: previousMessage.activeTurn?.startedAt ?? previousMessage.startedAt,
-          status: result.isError ? 'error' : 'complete',
-        };
-        return { ...tab, messages };
-      }),
-    );
-  }, [setSideChatTabs]);
+  const handleSideChatResult = useCallback(
+    (result: SideChatResult) => {
+      setSideChatTabs(current =>
+        current.map(tab => {
+          const index = tab.messages.findIndex(message => message.runId === result.runId);
+          if (index < 0) return tab;
+          const messages = [...tab.messages];
+          const previousMessage = messages[index];
+          messages[index] = {
+            ...previousMessage,
+            runId: result.runId,
+            question: result.question,
+            answer: result.text || i18nService.t('sideChatRunInterrupted'),
+            activeTurn: undefined,
+            answeredAt: previousMessage.activeTurn?.endedAt ?? Date.now(),
+            modelRef: previousMessage.activeTurn?.modelRef ?? previousMessage.modelRef,
+            startedAt: previousMessage.activeTurn?.startedAt ?? previousMessage.startedAt,
+            status: result.isError ? 'error' : 'complete',
+          };
+          return { ...tab, messages };
+        }),
+      );
+    },
+    [setSideChatTabs],
+  );
 
-  const handleSideChatStream = useCallback((update: SideChatStreamUpdate) => {
-    setSideChatTabs(current =>
-      current.map(tab => {
-        const index = tab.messages.findIndex(message => message.runId === update.runId);
-        if (index < 0) return tab;
-        const messages = [...tab.messages];
-        messages[index] = {
-          ...messages[index],
-          activeTurn: update.turn ?? undefined,
-          modelRef: update.turn?.modelRef ?? messages[index].modelRef,
-          startedAt: update.turn?.startedAt ?? messages[index].startedAt,
-        };
-        return { ...tab, messages };
-      }),
-    );
-  }, [setSideChatTabs]);
+  const handleSideChatStream = useCallback(
+    (update: SideChatStreamUpdate) => {
+      setSideChatTabs(current =>
+        current.map(tab => {
+          const index = tab.messages.findIndex(message => message.runId === update.runId);
+          if (index < 0) return tab;
+          const messages = [...tab.messages];
+          messages[index] = {
+            ...messages[index],
+            activeTurn: update.turn ?? undefined,
+            modelRef: update.turn?.modelRef ?? messages[index].modelRef,
+            startedAt: update.turn?.startedAt ?? messages[index].startedAt,
+          };
+          return { ...tab, messages };
+        }),
+      );
+    },
+    [setSideChatTabs],
+  );
 
   const handleSendSideChat = useCallback(
     async (tabId: string, question: string, modelRef?: string | null): Promise<boolean> => {
@@ -1697,12 +1898,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setIsWorkspaceFilesOpen(current => !current);
     setIsSubtaskListOpen(false);
     setIsDisplayPanelOpen(true);
-  }, [
-    currentSessionId,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
-    workspaceFilesRootPath,
-  ]);
+  }, [currentSessionId, setIsDisplayPanelOpen, setIsWorkspaceFilesOpen, workspaceFilesRootPath]);
 
   useEffect(() => {
     if (!workspaceFilesRootPath) setIsWorkspaceFilesOpen(false);
@@ -1862,11 +2058,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         return;
       }
       const snapshot = chatWrapperRef.current?.getExportSnapshot();
-      if (
-        snapshot &&
-        snapshot.sessionKey === currentGatewaySessionKey &&
-        !snapshot.isLoading
-      ) {
+      if (snapshot && snapshot.sessionKey === currentGatewaySessionKey && !snapshot.isLoading) {
         settled = true;
         setSessionExportMessageCount(snapshot.messages.length);
         setIsSessionExportOpen(true);
@@ -1970,8 +2162,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const runtimeActiveTabId = isActiveSession ? activeDisplayTabId : null;
       const browserVisible = Boolean(
         isActiveSession &&
-          displayState.isBrowserPanelOpen &&
-          runtimeActiveTabId?.startsWith(BROWSER_DISPLAY_TAB_PREFIX),
+        displayState.isBrowserPanelOpen &&
+        runtimeActiveTabId?.startsWith(BROWSER_DISPLAY_TAB_PREFIX),
       );
       return [
         ...(displayState.hasBrowserPanelOpened
@@ -1989,9 +2181,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 onClose={() => {
                   if (isActiveSession) closeBrowserPanel();
                 }}
-                onWidthChange={width =>
-                  setSessionField(sessionKey, 'browserPanelWidth', width)
-                }
+                onWidthChange={width => setSessionField(sessionKey, 'browserPanelWidth', width)}
                 onActiveTargetChange={targetId => {
                   if (isActiveSession) {
                     handleBrowserTargetChange(targetId);
@@ -2005,7 +2195,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   );
                 }}
                 onTabsChange={tabs => setSessionField(sessionKey, 'browserTabs', tabs)}
+                initialTabs={displayState.browserTabs}
                 retainedTargetIds={displayState.browserTabs.map(tab => tab.targetId)}
+                agentInteractionStates={[
+                  ...(browserAgentPanelStates.get(sessionKey)?.values() ?? []),
+                ]}
                 onAddAnnotation={isActiveSession ? handleAddBrowserAnnotation : () => false}
                 onRequestBrowserSettings={browserPage =>
                   onRequestAppSettings?.({ initialTab: 'browser', browserPage })

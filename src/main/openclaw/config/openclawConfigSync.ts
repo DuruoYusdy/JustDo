@@ -3,7 +3,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser';
+import {
+  BrowserMode,
+  type BrowserMode as BrowserModeValue,
+  normalizeBrowserMode,
+} from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/localTts';
@@ -1358,7 +1362,7 @@ export const buildManagedOpenClawConnectivityConfig = (
     },
   },
   browser: {
-    enabled: true,
+    enabled: browserMode !== BrowserMode.Embedded,
     // The bundled v2.2.0 extension uses Browser Relay Authentication v2.
     // Fail closed instead of retaining OpenClaw's one-release legacy window.
     extensionRelay: {
@@ -1750,6 +1754,9 @@ const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
 
 export const listManagedOpenClawPluginIds = (): string[] => [
   ...new Set([
+    ...(isBundledPluginAvailable(OpenClawExtensionId.BROWSER)
+      ? [OpenClawExtensionId.BROWSER]
+      : []),
     ...readPreinstalledPluginIds().filter(
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     ),
@@ -1777,6 +1784,7 @@ const buildVerifiedConfigSyncResult = (
   configPath: string,
   expectedConfig: Record<string, unknown>,
   changed: boolean,
+  requiresGatewayRestart = false,
 ): OpenClawConfigSyncResult => {
   const verification = verifyOpenClawConfigMatches(configPath, expectedConfig);
   if (!verification.ok) {
@@ -1793,30 +1801,67 @@ const buildVerifiedConfigSyncResult = (
     ok: true,
     changed,
     configChanged: changed,
-    requiresGatewayRestart: false,
+    requiresGatewayRestart,
     configPath,
   };
 };
 
+const resolveBrowserToolProvider = (config: unknown): 'native' | 'embedded' | 'invalid' => {
+  if (!isRecord(config)) return 'invalid';
+  const rootEnabled = !isRecord(config.browser) || config.browser.enabled !== false;
+  const entries =
+    isRecord(config.plugins) && isRecord(config.plugins.entries)
+      ? config.plugins.entries
+      : {};
+  const nativeEntry = entries[OpenClawExtensionId.BROWSER];
+  const embeddedEntry = entries[OpenClawExtensionId.EMBEDDED_BROWSER];
+  const nativeEnabled = !isRecord(nativeEntry) || nativeEntry.enabled !== false;
+  const embeddedEnabled = isRecord(embeddedEntry) && embeddedEntry.enabled === true;
+  if (rootEnabled && nativeEnabled && !embeddedEnabled) return 'native';
+  if (!rootEnabled && !nativeEnabled && embeddedEnabled) return 'embedded';
+  return 'invalid';
+};
+
+const browserToolProviderChanged = (previous: unknown, next: unknown): boolean =>
+  resolveBrowserToolProvider(previous) !== resolveBrowserToolProvider(next);
+
+const buildMissingEmbeddedBrowserResult = (configPath: string): OpenClawConfigSyncResult => ({
+  ok: false,
+  changed: false,
+  configChanged: false,
+  requiresGatewayRestart: false,
+  configPath,
+  error: 'The bundled embedded browser provider is unavailable.',
+});
+
 const buildManagedBundledExtensionEntries = (
   agentRuntimeSettings: AgentRuntimeSettings,
-): Record<string, Record<string, unknown>> => ({
-  [OpenClawExtensionId.BROWSER]: { enabled: true },
-  ...buildBundledExtensionEntries(
-    isBundledPluginAvailable,
-    agentRuntimeSettings.automation.approvalTimeoutMinutes,
-  ),
-  ...(isBundledPluginAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
-    ? {
-        [OpenClawExtensionId.ASK_USER_QUESTION]: {
-          enabled: true,
-          config: {
-            timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
+  browserMode: BrowserModeValue,
+): Record<string, Record<string, unknown>> => {
+  const embeddedBrowserEnabled = browserMode === BrowserMode.Embedded;
+  return {
+    [OpenClawExtensionId.BROWSER]: { enabled: !embeddedBrowserEnabled },
+    ...buildBundledExtensionEntries(
+      isBundledPluginAvailable,
+      agentRuntimeSettings.automation.approvalTimeoutMinutes,
+    ),
+    ...(isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
+      ? {
+          [OpenClawExtensionId.EMBEDDED_BROWSER]: { enabled: embeddedBrowserEnabled },
+        }
+      : {}),
+    ...(isBundledPluginAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
+      ? {
+          [OpenClawExtensionId.ASK_USER_QUESTION]: {
+            enabled: true,
+            config: {
+              timeoutMinutes: agentRuntimeSettings.askUserQuestion.timeoutMinutes,
+            },
           },
-        },
-      }
-    : {}),
-});
+        }
+      : {}),
+  };
+};
 
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
@@ -1995,6 +2040,13 @@ export class OpenClawConfigSync {
       id => !isUserToggleableBundledPlugin(id) && isBundledPluginAvailable(id),
     );
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
+    const browserMode = normalizeBrowserMode(this.getBrowserMode?.());
+    if (
+      browserMode === BrowserMode.Embedded &&
+      !isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
+    ) {
+      return buildMissingEmbeddedBrowserResult(configPath);
+    }
     const localTtsConfig = this.getLocalTtsConfig();
     const managedTtsConfig = resolveManagedOpenClawTtsConfig(
       existingConfig,
@@ -2002,7 +2054,7 @@ export class OpenClawConfigSync {
       this.getSpeechOutputState(),
     );
     const bundledExtensionEntries = {
-      ...buildManagedBundledExtensionEntries(agentRuntimeSettings),
+      ...buildManagedBundledExtensionEntries(agentRuntimeSettings, browserMode),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
     };
@@ -2028,7 +2080,7 @@ export class OpenClawConfigSync {
     );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(
-      this.getBrowserMode?.(),
+      browserMode,
       agentRuntimeSettings.sessions.visibility,
     );
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
@@ -2237,7 +2289,7 @@ export class OpenClawConfigSync {
       changed: configChanged || preparedSecrets.secretsChanged,
       secretsChanged: preparedSecrets.secretsChanged,
       configChanged,
-      requiresGatewayRestart: false,
+      requiresGatewayRestart: browserToolProviderChanged(existingConfig, configToPersist),
       configPath,
     };
   }
@@ -2376,9 +2428,16 @@ export class OpenClawConfigSync {
       ? path.resolve(configuredWorkspaceDir)
       : path.join(this.engineManager.getStateDir(), 'workspace');
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
+    const browserMode = normalizeBrowserMode(this.getBrowserMode?.());
+    if (
+      browserMode === BrowserMode.Embedded &&
+      !isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
+    ) {
+      return buildMissingEmbeddedBrowserResult(configPath);
+    }
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(
-      this.getBrowserMode?.(),
+      browserMode,
       agentRuntimeSettings.sessions.visibility,
     );
     const connectivityTools: Record<string, unknown> = connectivityConfig.tools;
@@ -2393,7 +2452,7 @@ export class OpenClawConfigSync {
       this.getSpeechOutputState(),
     );
     const bundledExtensionEntries = {
-      ...buildManagedBundledExtensionEntries(agentRuntimeSettings),
+      ...buildManagedBundledExtensionEntries(agentRuntimeSettings, browserMode),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
     const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
@@ -2481,6 +2540,23 @@ export class OpenClawConfigSync {
     } catch {
       currentContent = '';
     }
+    let persistedConfigBeforeSync: Record<string, unknown> | null = null;
+    try {
+      const parsed = currentContent ? JSON.parse(currentContent) : null;
+      persistedConfigBeforeSync = isRecord(parsed) ? parsed : null;
+    } catch {
+      persistedConfigBeforeSync = null;
+    }
+    const buildMinimalSyncResult = (
+      expectedConfig: Record<string, unknown>,
+      changed: boolean,
+    ): OpenClawConfigSyncResult =>
+      buildVerifiedConfigSyncResult(
+        configPath,
+        expectedConfig,
+        changed,
+        browserToolProviderChanged(persistedConfigBeforeSync, expectedConfig),
+      );
 
     const isAuthLifecycleSync =
       reason === BuiltinModelSyncReason.AuthLogin ||
@@ -2500,9 +2576,9 @@ export class OpenClawConfigSync {
             const tmpPath = `${configPath}.tmp-${Date.now()}`;
             fs.writeFileSync(tmpPath, sanitizedContent, 'utf8');
             fs.renameSync(tmpPath, configPath);
-            return buildVerifiedConfigSyncResult(configPath, sanitizedConfig, true);
+            return buildMinimalSyncResult(sanitizedConfig, true);
           }
-          return buildVerifiedConfigSyncResult(configPath, sanitizedConfig, false);
+          return buildMinimalSyncResult(sanitizedConfig, false);
         }
       } catch {
         // Malformed JSON falls through to a complete minimal-config rewrite.
@@ -2638,9 +2714,9 @@ export class OpenClawConfigSync {
               const tmpPath = `${configPath}.tmp-${Date.now()}`;
               fs.writeFileSync(tmpPath, mergedContent, 'utf8');
               fs.renameSync(tmpPath, configPath);
-              return buildVerifiedConfigSyncResult(configPath, mergedConfig, true);
+              return buildMinimalSyncResult(mergedConfig, true);
             }
-            return buildVerifiedConfigSyncResult(configPath, mergedConfig, false);
+            return buildMinimalSyncResult(mergedConfig, false);
           }
         }
       } catch {
@@ -2649,7 +2725,7 @@ export class OpenClawConfigSync {
     }
 
     if (!hasOpenClawConfigChanged(currentContent, minimalConfig)) {
-      return buildVerifiedConfigSyncResult(configPath, minimalConfig, false);
+      return buildMinimalSyncResult(minimalConfig, false);
     }
 
     try {
@@ -2657,7 +2733,7 @@ export class OpenClawConfigSync {
       const tmpPath = `${configPath}.tmp-${Date.now()}`;
       fs.writeFileSync(tmpPath, nextContent, 'utf8');
       fs.renameSync(tmpPath, configPath);
-      return buildVerifiedConfigSyncResult(configPath, minimalConfig, true);
+      return buildMinimalSyncResult(minimalConfig, true);
     } catch (error) {
       return {
         ok: false,

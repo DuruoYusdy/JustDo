@@ -72,7 +72,11 @@ describe('OpenClawExtensionImportService', () => {
     });
     await expect(service.setEnabled('automation-permission', false)).resolves.toEqual({
       success: false,
-      error: 'Managed extensions cannot be disabled.',
+      error: 'Managed extensions cannot be changed here.',
+    });
+    await expect(service.setEnabled('automation-permission', true)).resolves.toEqual({
+      success: false,
+      error: 'Managed extensions cannot be changed here.',
     });
     expect(runCommand).not.toHaveBeenCalled();
   });

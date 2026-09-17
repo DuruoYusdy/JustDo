@@ -85,7 +85,7 @@ describe('applySystemProxyPreference', () => {
       expect.objectContaining({ mode: 'fixed_servers' }),
     );
     expect(mocks.closeAllConnections).toHaveBeenCalledTimes(2);
-    expect(mocks.browserCloseAllConnections).toHaveBeenCalledTimes(2);
+    expect(mocks.browserCloseAllConnections).toHaveBeenCalledTimes(4);
   });
 
   test.each([

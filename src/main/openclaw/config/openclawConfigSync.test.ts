@@ -474,6 +474,19 @@ describe('OpenClaw managed connectivity config', () => {
     });
   });
 
+  test('disables the native browser runtime for the embedded browser mode', () => {
+    expect(buildManagedOpenClawConnectivityConfig(BrowserMode.Embedded).browser).toEqual({
+      enabled: false,
+      extensionRelay: {
+        allowLegacyAuth: false,
+      },
+      defaultProfile: 'openclaw',
+      ssrfPolicy: {
+        dangerouslyAllowPrivateNetwork: true,
+      },
+    });
+  });
+
   test.each(Object.values(AgentRuntimeSessionVisibility))(
     'projects the selected session visibility %s',
     visibility => {

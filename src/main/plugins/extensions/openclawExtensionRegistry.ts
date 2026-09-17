@@ -29,6 +29,12 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     id: OpenClawExtensionId.PLAN_MODE,
     buildEntry: () => ({ enabled: true }),
   },
+  {
+    id: OpenClawExtensionId.EMBEDDED_BROWSER,
+    // Fail closed. Config sync enables this provider only for embedded mode,
+    // where the native Browser plugin is explicitly disabled.
+    buildEntry: () => ({ enabled: false }),
+  },
 ] as const;
 
 export const buildBundledExtensionEntries = (

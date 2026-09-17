@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   BrowserMode,
   BrowserSearchEngine,
+  isBrowserAgentProfile,
   isBrowserProfileRunning,
   normalizeBrowserDownloadSettings,
   normalizeBrowserMode,
@@ -11,6 +12,22 @@ import {
   parseDevToolsActivePort,
   resolveBrowserAddressInput,
 } from './browser';
+
+describe('browser agent profile names', () => {
+  test.each(['embedded', '1-work', '2026', 'profile-1'])(
+    'accepts the OpenClaw profile name %j',
+    profile => {
+      expect(isBrowserAgentProfile(profile)).toBe(true);
+    },
+  );
+
+  test.each(['Work', 'work_one', '-work', 'work.name', ''])(
+    'rejects the unsupported profile name %j',
+    profile => {
+      expect(isBrowserAgentProfile(profile)).toBe(false);
+    },
+  );
+});
 
 describe('normalizeBrowserMode', () => {
   test('defaults missing and unknown values to the isolated browser', () => {
@@ -24,6 +41,10 @@ describe('normalizeBrowserMode', () => {
 
   test('keeps an explicit extension-browser selection', () => {
     expect(normalizeBrowserMode(BrowserMode.Extension)).toBe(BrowserMode.Extension);
+  });
+
+  test('keeps an explicit embedded-browser selection', () => {
+    expect(normalizeBrowserMode(BrowserMode.Embedded)).toBe(BrowserMode.Embedded);
   });
 });
 

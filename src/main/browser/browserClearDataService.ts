@@ -1,12 +1,14 @@
 import { session } from 'electron';
 
 import {
+  BROWSER_IMPORTED_PROFILE_PARTITION,
   BROWSER_PANEL_PARTITION,
   type BrowserClearDataRange,
   type BrowserClearDataRequest,
   type BrowserClearDataResult,
   type BrowserClearDataSummary,
   type BrowserClearDataSummaryResult,
+  browserPartitionForProfile,
   isBrowserClearDataRange,
 } from '../../shared/browser';
 import {
@@ -16,6 +18,7 @@ import {
   countBrowserDownloadsSince,
   countBrowserHistorySince,
   countImportedCredentialsSince,
+  listImportedBrowserProfiles,
 } from './browserDataImportService';
 
 const RANGE_DURATION_MS: Record<Exclude<BrowserClearDataRange, 'all'>, number> = {
@@ -45,7 +48,18 @@ export const isBrowserClearDataRequest = (value: unknown): value is BrowserClear
 };
 
 const cookieSiteCount = async (): Promise<number> => {
-  const cookies = await session.fromPartition(BROWSER_PANEL_PARTITION).cookies.get({});
+  const partitions = new Set([
+    BROWSER_PANEL_PARTITION,
+    BROWSER_IMPORTED_PROFILE_PARTITION,
+    ...listImportedBrowserProfiles().map(browserPartitionForProfile),
+  ]);
+  const cookies = (
+    await Promise.all(
+      [...partitions].map(partition =>
+        session.fromPartition(partition).cookies.get({}),
+      ),
+    )
+  ).flat();
   return new Set(cookies.map(cookie => cookie.domain.replace(/^\./, '').toLowerCase())).size;
 };
 
@@ -86,7 +100,13 @@ export const clearBrowserData = async (
     downloads: 0,
     autofill: 0,
   };
-  const browserSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  const browserSessions = [
+    ...new Set([
+      BROWSER_PANEL_PARTITION,
+      BROWSER_IMPORTED_PROFILE_PARTITION,
+      ...listImportedBrowserProfiles().map(browserPartitionForProfile),
+    ]),
+  ].map(partition => session.fromPartition(partition));
   if (request.selection.cookiesAndSiteData) {
     try {
       let cookieSites = 0;
@@ -95,17 +115,21 @@ export const clearBrowserData = async (
       } catch {
         // The count is informational and must not prevent the requested deletion.
       }
-      await browserSession.clearStorageData({
-        storages: [
-          'cookies',
-          'filesystem',
-          'indexdb',
-          'localstorage',
-          'websql',
-          'serviceworkers',
-          'cachestorage',
-        ],
-      });
+      await Promise.all(
+        browserSessions.map(browserSession =>
+          browserSession.clearStorageData({
+            storages: [
+              'cookies',
+              'filesystem',
+              'indexdb',
+              'localstorage',
+              'websql',
+              'serviceworkers',
+              'cachestorage',
+            ],
+          }),
+        ),
+      );
       cleared.cookieSites = cookieSites;
     } catch {
       failedCategories.push('cookiesAndSiteData');
@@ -113,7 +137,9 @@ export const clearBrowserData = async (
   }
   if (request.selection.cache) {
     try {
-      await browserSession.clearData({ dataTypes: ['cache'] });
+      await Promise.all(
+        browserSessions.map(browserSession => browserSession.clearData({ dataTypes: ['cache'] })),
+      );
     } catch {
       failedCategories.push('cache');
     }

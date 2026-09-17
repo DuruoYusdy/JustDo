@@ -50,6 +50,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '无法访问{resource}：\n{path}\n\n请检查 Windows 所有者和权限后重试。\n\n详细信息：{detail}',
     managedDirectoryRuntimeBusy: 'Gateway 仍有活动任务，无法安全释放目录锁。请等待任务结束后重试。',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway 恢复失败：{detail}',
+    browserAgentImportTitle: '导入浏览器资料',
+    browserAgentImportMessage: '是否将 {source} 的 Cookie 导入内置浏览器？',
+    browserAgentImportDetail: '数据只保存在本机，可能需要使用当前 Windows 账户解密。',
+    browserAgentImportConfirm: '导入',
+    browserAgentImportCancel: '取消',
   },
   en: {
     credentialStorageUnavailable: 'Secure operating-system credential storage is unavailable.',
@@ -90,6 +95,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     managedDirectoryRuntimeBusy:
       'The Gateway still has active work, so its directory lock cannot be released safely. Wait for the work to finish and try again.',
     managedDirectoryRuntimeRecoveryFailed: 'Gateway recovery failed: {detail}',
+    browserAgentImportTitle: 'Import browser profile',
+    browserAgentImportMessage: 'Import cookies from {source} into the embedded browser?',
+    browserAgentImportDetail:
+      'The data stays on this device and may require decryption with the current Windows account.',
+    browserAgentImportConfirm: 'Import',
+    browserAgentImportCancel: 'Cancel',
   },
 };
 

@@ -714,6 +714,14 @@ function renderBrowserAnnotation(
       </summary>
       <dl class="browser-annotation-message__details">
         ${
+          annotation.comment
+            ? html`<div class="browser-annotation-message__property">
+                <dt>${i18nService.t('browserMessageComment')}</dt>
+                <dd>${annotation.comment}</dd>
+              </div>`
+            : nothing
+        }
+        ${
           element
             ? html`
                 ${

@@ -19,7 +19,12 @@ describe('useSessionDisplayState', () => {
         { id: 'terminal:recent', cwd: 'C:\\a', label: 'Recent' },
       ],
       filePreviews: [
-        { filePath: 'C:\\a\\large.txt', content: 'large content', editToken: 'token', version: '1' },
+        {
+          filePath: 'C:\\a\\large.txt',
+          content: 'large content',
+          editToken: 'token',
+          version: '1',
+        },
       ],
       tabRecency: {
         'terminal:old': 1,
@@ -45,6 +50,41 @@ describe('useSessionDisplayState', () => {
     expect(retained['session-a'].terminalTabs.map(tab => tab.id)).toEqual(['terminal:recent']);
     expect(retained['session-a'].filePreviews).toEqual([]);
     expect(retained['session-b'].terminalTabs).toHaveLength(2);
+  });
+
+  it('protects every display tab owned by a running background task', () => {
+    const background = {
+      ...createSessionDisplayState(520),
+      browserTabs: [
+        { id: 'embedded-1', targetId: 'embedded-1', title: 'Agent', url: 'https://example.com/' },
+      ],
+      terminalTabs: [{ id: 'terminal:old', cwd: 'C:\\a', label: 'Old' }],
+      tabRecency: { 'browser:embedded-1': 1, 'terminal:old': 2 },
+    };
+    const active = createSessionDisplayState(520);
+
+    const retained = enforceBackgroundTabLimit({ background, active }, 'active', 0, [
+      'background',
+    ]);
+
+    expect(retained.background.browserTabs).toEqual(background.browserTabs);
+    expect(retained.background.terminalTabs).toEqual(background.terminalTabs);
+  });
+
+  it('evicts idle embedded browser tabs using the same bounded background policy', () => {
+    const background = {
+      ...createSessionDisplayState(520),
+      browserTabs: [
+        { id: 'embedded-1', targetId: 'embedded-1', title: 'Agent', url: 'https://example.com/' },
+      ],
+      tabRecency: { 'browser:embedded-1': 1 },
+    };
+    const active = createSessionDisplayState(520);
+
+    const retained = enforceBackgroundTabLimit({ background, active }, 'active', 0);
+
+    expect(retained.background.browserTabs).toEqual([]);
+    expect(retained.background.browserPanelTargetId).toBeNull();
   });
 
   it('keeps tabs and panel visibility isolated by session', () => {
@@ -143,6 +183,32 @@ describe('useSessionDisplayState', () => {
     expect(result.current.state.browserPanelTargetId).toBeNull();
     expect(result.current.states['session-a'].browserPanelTargetId).toBe('page-a');
     expect(result.current.states['session-a'].terminalTabs).toHaveLength(1);
+  });
+
+  it('applies concurrent functional browser-tab updates without dropping either tab', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    const first = {
+      id: 'embedded-1',
+      targetId: 'embedded-1',
+      title: 'First',
+      url: 'https://first.example/',
+    };
+    const second = {
+      id: 'embedded-2',
+      targetId: 'embedded-2',
+      title: 'Second',
+      url: 'https://second.example/',
+    };
+
+    act(() => {
+      result.current.setSessionField('session-a', 'browserTabs', current => [...current, first]);
+      result.current.setSessionField('session-a', 'browserTabs', current => [...current, second]);
+    });
+
+    expect(result.current.state.browserTabs.map(tab => tab.targetId)).toEqual([
+      'embedded-1',
+      'embedded-2',
+    ]);
   });
 
   it('moves home state through temporary-session promotion', () => {

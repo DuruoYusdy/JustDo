@@ -9,6 +9,7 @@ import {
   FAILED_RUN_MESSAGE_ID,
 } from '@/libs/openclaw-chat/model/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
+import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
@@ -257,7 +258,7 @@ function projectBrowserAnnotationForDisplay(message: unknown): unknown {
   const record = asRecord(message);
   if (!record || String(record.role ?? '').toLowerCase() !== 'user') return message;
   const projectText = (value: string): unknown[] | null => {
-    const parsed = parseBrowserAnnotationPrompt(value);
+    const parsed = parseBrowserAnnotationPrompt(stripInboundMetadata(value));
     if (!parsed) return null;
     return [
       { type: 'text', text: parsed.userText },

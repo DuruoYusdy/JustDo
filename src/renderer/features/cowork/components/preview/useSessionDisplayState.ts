@@ -82,8 +82,7 @@ const BROWSER_TAB_PREFIX = 'browser:';
 const FILE_TAB_PREFIX = 'file:';
 const SUBAGENT_TAB_ID = 'subagent';
 
-const fileTabId = (filePath: string): string =>
-  `${FILE_TAB_PREFIX}${filePath.replace(/\\/g, '/')}`;
+const fileTabId = (filePath: string): string => `${FILE_TAB_PREFIX}${filePath.replace(/\\/g, '/')}`;
 
 const getDisplayTabIds = (state: SessionDisplayState): string[] => [
   ...state.browserTabs.map(tab => `${BROWSER_TAB_PREFIX}${tab.targetId}`),
@@ -165,16 +164,19 @@ export const enforceBackgroundTabLimit = (
   states: SessionDisplayStateMap,
   activeSessionKey: string,
   maximum: number,
+  protectedSessionIds: readonly string[] = [],
 ): SessionDisplayStateMap => {
   const limit = normalizeMaxRetainedDisplayTabs(maximum);
+  const protectedSessions = new Set(protectedSessionIds);
   const backgroundTabs = Object.entries(states).flatMap(([sessionKey, state]) =>
-    sessionKey === activeSessionKey
+    sessionKey === activeSessionKey || protectedSessions.has(sessionKey)
       ? []
-      : getDisplayTabIds(state).map(tabId => ({
-          sessionKey,
-          tabId,
-          recency: state.tabRecency[tabId] ?? 0,
-        })),
+      : getDisplayTabIds(state)
+          .map(tabId => ({
+            sessionKey,
+            tabId,
+            recency: state.tabRecency[tabId] ?? 0,
+          })),
   );
   if (backgroundTabs.length <= limit) return states;
   const retainedKeys = new Set(
@@ -185,7 +187,9 @@ export const enforceBackgroundTabLimit = (
   );
   return Object.fromEntries(
     Object.entries(states).map(([sessionKey, state]) => {
-      if (sessionKey === activeSessionKey) return [sessionKey, state];
+      if (sessionKey === activeSessionKey || protectedSessions.has(sessionKey)) {
+        return [sessionKey, state];
+      }
       const retainedTabIds = new Set(
         getDisplayTabIds(state).filter(tabId => retainedKeys.has(`${sessionKey}\0${tabId}`)),
       );
@@ -210,8 +214,14 @@ export function useSessionDisplayState(
   browserPanelWidth: number,
   maxRetainedTabs = DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   validSessionIds?: readonly string[],
+  protectedSessionIds: readonly string[] = [],
 ) {
   const sessionKey = sessionId ?? HOME_DISPLAY_SESSION_KEY;
+  const protectedSessionIdsKey = protectedSessionIds.join('\0');
+  const stableProtectedSessionIds = useMemo(
+    () => (protectedSessionIdsKey ? protectedSessionIdsKey.split('\0') : []),
+    [protectedSessionIdsKey],
+  );
   const sequenceRef = useRef(0);
   const [states, setStates] = useState<SessionDisplayStateMap>(() => ({
     [sessionKey]: createSessionDisplayState(browserPanelWidth),
@@ -247,10 +257,11 @@ export function useSessionDisplayState(
           },
           sessionKey,
           maxRetainedTabs,
+          stableProtectedSessionIds,
         );
       });
     },
-    [browserPanelWidth, maxRetainedTabs, sessionKey],
+    [browserPanelWidth, maxRetainedTabs, sessionKey, stableProtectedSessionIds],
   );
 
   const setField = useCallback(
@@ -299,9 +310,10 @@ export function useSessionDisplayState(
         { ...current, [sessionKey]: { ...currentState, tabRecency } },
         sessionKey,
         maxRetainedTabs,
+        stableProtectedSessionIds,
       );
     });
-  }, [browserPanelWidth, maxRetainedTabs, sessionKey]);
+  }, [browserPanelWidth, maxRetainedTabs, sessionKey, stableProtectedSessionIds]);
 
   const validSessionIdsKey = validSessionIds?.join('\0');
   useEffect(() => {

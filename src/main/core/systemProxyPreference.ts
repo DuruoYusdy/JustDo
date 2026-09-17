@@ -1,6 +1,9 @@
 import { session } from 'electron';
 
-import { BROWSER_PANEL_PARTITION } from '../../shared/browser';
+import {
+  BROWSER_IMPORTED_PROFILE_PARTITION,
+  BROWSER_PANEL_PARTITION,
+} from '../../shared/browser';
 import {
   type CustomProxyConfig,
   defaultCustomProxyConfig,
@@ -20,6 +23,9 @@ export type SystemProxySettings = {
   useSystemProxy?: boolean;
   proxy?: Partial<ProxySettings>;
 };
+
+const dynamicBrowserSessions = new Map<string, Electron.Session>();
+let currentProxySettings: SystemProxySettings | undefined;
 
 export const isSystemProxyEnabled = (config?: SystemProxySettings): boolean => {
   return resolveProxyMode(config) === ProxyMode.SYSTEM;
@@ -85,6 +91,46 @@ const removeProxyCredentials = (proxyUrl: string): string | null => {
   }
 };
 
+const applyProxyToSessions = async (
+  targetSessions: Electron.Session[],
+  settings: SystemProxySettings | undefined,
+): Promise<void> => {
+  const proxyMode = resolveProxyMode(settings);
+  if (proxyMode === ProxyMode.SYSTEM) {
+    await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.SYSTEM })));
+  } else if (proxyMode === ProxyMode.CUSTOM) {
+    const customProxyUrl = buildCustomProxyUrl(normalizeCustomProxy(settings?.proxy?.custom));
+    const proxyRules = customProxyUrl ? removeProxyCredentials(customProxyUrl) : null;
+    if (proxyRules) {
+      await Promise.all(
+        targetSessions.map(target =>
+          target.setProxy({
+            mode: 'fixed_servers',
+            proxyRules,
+            proxyBypassRules: '<local>;localhost;127.0.0.1;::1',
+          }),
+        ),
+      );
+    } else {
+      await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.DIRECT })));
+    }
+  } else {
+    await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.DIRECT })));
+  }
+  await Promise.all(targetSessions.map(target => target.closeAllConnections()));
+};
+
+export const registerBrowserProxySession = async (
+  targetSession: Electron.Session,
+): Promise<void> => {
+  const key = targetSession.storagePath;
+  if (!key || dynamicBrowserSessions.has(key)) return;
+  dynamicBrowserSessions.set(key, targetSession);
+  await applyProxyToSessions([targetSession], currentProxySettings).catch(error => {
+    console.error('[SystemProxy] Failed to apply proxy mode to browser profile:', error);
+  });
+};
+
 export const getProxyPreferenceSignature = (config?: SystemProxySettings): string => {
   const mode = resolveProxyMode(config);
   const custom = normalizeCustomProxy(config?.proxy?.custom);
@@ -98,33 +144,18 @@ const applySystemProxyPreferenceNow = async (
   config: SystemProxySettings | boolean | undefined,
 ): Promise<void> => {
   const settings = typeof config === 'boolean' ? { useSystemProxy: config } : config;
+  currentProxySettings = settings;
   const proxyMode = resolveProxyMode(settings);
   const useSystemProxy = proxyMode === ProxyMode.SYSTEM;
-  const targetSessions = [session.defaultSession, session.fromPartition(BROWSER_PANEL_PARTITION)];
+  const targetSessions = [
+    session.defaultSession,
+    session.fromPartition(BROWSER_PANEL_PARTITION),
+    session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
+    ...dynamicBrowserSessions.values(),
+  ];
 
   try {
-    if (useSystemProxy) {
-      await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.SYSTEM })));
-    } else if (proxyMode === ProxyMode.CUSTOM) {
-      const customProxyUrl = buildCustomProxyUrl(normalizeCustomProxy(settings?.proxy?.custom));
-      const proxyRules = customProxyUrl ? removeProxyCredentials(customProxyUrl) : null;
-      if (proxyRules) {
-        await Promise.all(
-          targetSessions.map(target =>
-            target.setProxy({
-              mode: 'fixed_servers',
-              proxyRules,
-              proxyBypassRules: '<local>;localhost;127.0.0.1;::1',
-            }),
-          ),
-        );
-      } else {
-        await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.DIRECT })));
-      }
-    } else {
-      await Promise.all(targetSessions.map(target => target.setProxy({ mode: ProxyMode.DIRECT })));
-    }
-    await Promise.all(targetSessions.map(target => target.closeAllConnections()));
+    await applyProxyToSessions(targetSessions, settings);
   } catch (error) {
     console.error('[SystemProxy] Failed to apply session proxy mode:', error);
   }

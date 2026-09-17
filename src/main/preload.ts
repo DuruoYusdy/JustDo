@@ -9,6 +9,11 @@ import {
 } from '../shared/appUpdate';
 import {
   type BrowserActionResult,
+  type BrowserAgentInteractionReady,
+  type BrowserAgentInteractionState,
+  type BrowserAgentSessionEvent,
+  type BrowserAgentTabReference,
+  type BrowserAgentTabRegistration,
   type BrowserClearDataRange,
   type BrowserClearDataRequest,
   type BrowserClearDataResult,
@@ -302,6 +307,40 @@ contextBridge.exposeInMainWorld('electron', {
       };
       ipcRenderer.on(BrowserIpc.PanelShortcutAction, handler);
       return () => ipcRenderer.removeListener(BrowserIpc.PanelShortcutAction, handler);
+    },
+    registerAgentTab: (registration: BrowserAgentTabRegistration) =>
+      ipcRenderer.send(BrowserIpc.AgentRegisterTab, registration),
+    unregisterAgentTab: (reference: BrowserAgentTabReference) =>
+      ipcRenderer.send(BrowserIpc.AgentUnregisterTab, reference),
+    setAgentActiveTab: (reference: BrowserAgentTabReference) =>
+      ipcRenderer.send(BrowserIpc.AgentSetActiveTab, reference),
+    setUserInteractionState: (state: BrowserAgentInteractionState) =>
+      ipcRenderer.send(BrowserIpc.UserInteractionState, state),
+    acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) =>
+      ipcRenderer.send(BrowserIpc.AgentInteractionReady, state),
+    onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentSessionEvent) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentEnsureTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentEnsureTab, handler);
+    },
+    onAgentFocusTab: (callback: (event: BrowserAgentTabReference) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentTabReference) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentFocusTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentFocusTab, handler);
+    },
+    onAgentCloseTab: (callback: (event: BrowserAgentTabReference) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentTabReference) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentCloseTab, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentCloseTab, handler);
+    },
+    onAgentInteractionState: (callback: (event: BrowserAgentInteractionState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentInteractionState) =>
+        callback(data);
+      ipcRenderer.on(BrowserIpc.AgentInteractionState, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.AgentInteractionState, handler);
     },
     listImportSources: (): Promise<BrowserImportSourcesResult> =>
       ipcRenderer.invoke(BrowserIpc.ListImportSources),

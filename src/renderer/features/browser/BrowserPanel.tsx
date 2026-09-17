@@ -14,6 +14,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type {
+  BrowserAgentInteractionState,
   BrowserAnnotationDraft,
   BrowserAnnotationPoint,
   BrowserAnnotationRegion,
@@ -24,10 +25,11 @@ import type {
   BrowserPanelTab,
 } from '@shared/browser';
 import {
+  BROWSER_AGENT_PANEL_TARGET_ID,
   BROWSER_GUEST_COMMAND_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL,
-  BROWSER_PANEL_PARTITION,
+  browserPartitionForProfile,
   isBrowserGuestCommand,
   normalizeBrowserSearchEngine,
   resolveBrowserAddressInput,
@@ -39,6 +41,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -135,18 +138,23 @@ type BrowserLocalHtmlSource = {
 
 type BrowserOpenTabOptions = Partial<BrowserLocalHtmlSource> & {
   insertAfterTargetId?: string;
+  targetId?: string;
+  customTitle?: string;
+  profile?: BrowserPanelTab['profile'];
 };
 
-const createTab = (
+export const createBrowserPanelTab = (
   url = 'about:blank',
-  source?: Partial<BrowserLocalHtmlSource>,
+  source?: BrowserOpenTabOptions,
 ): BrowserPanelTab => {
-  const targetId = `embedded-${crypto.randomUUID()}`;
+  const targetId = source?.targetId ?? `embedded-${crypto.randomUUID()}`;
   return {
     id: targetId,
     targetId,
     title: '',
     url,
+    ...(source?.profile ? { profile: source.profile } : {}),
+    ...(source?.customTitle ? { customTitle: source.customTitle } : {}),
     ...(source?.sourceFilePath
       ? {
           sourceFilePath: source.sourceFilePath,
@@ -282,10 +290,12 @@ interface BrowserPanelProps {
   onClose: () => void;
   onWidthChange: (width: number) => void;
   onActiveTargetChange: (targetId: string | null) => void;
-  onAddAnnotation: (annotation: BrowserAnnotationDraft, comment: string) => boolean;
+  onAddAnnotation: (annotation: BrowserAnnotationDraft) => boolean;
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
   onTabsChange?: (tabs: BrowserPanelTab[]) => void;
+  initialTabs?: readonly BrowserPanelTab[];
   retainedTargetIds?: readonly string[];
+  agentInteractionStates?: readonly BrowserAgentInteractionState[];
   embedded?: boolean;
 }
 
@@ -301,20 +311,32 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     onAddAnnotation,
     onRequestBrowserSettings,
     onTabsChange,
+    initialTabs,
     retainedTargetIds,
+    agentInteractionStates = [],
     embedded = false,
   },
   ref,
 ) {
   const [tabs, setTabs] = useState<BrowserPanelTab[]>(() => {
+    if (initialTabs) {
+      const tabs = [...initialTabs];
+      setRetainedBrowserPanelTabs(draftKey, tabs);
+      return tabs;
+    }
     const retainedTabs = getRetainedBrowserPanelTabs(draftKey);
     if (retainedTabs) return retainedTabs;
-    const initialTabs = embedded ? [] : [createTab()];
-    setRetainedBrowserPanelTabs(draftKey, initialTabs);
-    return initialTabs;
+    const tabs = embedded ? [] : [createBrowserPanelTab()];
+    setRetainedBrowserPanelTabs(draftKey, tabs);
+    return tabs;
   });
   const [urlDraft, setUrlDraft] = useState('');
   const [loadingTargets, setLoadingTargets] = useState<Set<string>>(() => new Set());
+  const [agentBusyTargets, setAgentBusyTargets] = useState<Set<string>>(() => new Set());
+  const pendingAgentInteractionAcksRef = useRef(
+    new Map<string, { sessionId: string; targetId: string; profile?: string; operationId: string }>(),
+  );
+  const acknowledgedExternalInteractionsRef = useRef(new Set<string>());
   const [loadErrors, setLoadErrors] = useState<Map<string, string>>(() => new Map());
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -365,6 +387,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const webviewsRef = useRef(new Map<string, LiveWebview>());
   const installedGuestsRef = useRef(new WeakSet<LiveWebview>());
+  const guestElementRefs = useRef(
+    new Map<string, (element: HTMLElement | null) => void>(),
+  );
+  const currentDraftKeyRef = useRef(draftKey);
+  currentDraftKeyRef.current = draftKey;
+  const registeredDraftKeyRef = useRef(draftKey);
   const readyGuestsRef = useRef(new WeakSet<LiveWebview>());
   const initialUrlsRef = useRef(new Map(tabs.map(tab => [tab.targetId, tab.url])));
   const tabsRef = useRef(tabs);
@@ -444,6 +472,41 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     onTabsChangeRef.current?.(tabs);
   }, [draftKey, tabs]);
 
+  useEffect(() => {
+    setAgentBusyTargets(new Set());
+    pendingAgentInteractionAcksRef.current.clear();
+    return window.electron.browser.onAgentInteractionState(event => {
+      if (event.sessionId !== draftKey) return;
+      if (event.targetId === BROWSER_AGENT_PANEL_TARGET_ID) return;
+      if (event.operationId) {
+        if (event.busy) {
+          pendingAgentInteractionAcksRef.current.set(event.operationId, {
+            sessionId: event.sessionId,
+            targetId: event.targetId,
+            ...(event.profile ? { profile: event.profile } : {}),
+            operationId: event.operationId,
+          });
+        } else {
+          pendingAgentInteractionAcksRef.current.delete(event.operationId);
+        }
+      }
+      setAgentBusyTargets(current => {
+        const next = new Set(current);
+        if (event.busy) next.add(event.targetId);
+        else next.delete(event.targetId);
+        return next;
+      });
+    });
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!initialTabs?.length || tabsRef.current.length) return;
+    const tabs = [...initialTabs];
+    for (const tab of tabs) initialUrlsRef.current.set(tab.targetId, tab.url);
+    tabsRef.current = tabs;
+    setTabs(tabs);
+  }, [initialTabs]);
+
   const retainedTargetIdsKey = retainedTargetIds?.join('\0');
   useEffect(() => {
     if (retainedTargetIdsKey === undefined) return;
@@ -461,9 +524,92 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     for (const targetId of initialUrlsRef.current.keys()) {
       if (!retainedIds.has(targetId)) initialUrlsRef.current.delete(targetId);
     }
+    for (const targetId of guestElementRefs.current.keys()) {
+      if (!retainedIds.has(targetId)) guestElementRefs.current.delete(targetId);
+    }
   }, [retainedTargetIdsKey]);
 
   const activeTabTargetId = activeTab?.targetId ?? null;
+  const externalAgentBusyTargets = new Set(
+    agentInteractionStates.filter(state => state.busy).map(state => state.targetId),
+  );
+  const userInteractionLocked = Boolean(
+    isOpen &&
+      activeTabTargetId &&
+      (mode !== 'interact' || isCommentComposerOpen || isCapturing),
+  );
+  const agentInteractionLocked = Boolean(
+    !userInteractionLocked &&
+      (externalAgentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
+        agentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
+        (activeTabTargetId && agentBusyTargets.has(activeTabTargetId))),
+  );
+  useLayoutEffect(() => {
+    if (userInteractionLocked) return;
+    const externalOperationIds = new Set(
+      agentInteractionStates.flatMap(state => (state.operationId ? [state.operationId] : [])),
+    );
+    for (const operationId of acknowledgedExternalInteractionsRef.current) {
+      if (!externalOperationIds.has(operationId)) {
+        acknowledgedExternalInteractionsRef.current.delete(operationId);
+      }
+    }
+    for (const acknowledgement of agentInteractionStates) {
+      if (
+        !acknowledgement.busy ||
+        !acknowledgement.operationId ||
+        acknowledgedExternalInteractionsRef.current.has(acknowledgement.operationId)
+      ) {
+        continue;
+      }
+      window.electron.browser.acknowledgeAgentInteraction({
+        sessionId: acknowledgement.sessionId,
+        targetId: acknowledgement.targetId,
+        ...(acknowledgement.profile ? { profile: acknowledgement.profile } : {}),
+        operationId: acknowledgement.operationId,
+      });
+      acknowledgedExternalInteractionsRef.current.add(acknowledgement.operationId);
+    }
+    for (const [operationId, acknowledgement] of pendingAgentInteractionAcksRef.current) {
+      if (!agentBusyTargets.has(acknowledgement.targetId)) {
+        continue;
+      }
+      if (
+        acknowledgement.targetId !== BROWSER_AGENT_PANEL_TARGET_ID &&
+        acknowledgement.targetId !== activeTabTargetId
+      ) {
+        continue;
+      }
+      window.electron.browser.acknowledgeAgentInteraction(acknowledgement);
+      pendingAgentInteractionAcksRef.current.delete(operationId);
+    }
+  }, [activeTabTargetId, agentBusyTargets, agentInteractionStates, userInteractionLocked]);
+  useEffect(() => {
+    if (!activeTabTargetId || !userInteractionLocked) return;
+    const state = {
+      sessionId: draftKey,
+      targetId: activeTabTargetId,
+      busy: true,
+    };
+    window.electron.browser.setUserInteractionState(state);
+    return () =>
+      window.electron.browser.setUserInteractionState({
+        ...state,
+        busy: false,
+      });
+  }, [activeTabTargetId, draftKey, userInteractionLocked]);
+  useEffect(() => {
+    if (!agentInteractionLocked) return;
+    activeWebview?.blur();
+    panelRef.current?.focus();
+  }, [activeWebview, agentInteractionLocked]);
+  useEffect(() => {
+    if (!activeTabTargetId) return;
+    window.electron.browser.setAgentActiveTab({
+      sessionId: draftKey,
+      targetId: activeTabTargetId,
+    });
+  }, [activeTabTargetId, draftKey]);
   const annotationAddedNotice = i18nService.t('browserAnnotationAdded');
   useEffect(() => {
     if (!activeTabTargetId) return;
@@ -537,7 +683,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     (rawUrl = 'about:blank', options?: BrowserOpenTabOptions) => {
       const url = normalizeUrl(rawUrl);
       if (!url || tabsRef.current.length >= 8) return;
-      const tab = createTab(url, options);
+      const tab = createBrowserPanelTab(url, options);
       initialUrlsRef.current.set(tab.targetId, tab.url);
       const insertionIndex = options?.insertAfterTargetId
         ? tabsRef.current.findIndex(
@@ -565,12 +711,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   useEffect(
     () =>
       window.electron.browser.onPanelOpenTab(event => {
-        if (
-          event.openerGuestId !== undefined &&
-          ![...webviewsRef.current.values()].some(
-            webview => webview.getWebContentsId?.() === event.openerGuestId,
-          )
-        ) {
+        const openerTargetId =
+          event.openerGuestId === undefined
+            ? undefined
+            : [...webviewsRef.current.entries()].find(
+                ([, webview]) => webview.getWebContentsId?.() === event.openerGuestId,
+              )?.[0];
+        if (event.openerGuestId !== undefined && !openerTargetId) {
           return;
         }
         if (event.openerGuestId === undefined && !isOpen) return;
@@ -578,7 +725,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           setNotice(i18nService.t('browserPanelPostNavigationBlocked'));
           return;
         }
-        openTab(event.url);
+        const openerTab = openerTargetId
+          ? tabsRef.current.find(tab => tab.targetId === openerTargetId)
+          : undefined;
+        openTab(event.url, { profile: openerTab?.profile });
       }),
     [isOpen, openTab],
   );
@@ -598,6 +748,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         ];
       }
       initialUrlsRef.current.delete(targetId);
+      guestElementRefs.current.delete(targetId);
       const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
       tabsRef.current = nextTabs;
       setTabs(nextTabs);
@@ -653,13 +804,16 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return;
       }
       if (command === 'new-tab') {
-        openTab();
+        openTab('about:blank', {
+          profile: tabsRef.current.find(tab => tab.targetId === sourceTargetId)?.profile,
+        });
         return;
       }
       if (command === 'reopen-tab') {
         const closedTab = closedTabsRef.current.pop();
         if (closedTab) {
           openTab(closedTab.url, {
+            profile: closedTab.profile,
             sourceFilePath: closedTab.sourceFilePath,
             sourcePreviewUrl: closedTab.sourcePreviewUrl,
             sourceRootPath: closedTab.sourceRootPath,
@@ -738,12 +892,41 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     (targetId: string, webview: LiveWebview | null) => {
       if (!webview) {
         webviewsRef.current.delete(targetId);
+        for (const sessionId of new Set([
+          registeredDraftKeyRef.current,
+          currentDraftKeyRef.current,
+        ])) {
+          window.electron.browser.unregisterAgentTab({ sessionId, targetId });
+        }
         return;
       }
       webviewsRef.current.set(targetId, webview);
+      const registerAgentTab = () => {
+        try {
+          const webContentsId = webview.getWebContentsId?.();
+          if (Number.isInteger(webContentsId)) {
+            const sessionId = currentDraftKeyRef.current;
+            window.electron.browser.registerAgentTab({
+              sessionId,
+              targetId,
+              webContentsId: webContentsId!,
+              profile:
+                tabsRef.current.find(candidate => candidate.targetId === targetId)?.profile ??
+                'embedded',
+            });
+            if (activeTargetRef.current === targetId) {
+              window.electron.browser.setAgentActiveTab({ sessionId, targetId });
+            }
+          }
+        } catch {
+          // A newly attached webview receives its id at dom-ready.
+        }
+      };
+      registerAgentTab();
       if (installedGuestsRef.current.has(webview)) return;
       installedGuestsRef.current.add(webview);
       webview.addEventListener('did-start-loading', () => {
+        registerAgentTab();
         setLoadingTargets(current => new Set(current).add(targetId));
         setLoadErrors(current => {
           const next = new Map(current);
@@ -751,7 +934,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           return next;
         });
       });
+      webview.addEventListener('did-attach', registerAgentTab);
       webview.addEventListener('did-stop-loading', () => {
+        registerAgentTab();
         setLoadingTargets(current => {
           const next = new Set(current);
           next.delete(targetId);
@@ -760,6 +945,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         handleNavigation(targetId, webview);
       });
       webview.addEventListener('dom-ready', () => {
+        registerAgentTab();
         readyGuestsRef.current.add(webview);
         setReadyTargets(current => new Set(current).add(targetId));
         handleNavigation(targetId, webview);
@@ -832,6 +1018,43 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     },
     [clearAnnotations, closeTab, handleNavigation, runBrowserCommand, updateTab],
   );
+  const installGuestRef = useRef(installGuest);
+  installGuestRef.current = installGuest;
+  const getGuestElementRef = useCallback((targetId: string) => {
+    const existing = guestElementRefs.current.get(targetId);
+    if (existing) return existing;
+    const callback = (element: HTMLElement | null) => {
+      installGuestRef.current(targetId, element as LiveWebview | null);
+    };
+    guestElementRefs.current.set(targetId, callback);
+    return callback;
+  }, []);
+
+  useEffect(() => {
+    const previousDraftKey = registeredDraftKeyRef.current;
+    if (previousDraftKey === draftKey) return;
+    registeredDraftKeyRef.current = draftKey;
+    for (const [targetId, webview] of webviewsRef.current) {
+      window.electron.browser.unregisterAgentTab({ sessionId: previousDraftKey, targetId });
+      try {
+        const webContentsId = webview.getWebContentsId?.();
+        if (!Number.isInteger(webContentsId)) continue;
+        window.electron.browser.registerAgentTab({
+          sessionId: draftKey,
+          targetId,
+          webContentsId: webContentsId!,
+          profile:
+            tabsRef.current.find(candidate => candidate.targetId === targetId)?.profile ??
+            'embedded',
+        });
+        if (activeTargetRef.current === targetId) {
+          window.electron.browser.setAgentActiveTab({ sessionId: draftKey, targetId });
+        }
+      } catch {
+        // Registration retries on the next dom-ready event.
+      }
+    }
+  }, [draftKey]);
 
   const drawOverlay = useCallback(() => {
     const canvas = canvasRef.current;
@@ -1076,7 +1299,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return;
     }
     if (activeTab && isAtSourcePreview(activeTab) && url !== activeTab.url) {
-      openTab(url);
+      openTab(url, { profile: activeTab.profile });
       return;
     }
     const targetId = activeTargetRef.current;
@@ -1172,13 +1395,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       const accepted = onAddAnnotation(
         buildBrowserAnnotationDraft({
           frame,
-          profile: 'embedded',
+          profile: tab.profile ?? 'embedded',
           strokes,
           regions,
           element: inspected,
           dataUrl,
+          comment,
         }),
-        comment,
       );
       if (!accepted) {
         setError(i18nService.t('browserAnnotationLimitReached'));
@@ -1247,7 +1470,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     const url = webview?.getURL() || tab.url;
 
     if (action === 'new-right') {
-      openTab('about:blank', { insertAfterTargetId: targetId });
+      openTab('about:blank', { insertAfterTargetId: targetId, profile: tab.profile });
       return;
     }
     if (action === 'reload') {
@@ -1257,6 +1480,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     if (action === 'duplicate') {
       openTab(url, {
         insertAfterTargetId: targetId,
+        profile: tab.profile,
         ...(isAtSourcePreview(tab) && tab.sourceFilePath
           ? {
               sourceFilePath: tab.sourceFilePath,
@@ -1528,7 +1752,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       aria-label={i18nService.t('browserPanelTitle')}
       aria-hidden={!isOpen}
+      tabIndex={-1}
       onKeyDownCapture={event => {
+        if (agentInteractionLocked) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         const shortcuts = {
           ...defaultConfig.shortcuts!,
           ...(configService.getConfig().shortcuts ?? {}),
@@ -1560,6 +1790,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         runBrowserCommand(command);
       }}
     >
+      {agentInteractionLocked && (
+        <div
+          className="absolute inset-0 z-[100] cursor-wait"
+          aria-label={i18nService.t('browserPanelAgentControlling')}
+          data-testid="browser-agent-interaction-lock"
+        />
+      )}
       {!embedded && (
         <div
           className="absolute inset-y-0 left-0 z-30 hidden w-5 -translate-x-1/2 touch-none cursor-col-resize min-[900px]:block"
@@ -2047,9 +2284,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           {tabs.map(tab => (
             <webview
               key={`${tab.targetId}:${BROWSER_WEBVIEW_CAPABILITY_VERSION}`}
-              ref={element => installGuest(tab.targetId, element as LiveWebview | null)}
+              ref={getGuestElementRef(tab.targetId)}
               src={initialUrlsRef.current.get(tab.targetId) || 'about:blank'}
-              partition={BROWSER_PANEL_PARTITION}
+              partition={browserPartitionForProfile(tab.profile ?? 'embedded')}
               // React 18 drops a bare boolean for unknown/custom-element attributes.
               // Electron types this as boolean, but the DOM must receive the literal attribute.
               allowpopups={'true' as unknown as boolean}

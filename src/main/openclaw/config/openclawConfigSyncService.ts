@@ -965,6 +965,8 @@ export class OpenClawConfigSyncService {
     changed: boolean,
     restartAfterInFlightStart: boolean,
   ): Promise<SyncOpenClawConfigResult> {
+    const requiresImmediateRestart =
+      reason === 'browser-mode-change' || reason === 'browser-mode-rollback';
     const engineManager = this.deps.getOpenClawEngineManager();
     let status = engineManager.getStatus();
     if (status.phase === 'starting') {
@@ -1019,6 +1021,22 @@ export class OpenClawConfigSyncService {
     const targetProcessGeneration = engineManager.getGatewayProcessGeneration();
     const suspension = await this.prepareGatewayRestartSuspension(targetProcessGeneration);
     if (!suspension) {
+      if (requiresImmediateRestart) {
+        const failure = {
+          success: false,
+          changed,
+          configSynced: true,
+          status,
+          error:
+            'The browser provider could not be switched while the Gateway was busy. Try again after active work finishes.',
+        };
+        return reason === 'browser-mode-rollback'
+          ? this.failClosedConfigApplication(
+              failure,
+              'The previous browser provider configuration was restored, but the active Gateway could not be restarted immediately.',
+            )
+          : failure;
+      }
       console.log(
         `[OpenClaw] syncOpenClawConfig: deferring hard restart until the native Gateway suspension is ready (reason: ${reason})`,
       );
@@ -1037,6 +1055,22 @@ export class OpenClawConfigSyncService {
       targetProcessGeneration,
     });
     if (actionAfterSuspension === 'discard') {
+      if (requiresImmediateRestart) {
+        const failure = {
+          success: false,
+          changed,
+          configSynced: true,
+          status: engineManager.getStatus(),
+          error:
+            'The Gateway lifecycle changed before the browser provider restart could complete.',
+        };
+        return reason === 'browser-mode-rollback'
+          ? this.failClosedConfigApplication(
+              failure,
+              'The browser provider rollback was superseded by another Gateway lifecycle change.',
+            )
+          : failure;
+      }
       console.log(
         `[OpenClaw] syncOpenClawConfig: concurrent Gateway lifecycle superseded the prepared restart (reason: ${reason})`,
       );

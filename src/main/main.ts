@@ -21,6 +21,7 @@ import type { DeveloperConfig } from '../shared/developerConfig';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/filePreview';
 import { LocalSpeechModelIpc } from '../shared/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/localSpeechSettings';
+import { EmbeddedBrowserGateway } from '../shared/openclaw/extensions';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
@@ -32,6 +33,7 @@ import {
   ProviderName,
 } from '../shared/providers';
 import type { ProxySettings } from '../shared/proxy';
+import { BrowserAgentBridge } from './browser/browserAgentBridge';
 import { APP_NAME, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
@@ -786,6 +788,107 @@ const getAppIconPath = (): string | undefined => {
 
 // 保存对主窗口的引用
 let mainWindow: BrowserWindow | null = null;
+const browserAgentBridge = new BrowserAgentBridge(
+  (channel, payload) => {
+    if (!mainWindow?.isDestroyed() && !mainWindow?.webContents.isDestroyed()) {
+      mainWindow.webContents.send(channel, payload);
+    }
+  },
+  webContentsId => mainWindow?.webContents.id === webContentsId,
+  sessionId => getCoworkStore().getSession(sessionId)?.cwd ?? null,
+  true,
+);
+const embeddedBrowserRequests = new Map<
+  string,
+  { controller: AbortController; sessionKey: string }
+>();
+const completedEmbeddedBrowserRequests = new Set<string>();
+let embeddedBrowserGatewayBound = false;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const rememberEmbeddedBrowserRequest = (requestId: string): void => {
+  completedEmbeddedBrowserRequests.add(requestId);
+  if (completedEmbeddedBrowserRequests.size <= 1_024) return;
+  const oldestRequestId = completedEmbeddedBrowserRequests.values().next().value;
+  if (oldestRequestId) completedEmbeddedBrowserRequests.delete(oldestRequestId);
+};
+
+const bindEmbeddedBrowserGateway = (): void => {
+  if (embeddedBrowserGatewayBound) return;
+  const runtimeAdapter = getOpenClawRuntimeAdapter();
+  if (!runtimeAdapter) {
+    throw new Error('OpenClaw runtime adapter was not initialized with the Cowork router.');
+  }
+  runtimeAdapter.on('gatewayEvent', event => {
+    if (event.event === EmbeddedBrowserGateway.CANCELLED_EVENT) {
+      const payload = isRecord(event.payload) ? event.payload : {};
+      const requestId = typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
+      const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+      const pending = requestId ? embeddedBrowserRequests.get(requestId) : undefined;
+      if (pending && pending.sessionKey === sessionKey) {
+        pending.controller.abort();
+        embeddedBrowserRequests.delete(requestId);
+      }
+      return;
+    }
+    if (event.event !== EmbeddedBrowserGateway.REQUESTED_EVENT) return;
+
+    const payload = isRecord(event.payload) ? event.payload : {};
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
+    const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
+    const command = isRecord(payload.command) ? payload.command : null;
+    const resolve = (response: Record<string, unknown>): Promise<unknown> =>
+      runtimeAdapter.requestGateway(EmbeddedBrowserGateway.RESOLVE, {
+        requestId,
+        ...response,
+      });
+
+    if (
+      !requestId ||
+      embeddedBrowserRequests.has(requestId) ||
+      completedEmbeddedBrowserRequests.has(requestId)
+    ) {
+      return;
+    }
+    if (!sessionKey || !command) {
+      rememberEmbeddedBrowserRequest(requestId);
+      if (requestId) {
+        void resolve({ ok: false, error: 'Invalid embedded browser request.' }).catch(error => {
+          console.warn('[BrowserAgentBridge] Failed to reject an invalid request:', String(error));
+        });
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+    embeddedBrowserRequests.set(requestId, { controller, sessionKey });
+    void browserAgentBridge
+      .executeCommand(sessionKey, command, controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted) return resolve({ ok: true, result });
+        return undefined;
+      })
+      .catch(error => {
+        if (controller.signal.aborted) return undefined;
+        return resolve({
+          ok: false,
+          error: error instanceof Error ? error.message : 'Browser action failed.',
+        });
+      })
+      .catch(error => {
+        console.warn('[BrowserAgentBridge] Failed to resolve a browser request:', String(error));
+      })
+      .finally(() => {
+        if (embeddedBrowserRequests.get(requestId)?.controller === controller) {
+          embeddedBrowserRequests.delete(requestId);
+        }
+        rememberEmbeddedBrowserRequest(requestId);
+      });
+  });
+  embeddedBrowserGatewayBound = true;
+};
 
 let lastReloadAt = 0;
 const MIN_RELOAD_INTERVAL_MS = 5000;
@@ -966,6 +1069,7 @@ if (!gotTheLock) {
       });
     },
   });
+  browserAgentBridge.registerIpc();
 
   registerAppHandlers({
     getStore,
@@ -1315,6 +1419,7 @@ if (!gotTheLock) {
         console.error('[OpenClaw] Failed to stop gateway on quit:', error);
       });
     }
+    await browserAgentBridge.stop();
 
     outboundHeaderProxy.stop();
 
@@ -1425,6 +1530,7 @@ if (!gotTheLock) {
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
     const coworkEngineRouter = getCoworkEngineRouter();
+    bindEmbeddedBrowserGateway();
     bindSessionPermissionModeRuntime();
     bindCoworkRuntimeForwarder(coworkEngineRouter, getCoworkStore);
     coworkEngineRouter.on('cronChanged', payload => {

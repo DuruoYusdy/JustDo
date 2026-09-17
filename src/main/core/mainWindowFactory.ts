@@ -14,9 +14,11 @@ import path from 'path';
 
 import {
   BROWSER_GUEST_COMMAND_CHANNEL,
+  BROWSER_IMPORTED_PROFILE_PARTITION,
   BROWSER_PANEL_PARTITION,
   type BrowserDownloadSettings,
   BrowserIpc,
+  browserProfileFromPartition,
   DEFAULT_BROWSER_PANEL_SHORTCUTS,
   normalizeBrowserPanelShortcutSettings,
   resolveBrowserGuestShortcut,
@@ -24,10 +26,15 @@ import {
 } from '../../shared/browser';
 import { MediaCaptureIpc } from '../../shared/mediaCapture';
 import {
+  cancelAllBrowserAgentDownloads,
+  claimBrowserAgentDownload,
+} from '../browser/browserAgentDownloadCoordinator';
+import {
   recordBrowserDownload,
   recordBrowserHistory,
   updateBrowserDownload,
 } from '../browser/browserDataImportService';
+import { sanitizeBrowserUrl } from '../browser/browserDataSanitizers';
 import {
   resolveAvailableBrowserDownloadPath,
   resolveBrowserDownloadDirectory,
@@ -36,12 +43,17 @@ import {
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
 } from '../browser/localHtmlPreviewServer';
-import { isAllowedBrowserPanelUrl, isAllowedMainWindowNavigation } from './browserPanelSecurity';
+import {
+  isAllowedBrowserPanelUrl,
+  isAllowedMainWindowNavigation,
+  isBlockedBrowserMetadataHost,
+} from './browserPanelSecurity';
 import {
   shouldAllowAudioMediaCheck,
   shouldAllowAudioMediaRequest,
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
+import { registerBrowserProxySession } from './systemProxyPreference';
 
 type MainWindowFactoryOptions = {
   appName: string;
@@ -142,6 +154,11 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
   const windowSession = mainWindow.webContents.session;
   const browserPanelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  const importedBrowserSession = session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION);
+  const browserPanelSessions = new Map<string, Electron.Session>([
+    [BROWSER_PANEL_PARTITION, browserPanelSession],
+    [BROWSER_IMPORTED_PROFILE_PARTITION, importedBrowserSession],
+  ]);
   const localPreviewScopesByGuestId = new Map<number, string>();
   let browserPanelShortcuts = DEFAULT_BROWSER_PANEL_SHORTCUTS;
   const handleBrowserPanelShortcuts = (event: Electron.IpcMainEvent, value: unknown) => {
@@ -157,10 +174,12 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   mainWindow.once('closed', () => {
     ipcMain.off(BrowserIpc.PanelSetShortcuts, handleBrowserPanelShortcuts);
   });
-  browserPanelSession.setPermissionCheckHandler(() => false);
-  browserPanelSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
+  for (const browserSession of browserPanelSessions.values()) {
+    browserSession.setPermissionCheckHandler(() => false);
+    browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(false);
+    });
+  }
   windowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
     if (webContents !== mainWindow.webContents) return false;
     if (permission !== 'media') return true;
@@ -240,11 +259,29 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     webPreferences.allowRunningInsecureContent = false;
     webPreferences.webviewTag = false;
     webPreferences.spellcheck = true;
-    webPreferences.disableDialogs = true;
+    // The Agent dialog action observes and resolves dialogs through the exact
+    // guest WebContents debugger. Keep browser-page dialogs enabled while the
+    // application renderer itself remains protected above.
+    webPreferences.disableDialogs = false;
     webPreferences.navigateOnDragDrop = false;
 
-    if (params.partition !== BROWSER_PANEL_PARTITION || !isAllowedBrowserPanelUrl(params.src)) {
+    if (
+      !browserProfileFromPartition(params.partition) ||
+      !isAllowedBrowserPanelUrl(params.src)
+    ) {
       event.preventDefault();
+      return;
+    }
+    if (!browserPanelSessions.has(params.partition)) {
+      const browserSession = session.fromPartition(params.partition);
+      browserPanelSessions.set(params.partition, browserSession);
+      void registerBrowserProxySession(browserSession);
+      browserSession.setPermissionCheckHandler(() => false);
+      browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+        callback(false);
+      });
+      installBrowserRequestGuard(browserSession);
+      browserSession.on('will-download', handleBrowserDownload);
     }
   });
   mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
@@ -344,15 +381,49 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       callback(credentials.username, credentials.password);
     });
   });
-  browserPanelSession.webRequest.onBeforeRequest((details, callback) => {
+  const installBrowserRequestGuard = (browserSession: Electron.Session) =>
+    browserSession.webRequest.onBeforeRequest((details, callback) => {
     const localPreviewScopeUrl = localPreviewScopesByGuestId.get(details.webContentsId);
     const blockPreviewRequest = Boolean(
       localPreviewScopeUrl && !isSameLocalHtmlPreviewScope(localPreviewScopeUrl, details.url),
     );
-    const blockGuestMainFrame =
-      details.resourceType === 'mainFrame' && !isAllowedBrowserPanelUrl(details.url);
-    callback(blockPreviewRequest || blockGuestMainFrame ? { cancel: true } : {});
-  });
+    const isMainFrame = details.resourceType === 'mainFrame';
+    const blockGuestMainFrame = isMainFrame && !isAllowedBrowserPanelUrl(details.url);
+    if (blockPreviewRequest || blockGuestMainFrame) {
+      callback({ cancel: true });
+      return;
+    }
+    let requestUrl: URL;
+    try {
+      requestUrl = new URL(details.url);
+    } catch {
+      callback(isMainFrame ? { cancel: true } : {});
+      return;
+    }
+    if (!['http:', 'https:', 'ws:', 'wss:'].includes(requestUrl.protocol)) {
+      callback({});
+      return;
+    }
+    const hostname = requestUrl.hostname;
+    if (!hostname || isBlockedBrowserMetadataHost(hostname)) {
+      callback({ cancel: true });
+      return;
+    }
+    // Resolve through this exact partition so Chromium's subsequent connection
+    // shares the same host-resolver cache entry instead of racing a separate
+    // default-session lookup.
+    void browserSession
+      .resolveHost(hostname)
+      .then(result => {
+        const addresses = result.endpoints.map(endpoint => endpoint.address);
+        const allowRequest =
+          addresses.length > 0 &&
+          addresses.every(address => !isBlockedBrowserMetadataHost(address));
+        callback(allowRequest ? {} : { cancel: true });
+      })
+      .catch(() => callback({ cancel: true }));
+    });
+  browserPanelSessions.forEach(installBrowserRequestGuard);
   const pendingDownloads = new Set<Electron.DownloadItem>();
   const reservedDownloadPaths = new Set<string>();
   const downloadDefaultDirectories = new WeakMap<Electron.DownloadItem, string>();
@@ -424,7 +495,11 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       pendingDownloads.delete(item);
     }
   };
-  const handleBrowserDownload = (_event: Electron.Event, item: Electron.DownloadItem): void => {
+  const handleBrowserDownload = (
+    _event: Electron.Event,
+    item: Electron.DownloadItem,
+    originWebContents?: Electron.WebContents,
+  ): void => {
     const id = randomUUID();
     const now = Date.now();
     const settings = options.getBrowserDownloadSettings();
@@ -432,14 +507,20 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       settings.directory,
       app.getPath('downloads'),
     );
-    const askWhereToSave = settings.askWhereToSave;
-    const automaticSavePath = askWhereToSave
+    const downloadSession = originWebContents?.session ?? browserPanelSession;
+    const agentClaim = claimBrowserAgentDownload(downloadSession, item, originWebContents);
+    if (agentClaim?.cancelled) {
+      item.cancel();
+      return;
+    }
+    const askWhereToSave = agentClaim ? false : settings.askWhereToSave;
+    const automaticSavePath = agentClaim?.savePath ?? (askWhereToSave
       ? undefined
       : resolveAvailableBrowserDownloadPath(
           downloadDirectory,
           item.getFilename(),
           candidate => reservedDownloadPaths.has(candidate) || fs.existsSync(candidate),
-        );
+        ));
     downloadIds.set(item, id);
     downloadDefaultDirectories.set(item, downloadDirectory);
     if (automaticSavePath) reservedDownloadPaths.add(automaticSavePath);
@@ -448,7 +529,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         {
           id,
           fileName: path.basename(item.getFilename()) || 'download',
-          sourceUrl: item.getURL(),
+          sourceUrl: sanitizeBrowserUrl(item.getURL()),
           state: askWhereToSave ? 'queued' : 'progressing',
           receivedBytes: item.getReceivedBytes(),
           totalBytes: item.getTotalBytes(),
@@ -473,6 +554,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       persistDownloadUpdate(item, state);
       pendingDownloads.delete(item);
       if (automaticSavePath) reservedDownloadPaths.delete(automaticSavePath);
+      agentClaim?.settle(item, state);
     });
     if (askWhereToSave) {
       item.pause();
@@ -495,13 +577,18 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       }
     }
   };
-  browserPanelSession.on('will-download', handleBrowserDownload);
+  browserPanelSessions.forEach(browserSession =>
+    browserSession.on('will-download', handleBrowserDownload),
+  );
   mainWindow.once('closed', () => {
-    browserPanelSession.off('will-download', handleBrowserDownload);
+    browserPanelSessions.forEach(browserSession =>
+      browserSession.off('will-download', handleBrowserDownload),
+    );
     downloadUpdateTimers.forEach(timer => clearTimeout(timer));
     downloadUpdateTimers.clear();
     pendingDownloads.forEach(item => item.cancel());
     pendingDownloads.clear();
+    cancelAllBrowserAgentDownloads();
     reservedDownloadPaths.clear();
   });
   if (options.isDev && process.env.JUSTDO_DEBUG_CHAT_TIMELINE === 'true') {

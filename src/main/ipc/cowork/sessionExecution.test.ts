@@ -66,7 +66,8 @@ describe('cowork session execution permissions', () => {
       {},
       {
         prompt: 'hello',
-        gatewayPrompt: '<justdo-browser-context-v1>context</justdo-browser-context-v1>\n\nhello',
+        gatewayPrompt:
+          '<<<EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>context<<<END_EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>\n\nhello',
         permissionMode: 'ask',
       },
     );
@@ -75,7 +76,7 @@ describe('cowork session execution permissions', () => {
     expect(createSession.mock.calls[0]?.[6]).toBe('openai/gpt-5');
     expect(startSession).toHaveBeenCalledWith(
       'session-1',
-      '<justdo-browser-context-v1>context</justdo-browser-context-v1>\n\nhello',
+      '<<<EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>context<<<END_EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>\n\nhello',
       expect.objectContaining({ workspaceRoot: 'C:\\workspace' }),
     );
   });

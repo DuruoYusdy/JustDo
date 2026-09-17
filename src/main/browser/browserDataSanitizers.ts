@@ -1,6 +1,42 @@
 import { createHash } from 'crypto';
 
 const CHROME_EPOCH_OFFSET_MS = 11_644_473_600_000;
+const REDACTED_URL_VALUE = '[REDACTED]';
+const SENSITIVE_URL_PARAMETER =
+  /(?:^|[_-])(?:access|refresh|id|oauth|security)?[_-]?token(?:$|[_-])|(?:^|[_-])(?:api[_-]?key|client[_-]?secret|secret|signature|sig|authorization|auth|credential|password|passwd|session(?:id)?|ticket|code|key)(?:$|[_-])|^awsaccesskeyid$/i;
+
+export const sanitizeBrowserUrl = (value: string): string => {
+  try {
+    const url = new URL(value);
+    url.username = '';
+    url.password = '';
+    for (const key of [...url.searchParams.keys()]) {
+      if (SENSITIVE_URL_PARAMETER.test(key)) url.searchParams.set(key, REDACTED_URL_VALUE);
+    }
+    const rawHash = url.hash.slice(1);
+    const hashQueryIndex = rawHash.indexOf('?');
+    const hashRoute = hashQueryIndex >= 0 ? rawHash.slice(0, hashQueryIndex) : '';
+    const hashQuery = hashQueryIndex >= 0 ? rawHash.slice(hashQueryIndex + 1) : rawHash;
+    if (hashQuery.includes('=')) {
+      const hashParams = new URLSearchParams(hashQuery);
+      let changed = false;
+      for (const key of [...hashParams.keys()]) {
+        if (!SENSITIVE_URL_PARAMETER.test(key)) continue;
+        hashParams.set(key, REDACTED_URL_VALUE);
+        changed = true;
+      }
+      if (changed) {
+        const sanitizedHash = hashParams.toString();
+        url.hash = hashRoute ? `${hashRoute}?${sanitizedHash}` : sanitizedHash;
+      }
+    } else if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(rawHash)) {
+      url.hash = REDACTED_URL_VALUE;
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+};
 
 export const chromeTimestampToUnixMs = (value: number): number =>
   Math.max(0, Math.floor(value / 1000 - CHROME_EPOCH_OFFSET_MS));
@@ -10,9 +46,7 @@ export const sanitizeBrowserHistoryUrl = (value: string): string | null => {
   try {
     const url = new URL(value);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    url.username = '';
-    url.password = '';
-    return url.toString().slice(0, 4096);
+    return sanitizeBrowserUrl(url.toString()).slice(0, 4096);
   } catch {
     return null;
   }

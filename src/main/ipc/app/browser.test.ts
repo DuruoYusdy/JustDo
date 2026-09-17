@@ -24,6 +24,20 @@ vi.mock('electron', () => ({
 }));
 
 describe('applyBrowserModeChange', () => {
+  test('persists the embedded browser mode', async () => {
+    let config: Record<string, unknown> = { browserMode: BrowserMode.Isolated };
+    const result = await applyBrowserModeChange(BrowserMode.Embedded, {
+      readAppConfig: () => config,
+      writeAppConfig: next => {
+        config = next;
+      },
+      syncConfig: vi.fn().mockResolvedValue({ success: true }),
+    });
+
+    expect(result).toEqual({ success: true, mode: BrowserMode.Embedded });
+    expect(config.browserMode).toBe(BrowserMode.Embedded);
+  });
+
   test('persists the selected mode and synchronizes it once', async () => {
     let config: Record<string, unknown> = { theme: 'light' };
     const syncConfig = vi.fn().mockResolvedValue({ success: true });

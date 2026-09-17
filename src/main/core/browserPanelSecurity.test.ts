@@ -4,7 +4,11 @@ import {
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
 } from '../../shared/browser';
-import { isAllowedBrowserPanelUrl, isAllowedMainWindowNavigation } from './browserPanelSecurity';
+import {
+  isAllowedBrowserPanelUrl,
+  isAllowedMainWindowNavigation,
+  isBlockedBrowserMetadataHost,
+} from './browserPanelSecurity';
 
 describe('isAllowedBrowserPanelUrl', () => {
   it('allows only blank and HTTP(S) guest navigation', () => {
@@ -12,9 +16,21 @@ describe('isAllowedBrowserPanelUrl', () => {
     expect(isAllowedBrowserPanelUrl('about:blank')).toBe(true);
     expect(isAllowedBrowserPanelUrl('https://example.com/path')).toBe(true);
     expect(isAllowedBrowserPanelUrl('http://localhost:43127')).toBe(true);
+    expect(isAllowedBrowserPanelUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+    expect(isAllowedBrowserPanelUrl('http://[::ffff:169.254.169.254]/')).toBe(false);
+    expect(isAllowedBrowserPanelUrl('http://metadata.google.internal/')).toBe(false);
     expect(isAllowedBrowserPanelUrl('file:///C:/secrets.txt')).toBe(false);
     expect(isAllowedBrowserPanelUrl('javascript:alert(1)')).toBe(false);
     expect(isAllowedBrowserPanelUrl('data:text/html,hello')).toBe(false);
+  });
+
+  it('recognizes normalized cloud metadata addresses without blocking ordinary LAN hosts', () => {
+    expect(isBlockedBrowserMetadataHost('169.254.1.2')).toBe(true);
+    expect(isBlockedBrowserMetadataHost('100.100.100.200')).toBe(true);
+    expect(isBlockedBrowserMetadataHost('fe80::1')).toBe(true);
+    expect(isBlockedBrowserMetadataHost('fd00:ec2::254')).toBe(true);
+    expect(isBlockedBrowserMetadataHost('192.168.1.10')).toBe(false);
+    expect(isBlockedBrowserMetadataHost('127.0.0.1')).toBe(false);
   });
 });
 

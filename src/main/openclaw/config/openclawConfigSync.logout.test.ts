@@ -8,6 +8,7 @@ import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { createDefaultAgentRuntimeSettings } from '../../../shared/openclaw/agentRuntimeSettings';
 import { setStoreGetter } from '../../cowork/providerApiConfig';
 import {
+  listManagedOpenClawPluginIds,
   OpenClawConfigSync,
   type OpenClawConfigSyncResult,
   verifyLoggedOutOpenClawConfig,
@@ -21,6 +22,12 @@ vi.mock('electron', () => ({
 }));
 
 const temporaryDirectories: string[] = [];
+
+test('keeps both browser providers under browser-mode ownership', () => {
+  expect(listManagedOpenClawPluginIds()).toEqual(
+    expect.arrayContaining(['browser', 'embedded-browser']),
+  );
+});
 
 afterEach(() => {
   setStoreGetter(() => null);
@@ -165,6 +172,10 @@ const writeMinimalConfig = (
     getAgents: () => agents,
     getAgentRuntimeSettings: () => runtimeSettings,
     getLocalTtsConfig: () => localTtsConfig,
+    getSpeechOutputState: () => ({
+      enabled: true,
+      mode: localTtsConfig ? 'local' : 'online',
+    }),
   } as never);
   return (
     sync as unknown as {
@@ -497,6 +508,7 @@ describe('OpenClaw auth logout config sync', () => {
       'automation-permission',
       'runtime-services',
       'plan-mode',
+      'embedded-browser',
     ]);
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['ask-user-question']).toEqual({
@@ -505,6 +517,7 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.plugins.entries['unavailable-extension']).toBeUndefined();
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
+    expect(config.plugins.entries['embedded-browser']).toEqual({ enabled: false });
   });
 
   test('preserves discoverable custom plugins while removing stale registrations', () => {
@@ -590,6 +603,7 @@ describe('OpenClaw auth logout config sync', () => {
       'automation-permission',
       'runtime-services',
       'plan-mode',
+      'embedded-browser',
     ]);
     expect(config.plugins.deny).toBeUndefined();
   });
@@ -668,6 +682,29 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
+  test('enables exactly one browser tool provider in embedded mode', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-embedded-browser-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    expect(
+      writeMinimalConfig(configPath, 'browser-mode-change', 'ask', BrowserMode.Embedded),
+    ).toMatchObject({ ok: true, requiresGatewayRestart: true });
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.browser.enabled).toBe(false);
+    expect(config.plugins.entries.browser).toEqual({ enabled: false });
+    expect(config.plugins.entries['embedded-browser']).toEqual({ enabled: true });
+
+    expect(
+      writeMinimalConfig(configPath, 'browser-mode-change', 'ask', BrowserMode.User),
+    ).toMatchObject({ ok: true, requiresGatewayRestart: true });
+    const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(userConfig.browser.enabled).toBe(true);
+    expect(userConfig.plugins.entries.browser).toEqual({ enabled: true });
+    expect(userConfig.plugins.entries['embedded-browser']).toEqual({ enabled: false });
+  });
+
   test('a second no-model sync removes the retired skill_workshop deny entry', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tool-deny-'));
     temporaryDirectories.push(directory);
@@ -709,6 +746,7 @@ describe('OpenClaw auth logout config sync', () => {
       'automation-permission',
       'runtime-services',
       'plan-mode',
+      'embedded-browser',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();

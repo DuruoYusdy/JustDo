@@ -25,6 +25,11 @@ export default function BrowserAnnotationCard({
           {annotation.title}
         </div>
         <div className="truncate text-[10px] text-muted">{annotation.displayUrl}</div>
+        {annotation.comment && (
+          <div className="truncate text-[10px] text-secondary" title={annotation.comment}>
+            {annotation.comment}
+          </div>
+        )}
         {!includesImage && (
           <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
             <ExclamationTriangleIcon className="h-3 w-3" />

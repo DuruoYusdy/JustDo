@@ -1104,6 +1104,52 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
+  it('fails a browser provider switch instead of reporting a deferred restart as complete', async () => {
+    const harness = createHarness({ activeWorkloads: true });
+    const restartGatewayOrDefer = (
+      harness.service as unknown as {
+        restartGatewayOrDefer: (
+          reason: string,
+          changed: boolean,
+          restartAfterInFlightStart: boolean,
+        ) => Promise<unknown>;
+      }
+    ).restartGatewayOrDefer.bind(harness.service);
+
+    await expect(
+      restartGatewayOrDefer('browser-mode-change', true, false),
+    ).resolves.toMatchObject({
+      success: false,
+      configSynced: true,
+      error: expect.stringContaining('could not be switched'),
+    });
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('stops the Gateway when a browser provider rollback cannot restart immediately', async () => {
+    const harness = createHarness({ activeWorkloads: true });
+    const restartGatewayOrDefer = (
+      harness.service as unknown as {
+        restartGatewayOrDefer: (
+          reason: string,
+          changed: boolean,
+          restartAfterInFlightStart: boolean,
+        ) => Promise<unknown>;
+      }
+    ).restartGatewayOrDefer.bind(harness.service);
+
+    await expect(
+      restartGatewayOrDefer('browser-mode-rollback', true, false),
+    ).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped to fail closed'),
+    });
+    expect(harness.disconnectGatewayClient).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.engineManager.setExternalError).toHaveBeenCalledOnce();
+  });
+
   it('keeps a hard restart deferred for as long as active workloads remain', async () => {
     vi.useFakeTimers();
     const harness = createHarness({

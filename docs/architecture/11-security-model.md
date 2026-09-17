@@ -92,6 +92,8 @@ Preview 只支持 shared allowlist extension，最大 2 MiB。读取流程用 `l
 
 `shell.openPath/showItemInFolder` 与 preview read 分离；相对路径按明确 cwd 解析。用户选择 dialog 是授权信号，但后续用途仍需验证。
 
+内置浏览器的上传在实际注入前重新解析任务工作区内的真实普通文件。Agent PDF 与下载目标除 canonical workspace 校验和拒绝覆盖外，还按真实父目录建立进程级 reservation；同一 canonical 目标的并发 claim 失败，完成、取消、超时或 Tab 关闭时释放。PDF 使用 `wx` 创建，下载只把已占用的 canonical 路径交给匹配 guest 的 Chromium 下载事件。
+
 ## 9. `localfile://` 风险
 
 当前 protocol handler把 URL pathname decode 后交给 `net.fetch(file://...)`，用于本地图片展示，但代码本身没有 allow-root/token检查。安全性依赖只有受信 UI 生成 URL、CSP 和 Renderer 无任意导航。它应被视为敏感攻击面；新增使用时必须限制来源，不能把它描述成通用安全文件服务器。
@@ -138,7 +140,7 @@ Legacy schema destructive reset只有严格列缺失检测才执行；误判是�
 
 ## 15. Browser 模式
 
-isolated、user、extension 三种模式具有不同 cookie/profile/人工确认边界。Extension relay只监听 loopback并要求 token；打开 remote debugging/extension management 是显式用户动作。无人值守用户浏览器不能宣称绕过 Chrome 的首次安装/授权安全提示。
+isolated、user、extension、embedded 四种模式具有不同 cookie/profile/人工确认边界，且任一时刻只启用一个 `browser` Tool 提供方。Extension relay只监听 loopback并要求 token；打开 remote debugging/extension management 是显式用户动作。embedded 仅操作应用内 `persist:justdo-browser`、隔离的 `persist:justdo-browser-imported` 及经严格名称校验后创建的本地命名 partition，不连接外部 Chrome；注册 guest 时以 Electron session 的真实 storage path 复核 partition，不能信任 Renderer 声明。Tool 路由固定为当前桌面 `host`，不接受 node 或 sandbox 拓扑。无人值守用户浏览器不能宣称绕过 Chrome 的首次安装/授权安全提示。
 
 当前扩展仅在 `attach` 时强制校验tab group membership；`cdp`、`closeTab`、`activateTab` 没有同等级校验，Unpair也只清配对storage/socket而不主动detach既有debugger attachment或清理group。因此tab group目前是可见授权信号，但还不是完整的命令级capability边界；修复前不得宣称组外tab绝对不可控制或撤销立即释放全部调试权限。
 

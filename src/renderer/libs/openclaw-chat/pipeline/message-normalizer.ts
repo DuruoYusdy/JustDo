@@ -43,6 +43,8 @@ function coerceBrowserAnnotation(value: unknown): BrowserAnnotationDisplay | nul
   const title = typeof annotation.title === 'string' ? annotation.title.slice(0, 120) : '';
   const displayUrl =
     typeof annotation.displayUrl === 'string' ? annotation.displayUrl.slice(0, 300) : '';
+  const comment =
+    typeof annotation.comment === 'string' ? annotation.comment.trim().slice(0, 2_000) : '';
   const markedRegionCount =
     typeof annotation.markedRegionCount === 'number' &&
     Number.isFinite(annotation.markedRegionCount)
@@ -83,6 +85,7 @@ function coerceBrowserAnnotation(value: unknown): BrowserAnnotationDisplay | nul
     title,
     displayUrl,
     markedRegionCount,
+    ...(comment ? { comment } : {}),
     ...(element ? { element } : {}),
   };
 }
@@ -600,8 +603,9 @@ function expandUserDisplayContent(
   text: string,
   includeLegacyTextFields = false,
 ): MessageContentItem[] {
-  const browserPrompt = parseBrowserAnnotationPrompt(text);
-  if (!browserPrompt) return expandUserTextMediaContent(text, includeLegacyTextFields);
+  const displayText = stripInboundMetadata(text);
+  const browserPrompt = parseBrowserAnnotationPrompt(displayText);
+  if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
   return [
     ...expandUserTextMediaContent(browserPrompt.userText, includeLegacyTextFields),
     ...browserPrompt.annotations.map(annotation => ({

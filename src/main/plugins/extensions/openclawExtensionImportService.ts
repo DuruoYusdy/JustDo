@@ -1330,8 +1330,8 @@ export class OpenClawExtensionImportService {
     enabled: boolean,
     reviewToken?: string,
   ): Promise<ExtensionSetEnabledResult> {
-    if (!enabled && this.deps.getManagedPluginIds?.().includes(extensionId)) {
-      return { success: false, error: 'Managed extensions cannot be disabled.' };
+    if (this.deps.getManagedPluginIds?.().includes(extensionId)) {
+      return { success: false, error: 'Managed extensions cannot be changed here.' };
     }
     const manager = this.deps.getOpenClawEngineManager();
     const initialPhase = manager.getStatus().phase;

@@ -8,6 +8,7 @@ import { promisify } from 'util';
 
 import {
   BROWSER_GUEST_CREDENTIALS_GET_CHANNEL,
+  BROWSER_IMPORTED_PROFILE_PARTITION,
   BROWSER_PANEL_PARTITION,
   type BrowserActionResult,
   type BrowserClearDataResult,
@@ -577,7 +578,10 @@ export const registerBrowserHandlers = ({
   ipcMain.handle(BROWSER_GUEST_CREDENTIALS_GET_CHANNEL, event => {
     if (
       event.sender.getType() !== 'webview' ||
-      event.sender.session !== session.fromPartition(BROWSER_PANEL_PARTITION) ||
+      ![
+        session.fromPartition(BROWSER_PANEL_PARTITION),
+        session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
+      ].includes(event.sender.session) ||
       event.senderFrame !== event.sender.mainFrame
     ) {
       return [];
@@ -603,7 +607,8 @@ export const registerBrowserHandlers = ({
     if (
       mode !== BrowserMode.Isolated &&
       mode !== BrowserMode.User &&
-      mode !== BrowserMode.Extension
+      mode !== BrowserMode.Extension &&
+      mode !== BrowserMode.Embedded
     ) {
       return {
         success: false,

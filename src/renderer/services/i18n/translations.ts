@@ -464,6 +464,10 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeExtensionTitle: '通过扩展连接 Chrome',
     browserModeExtensionDescription:
       '安装并配对内置浏览器扩展，可在扩展设置中选择共享全部网页或仅共享指定标签页。',
+    browserModeEmbeddedTitle: '使用内置浏览器',
+    browserModeEmbeddedDescription: 'AI 与你共同操作应用侧边栏里的同一个实时网页。',
+    browserModeEmbeddedActive:
+      '当前使用内置浏览器。浏览器操作会显示在会话侧边栏中，你可以随时直接接管。',
     browserModeChangeFailed: '浏览器模式切换失败',
     browserModeApplying: '正在应用浏览器设置，AI 引擎可能会短暂重启…',
     browserModeGatewayRestarting: '正在重启 AI 引擎，期间浏览器连接会短暂断开…',
@@ -538,6 +542,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       '本地连接服务未响应。请重启应用；仍无法连接时，请检查安全软件是否阻止本地连接。',
     browserExtensionNotConnected: 'Chrome 扩展尚未连接，请确认扩展已启用或重新配对。',
     browserPanelTitle: '浏览器',
+    browserPanelAgentControlling: 'Agent 正在操作浏览器',
     browserPanelOpen: '打开浏览器面板',
     browserPanelClose: '关闭浏览器面板',
     browserPanelRestoreWidth: '恢复浏览器面板默认宽度',
@@ -809,6 +814,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserMessageSelector: 'selector',
     browserMessageBounds: 'bounds',
     browserMessageMarks: 'regions',
+    browserMessageComment: '评论',
     browserMessagePage: 'page',
     shortcuts: '快捷键',
     help: '帮助',
@@ -2863,6 +2869,11 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserModeExtensionTitle: 'Connect through extension',
     browserModeExtensionDescription:
       'Install and pair the bundled browser extension, then choose all eligible pages or selected tabs in its settings.',
+    browserModeEmbeddedTitle: 'Use built-in browser',
+    browserModeEmbeddedDescription:
+      'You and the AI share the same live page in the conversation sidebar.',
+    browserModeEmbeddedActive:
+      'The built-in browser is active. Browser actions appear in the conversation sidebar, where you can take over at any time.',
     browserModeChangeFailed: 'Failed to change browser mode',
     browserModeApplying: 'Applying browser settings; the AI engine may restart briefly…',
     browserModeGatewayRestarting:
@@ -2940,6 +2951,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'The local connection service is not responding. Restart the app; if it still cannot connect, check whether security software blocks local connections.',
     browserExtensionNotConnected: 'The Chrome extension is not connected. Enable it or pair again.',
     browserPanelTitle: 'Browser',
+    browserPanelAgentControlling: 'Agent is controlling the browser',
     browserPanelOpen: 'Open browser panel',
     browserPanelClose: 'Close browser panel',
     browserPanelRestoreWidth: 'Restore default browser panel width',
@@ -3224,6 +3236,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserMessageSelector: 'selector',
     browserMessageBounds: 'bounds',
     browserMessageMarks: 'regions',
+    browserMessageComment: 'comment',
     browserMessagePage: 'page',
     shortcuts: 'Shortcuts',
     help: 'Help',

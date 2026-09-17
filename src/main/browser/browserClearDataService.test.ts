@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   countDownloads: vi.fn(),
   countHistory: vi.fn(),
   countCredentials: vi.fn(),
+  listProfiles: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -29,6 +30,7 @@ vi.mock('./browserDataImportService', () => ({
   countBrowserDownloadsSince: mocks.countDownloads,
   countBrowserHistorySince: mocks.countHistory,
   countImportedCredentialsSince: mocks.countCredentials,
+  listImportedBrowserProfiles: mocks.listProfiles,
 }));
 
 import {
@@ -54,6 +56,7 @@ describe('browserClearDataService', () => {
     mocks.clearHistory.mockReturnValue(3);
     mocks.clearDownloads.mockReturnValue(2);
     mocks.clearCredentials.mockReturnValue(1);
+    mocks.listProfiles.mockReturnValue([]);
   });
 
   it('resolves bounded ranges and preserves all-time as an unbounded query', () => {

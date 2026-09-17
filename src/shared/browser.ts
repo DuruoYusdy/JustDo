@@ -26,7 +26,55 @@ export const BrowserIpc = {
   RevealDownload: 'browser:revealDownload',
   GetClearDataSummary: 'browser:getClearDataSummary',
   ClearBrowsingData: 'browser:clearBrowsingData',
+  AgentRegisterTab: 'browser:agentRegisterTab',
+  AgentUnregisterTab: 'browser:agentUnregisterTab',
+  AgentSetActiveTab: 'browser:agentSetActiveTab',
+  AgentEnsureTab: 'browser:agentEnsureTab',
+  AgentFocusTab: 'browser:agentFocusTab',
+  AgentCloseTab: 'browser:agentCloseTab',
+  AgentInteractionState: 'browser:agentInteractionState',
+  AgentInteractionReady: 'browser:agentInteractionReady',
+  UserInteractionState: 'browser:userInteractionState',
 } as const;
+
+export type BrowserAgentProfile = string;
+
+export const BROWSER_AGENT_PANEL_TARGET_ID = '__browser-agent-panel__';
+export const BROWSER_AGENT_INTERACTION_ACK_TIMEOUT_MS = 5_000;
+
+const BROWSER_AGENT_PROFILE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+
+export const isBrowserAgentProfile = (value: unknown): value is BrowserAgentProfile =>
+  typeof value === 'string' && BROWSER_AGENT_PROFILE_PATTERN.test(value);
+
+export type BrowserAgentTabRegistration = {
+  sessionId: string;
+  targetId: string;
+  webContentsId: number;
+  profile: BrowserAgentProfile;
+};
+
+export type BrowserAgentTabReference = Pick<
+  BrowserAgentTabRegistration,
+  'sessionId' | 'targetId'
+> & { profile?: BrowserAgentProfile };
+
+export type BrowserAgentInteractionState = BrowserAgentTabReference & {
+  busy: boolean;
+  operationId?: string;
+};
+
+export type BrowserAgentInteractionReady = BrowserAgentTabReference & {
+  operationId: string;
+};
+
+export type BrowserAgentSessionEvent = {
+  sessionId: string;
+  url?: string;
+  targetId?: string;
+  label?: string;
+  profile?: BrowserAgentProfile;
+};
 
 export type BrowserPanelShortcutAction = 'terminal' | 'browser' | 'side-chat' | 'files';
 
@@ -88,6 +136,21 @@ export const BROWSER_GUEST_CREDENTIALS_GET_CHANNEL = 'justdo-browser-credentials
 export const BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL = 'justdo-browser-credentials:offer';
 export const BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL = 'justdo-browser-credentials:fill';
 export const BROWSER_PANEL_PARTITION = 'persist:justdo-browser';
+export const BROWSER_IMPORTED_PROFILE_PARTITION = 'persist:justdo-browser-imported';
+export const BROWSER_NAMED_PROFILE_PARTITION_PREFIX = 'persist:justdo-browser-profile-';
+export const browserPartitionForProfile = (profile: BrowserAgentProfile): string =>
+  profile === 'embedded'
+    ? BROWSER_PANEL_PARTITION
+    : profile === 'imported'
+      ? BROWSER_IMPORTED_PROFILE_PARTITION
+      : `${BROWSER_NAMED_PROFILE_PARTITION_PREFIX}${profile}`;
+export const browserProfileFromPartition = (partition: string): BrowserAgentProfile | null => {
+  if (partition === BROWSER_PANEL_PARTITION) return 'embedded';
+  if (partition === BROWSER_IMPORTED_PROFILE_PARTITION) return 'imported';
+  if (!partition.startsWith(BROWSER_NAMED_PROFILE_PARTITION_PREFIX)) return null;
+  const profile = partition.slice(BROWSER_NAMED_PROFILE_PARTITION_PREFIX.length);
+  return isBrowserAgentProfile(profile) ? profile : null;
+};
 export const BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH = 8_000;
 
 export type BrowserPanelOpenTabEvent = {
@@ -164,12 +227,15 @@ export const BrowserMode = {
   Isolated: 'isolated',
   User: 'user',
   Extension: 'extension',
+  Embedded: 'embedded',
 } as const;
 
 export type BrowserMode = (typeof BrowserMode)[keyof typeof BrowserMode];
 
 export const normalizeBrowserMode = (value: unknown): BrowserMode =>
-  value === BrowserMode.User || value === BrowserMode.Extension ? value : BrowserMode.Isolated;
+  value === BrowserMode.User || value === BrowserMode.Extension || value === BrowserMode.Embedded
+    ? value
+    : BrowserMode.Isolated;
 
 export const BrowserSearchEngine = {
   Baidu: 'baidu',
@@ -283,8 +349,10 @@ export type BrowserActionResult = {
 
 export type BrowserImportSource = {
   id: string;
-  browser: 'chrome';
+  browser: 'chrome' | 'brave' | 'edge' | 'chromium';
   name: string;
+  profileId?: string;
+  hasCookies?: boolean;
 };
 
 export type BrowserImportSourcesResult = BrowserActionResult & {
@@ -297,11 +365,14 @@ export type BrowserImportRequest = {
   cookies: boolean;
   history: boolean;
   approved: boolean;
+  domains?: string[];
+  destinationProfile?: BrowserAgentProfile;
 };
 
 export type BrowserImportResult = BrowserActionResult & {
   imported?: { passwords: number; cookies: number; history: number };
   skippedAppBound?: { passwords: number; cookies: number };
+  failed?: { cookies: number };
   errorCode?: 'invalid-request' | 'source-unavailable' | 'chrome-running' | 'decrypt-failed';
 };
 
@@ -400,6 +471,7 @@ export type BrowserPanelTab = {
   faviconUrl?: string;
   muted?: boolean;
   url: string;
+  profile?: BrowserAgentProfile;
   sourceFilePath?: string;
   sourcePreviewUrl?: string;
   sourceRootPath?: string;
@@ -409,7 +481,7 @@ export type BrowserPanelTab = {
 
 export type BrowserPanelTabs = {
   running: boolean;
-  profile: 'openclaw' | 'user' | 'chrome' | 'embedded';
+  profile: 'openclaw' | 'user' | 'chrome' | BrowserAgentProfile;
   tabs: BrowserPanelTab[];
 };
 
@@ -474,6 +546,7 @@ export type BrowserAnnotationDisplay = {
   title: string;
   displayUrl: string;
   markedRegionCount: number;
+  comment?: string;
   element?: BrowserAnnotationElementSummary;
 };
 
@@ -484,14 +557,17 @@ export type BrowserAnnotationDraft = {
   displayUrl: string;
   markedRegionCount: number;
   inspectedElement: boolean;
+  comment?: string;
   display?: BrowserAnnotationDisplay;
   dataUrl: string;
   fileName: string;
   addedAt: number;
 };
 
-const BROWSER_CONTEXT_START = '<justdo-browser-context-v1>';
-const BROWSER_CONTEXT_END = '</justdo-browser-context-v1>';
+const EXTERNAL_BROWSER_CONTEXT_START = 'EXTERNAL_UNTRUSTED_CONTENT';
+const EXTERNAL_BROWSER_CONTEXT_END = 'END_EXTERNAL_UNTRUSTED_CONTENT';
+const EXTERNAL_BROWSER_CONTEXT_SOURCE = 'Source: Browser';
+const EXTERNAL_BROWSER_CONTEXT_ID_PATTERN = '[a-f0-9]{16}';
 const BROWSER_CONTEXT_LENGTH_PREFIX = 'content-length:';
 const BROWSER_DISPLAY_LENGTH_PREFIX = 'display-metadata-length:';
 
@@ -556,6 +632,9 @@ const parseDisplayAnnotations = (value: string): BrowserAnnotationDisplay[] => {
             Number.isFinite(record.markedRegionCount)
               ? Math.max(0, Math.min(8, Math.floor(record.markedRegionCount)))
               : 0,
+          ...(boundedDisplayString(record.comment, 2_000)
+            ? { comment: boundedDisplayString(record.comment, 2_000) }
+            : {}),
           ...(element?.tag ? { element } : {}),
         },
       ];
@@ -574,6 +653,9 @@ export function serializeBrowserAnnotationContext(
       title: annotation.display?.title ?? annotation.title,
       displayUrl: annotation.display?.displayUrl ?? annotation.displayUrl,
       markedRegionCount: annotation.display?.markedRegionCount ?? annotation.markedRegionCount,
+      ...(annotation.display?.comment || annotation.comment
+        ? { comment: annotation.display?.comment ?? annotation.comment }
+        : {}),
       ...(annotation.display?.element ? { element: annotation.display.element } : {}),
     })),
   );
@@ -591,13 +673,16 @@ export function composeBrowserGatewayPrompt(
   if (context.length > BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH) {
     throw new RangeError('Browser annotation context exceeds the supported length.');
   }
-  return `${BROWSER_CONTEXT_START}\n${BROWSER_CONTEXT_LENGTH_PREFIX}${context.length}\n${context}\n${BROWSER_CONTEXT_END}\n\n${userText}`;
+  const boundaryId = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+  return `<<<${EXTERNAL_BROWSER_CONTEXT_START} id="${boundaryId}">>>\n${EXTERNAL_BROWSER_CONTEXT_SOURCE}\n---\n${BROWSER_CONTEXT_LENGTH_PREFIX}${context.length}\n${context}\n<<<${EXTERNAL_BROWSER_CONTEXT_END} id="${boundaryId}">>>\n\n${userText}`;
 }
 
-export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnotationPrompt | null {
-  const start = `${BROWSER_CONTEXT_START}\n`;
-  if (!value.startsWith(start)) return null;
-  const contentStart = start.length;
+function parseLengthDelimitedBrowserContext(params: {
+  value: string;
+  contentStart: number;
+  endBoundary: (contextEnd: number) => number | null;
+}): ParsedBrowserAnnotationPrompt | null {
+  const { value, contentStart, endBoundary } = params;
   if (value.startsWith(BROWSER_CONTEXT_LENGTH_PREFIX, contentStart)) {
     const headerEnd = value.indexOf('\n', contentStart);
     if (headerEnd < 0) return null;
@@ -606,9 +691,8 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
     const contextLength = Number(lengthText);
     if (!Number.isSafeInteger(contextLength)) return null;
     const end = headerEnd + 1 + contextLength;
-    const boundary = `\n${BROWSER_CONTEXT_END}`;
-    if (value.slice(end, end + boundary.length) !== boundary) return null;
-    const userTextStart = end + boundary.length;
+    const userTextStart = endBoundary(end);
+    if (userTextStart === null) return null;
     if (value.slice(userTextStart, userTextStart + 2) !== '\n\n') return null;
     const context = value.slice(headerEnd + 1, end);
     let annotations: BrowserAnnotationDisplay[] = [];
@@ -638,14 +722,27 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
     return { userText: value.slice(userTextStart + 2), annotations, modelContext };
   }
 
-  // Compatibility with prompts produced before the length-delimited envelope.
-  const legacyEnd = value.indexOf(`\n${BROWSER_CONTEXT_END}`, contentStart);
-  if (legacyEnd < 0) return null;
-  return {
-    userText: value.slice(legacyEnd + BROWSER_CONTEXT_END.length + 1).replace(/^\s+/, ''),
-    annotations: [],
-    modelContext: value.slice(contentStart, legacyEnd),
-  };
+  return null;
+}
+
+export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnotationPrompt | null {
+  const externalStart = new RegExp(
+    `^<<<${EXTERNAL_BROWSER_CONTEXT_START} id="(${EXTERNAL_BROWSER_CONTEXT_ID_PATTERN})">>>\\n${EXTERNAL_BROWSER_CONTEXT_SOURCE}\\n---\\n`,
+  ).exec(value);
+  if (externalStart?.[1]) {
+    const boundaryId = externalStart[1];
+    return parseLengthDelimitedBrowserContext({
+      value,
+      contentStart: externalStart[0].length,
+      endBoundary: contextEnd => {
+        const boundary = `\n<<<${EXTERNAL_BROWSER_CONTEXT_END} id="${boundaryId}">>>`;
+        return value.slice(contextEnd, contextEnd + boundary.length) === boundary
+          ? contextEnd + boundary.length
+          : null;
+      },
+    });
+  }
+  return null;
 }
 
 export function extractBrowserAnnotationUserText(value: string): string | null {

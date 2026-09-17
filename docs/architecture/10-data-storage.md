@@ -245,7 +245,7 @@ SQLite transaction 只能保护本数据库，不能回滚 Gateway、文件系�
 
 数据库可能包含 prompt、路径、provider/MCP 配置和任务摘要；Gateway state/history 与 plugin 目录则在数据库之外。所谓“删除用户数据”必须列出所有 owner，不能只删 SQLite row。日志导出/issue 附件不得默认包含数据库、WAL、SHM 或 raw config。
 
-嵌入式浏览器从 Chrome 导入的数据及本地浏览记录单独保存在 `<userData>/browser-import.sqlite`，不混入 `justdo.sqlite`：`imported_history` 保存有限 URL/标题/访问时间，`imported_passwords` 的密码列只保存 Electron `safeStorage` 密文，`browser_downloads` 保存下载文件名、来源、进度、状态、时间和 Main-only 文件路径。Cookie 由 Chromium session store 持有，位于 `persist:justdo-browser` partition。Renderer 不得读取密码密文、Cookie 或下载路径；下载的打开/定位操作只提交记录 ID，由 Main 校验完成状态和文件存在性后执行。删除下载记录不会删除磁盘文件。清除浏览数据时，Main 按时间删除上述 SQLite 记录，并通过 Electron session API 清除 partition 内选中的 Cookie、站点存储和缓存；后者不支持按时间过滤，产品界面必须披露其全量清除语义。
+嵌入式浏览器从 Chromium 系浏览器导入的数据及本地浏览记录单独保存在 `<userData>/browser-import.sqlite`，不混入 `justdo.sqlite`：`imported_history` 保存有限 URL/标题/访问时间，`imported_passwords` 的密码列只保存 Electron `safeStorage` 密文，`browser_downloads` 保存下载文件名、脱敏来源、进度、状态、时间和 Main-only 文件路径，`browser_profiles` 保存 Tool 已创建的命名本地 profile。默认浏览与 Tool `importprofile` 的隔离 profile 分别使用 Chromium session store `persist:justdo-browser` 和 `persist:justdo-browser-imported`；其他合法名称映射到各自的 `persist:justdo-browser-profile-<name>`。设置页导入默认写入前者，Tool 导入默认写入后者，也可显式写入命名 profile。Renderer 不得读取密码密文、Cookie 或下载路径；下载的打开/定位操作只提交记录 ID，由 Main 校验完成状态和文件存在性后执行。删除下载记录不会删除磁盘文件。清除浏览数据时，Main 按时间删除上述 SQLite 记录，并通过 Electron session API 清除内置、导入及所有已持久化命名 profile partition 内的 Cookie、站点存储和缓存；后者不支持按时间过滤，产品界面必须披露其全量清除语义。
 
 ## 22. 测试证据
 

@@ -63,6 +63,8 @@ type OpenClawSessionMigrationResult =
 type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
 type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
 type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
+type BrowserAgentInteractionState = import('../../shared/browser').BrowserAgentInteractionState;
+type BrowserAgentInteractionReady = import('../../shared/browser').BrowserAgentInteractionReady;
 type BrowserImportRequest = import('../../shared/browser').BrowserImportRequest;
 type BrowserImportResult = import('../../shared/browser').BrowserImportResult;
 type BrowserImportSourcesResult = import('../../shared/browser').BrowserImportSourcesResult;
@@ -79,6 +81,9 @@ type BrowserModeSwitchAvailabilityResult =
   import('../../shared/browser').BrowserModeSwitchAvailabilityResult;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
 type BrowserPanelOpenTabEvent = import('../../shared/browser').BrowserPanelOpenTabEvent;
+type BrowserAgentSessionEvent = import('../../shared/browser').BrowserAgentSessionEvent;
+type BrowserAgentTabReference = import('../../shared/browser').BrowserAgentTabReference;
+type BrowserAgentTabRegistration = import('../../shared/browser').BrowserAgentTabRegistration;
 type BrowserPanelShortcutAction = import('../../shared/browser').BrowserPanelShortcutAction;
 type BrowserPanelShortcutSettings = import('../../shared/browser').BrowserPanelShortcutSettings;
 type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
@@ -413,6 +418,15 @@ interface IElectronAPI {
     onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => () => void;
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) => void;
     onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => () => void;
+    registerAgentTab: (registration: BrowserAgentTabRegistration) => void;
+    unregisterAgentTab: (reference: BrowserAgentTabReference) => void;
+    setAgentActiveTab: (reference: BrowserAgentTabReference) => void;
+    setUserInteractionState: (state: BrowserAgentInteractionState) => void;
+    acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) => void;
+    onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => () => void;
+    onAgentFocusTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;
+    onAgentCloseTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;
+    onAgentInteractionState: (callback: (event: BrowserAgentInteractionState) => void) => () => void;
     listImportSources: () => Promise<BrowserImportSourcesResult>;
     importData: (request: BrowserImportRequest) => Promise<BrowserImportResult>;
     listHistory: (query?: string) => Promise<BrowserHistoryListResult>;

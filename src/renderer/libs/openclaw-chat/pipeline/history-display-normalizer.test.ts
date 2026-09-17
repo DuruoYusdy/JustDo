@@ -77,6 +77,54 @@ describe('projectGatewayHistoryForDisplay', () => {
     ]);
   });
 
+  test('restores multiple browser annotations after stripping inbound metadata', () => {
+    const gatewayPrompt = composeBrowserGatewayPrompt('Compare these controls.', [
+      {
+        id: 'annotation-1',
+        modelContext: 'First untrusted browser context',
+        title: 'First',
+        displayUrl: 'first.example',
+        markedRegionCount: 1,
+        inspectedElement: true,
+        dataUrl: 'data:image/png;base64,YWJj',
+        fileName: 'first.png',
+        addedAt: 1,
+      },
+      {
+        id: 'annotation-2',
+        modelContext: 'Second untrusted browser context',
+        title: 'Second',
+        displayUrl: 'second.example',
+        markedRegionCount: 2,
+        inspectedElement: false,
+        dataUrl: 'data:image/png;base64,YWJj',
+        fileName: 'second.png',
+        addedAt: 2,
+      },
+    ]);
+
+    const projected = projectGatewayHistoryForDisplay([
+      { role: 'user', content: `[[inbound:generated metadata]]\n${gatewayPrompt}` },
+    ]);
+
+    expect(projected).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Compare these controls.' },
+          {
+            type: 'browser_annotation',
+            annotation: expect.objectContaining({ id: 'annotation-1', title: 'First' }),
+          },
+          {
+            type: 'browser_annotation',
+            annotation: expect.objectContaining({ id: 'annotation-2', title: 'Second' }),
+          },
+        ],
+      },
+    ]);
+  });
+
   test('removes persisted control artifacts while preserving legitimate assistant text', () => {
     const projected = projectGatewayHistoryForDisplay([
       { role: 'assistant', content: 'Visible answer\nNO_REPLY' },

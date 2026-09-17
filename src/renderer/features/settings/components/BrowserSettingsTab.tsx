@@ -10,6 +10,7 @@ import {
   MagnifyingGlassIcon,
   PuzzlePieceIcon,
   UserCircleIcon,
+  WindowIcon,
 } from '@heroicons/react/24/outline';
 import {
   type BrowserConnectionStatus,
@@ -565,7 +566,7 @@ const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = 
           role="radiogroup"
           aria-label={i18nService.t('browserModeTitle')}
           aria-busy={savingMode}
-          className="grid gap-2 bg-surface-raised/20 p-3 sm:grid-cols-3"
+          className="grid gap-2 bg-surface-raised/20 p-3 sm:grid-cols-2 xl:grid-cols-4"
         >
           {[
             {
@@ -585,6 +586,12 @@ const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = 
               icon: PuzzlePieceIcon,
               title: i18nService.t('browserModeExtensionTitle'),
               description: i18nService.t('browserModeExtensionDescription'),
+            },
+            {
+              mode: BrowserMode.Embedded,
+              icon: WindowIcon,
+              title: i18nService.t('browserModeEmbeddedTitle'),
+              description: i18nService.t('browserModeEmbeddedDescription'),
             },
           ].map(option => {
             const selected = browserMode === option.mode;
@@ -785,7 +792,7 @@ const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = 
                 />
               </div>
             </>
-          ) : (
+          ) : browserMode === BrowserMode.Extension ? (
             <>
               <p className="border-l-2 border-primary/35 pl-3 text-xs leading-5 text-secondary">
                 {i18nService.t('browserExtensionDescription')}
@@ -901,6 +908,10 @@ const BrowserSettingsTab: React.FC<{ initialPage?: 'history' | 'downloads' }> = 
                 />
               </div>
             </>
+          ) : (
+            <div className="rounded-xl border border-primary/20 bg-primary/[0.035] px-4 py-3 text-[13px] leading-5 text-foreground">
+              <p>{i18nService.t('browserModeEmbeddedActive')}</p>
+            </div>
           )}
         </div>
       </section>

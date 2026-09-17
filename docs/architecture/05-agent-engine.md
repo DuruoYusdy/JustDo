@@ -63,7 +63,11 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 - 无显式 session mode 时的全局 restricted fallback 与 scheduler 隔离 policy；
 - runtime settings，包括 MCP 请求超时与 subagent 调度参数；
 - MCP servers、Hooks 与 Extensions；
-- browser mode；
+- browser mode（isolated、existing Chrome、Chrome extension、内置浏览器四种）；任一时刻
+  只启用一个名为 `browser` 的 Tool 提供方，前三种由 OpenClaw 原生 Browser Plugin 提供，
+  内置模式由桌面 embedded-browser plugin 提供；两者共享锁定版 Browser Tool 的 action、
+  `act` kind、结构化输出与 `browser-automation` skill 契约；内置模式保留原生本地浏览能力，
+  但路由固定为当前桌面 `host`，不提供远程 node 或容器 sandbox 执行拓扑；
 - system prompt replacement rules；
 - scheduler 隔离 agent 与其他 JustDo 管理项。
 

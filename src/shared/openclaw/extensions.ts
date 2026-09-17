@@ -5,11 +5,19 @@ export const OpenClawExtensionId = {
   RUNTIME_SERVICES: 'runtime-services',
   WORKBOARD: 'workboard',
   PLAN_MODE: 'plan-mode',
+  EMBEDDED_BROWSER: 'embedded-browser',
 } as const;
 
 export const OpenClawToolName = {
   ASK_USER_QUESTION: 'AskUserQuestion',
   PRESENT_PLAN: 'PresentPlan',
+  BROWSER: 'browser',
+} as const;
+
+export const EmbeddedBrowserGateway = {
+  REQUESTED_EVENT: 'plugin.embedded-browser.requested',
+  CANCELLED_EVENT: 'plugin.embedded-browser.cancelled',
+  RESOLVE: 'embeddedBrowser.resolve',
 } as const;
 
 export const PlanModeGateway = {

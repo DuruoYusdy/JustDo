@@ -132,6 +132,7 @@ describe('browser annotation messages', () => {
                     title: 'Settings',
                     displayUrl: 'example.com',
                     markedRegionCount: 1,
+                    comment: 'Make the primary action clearer.',
                     element: {
                       tag: 'button',
                       id: 'save',
@@ -155,6 +156,7 @@ describe('browser annotation messages', () => {
     expect(rendered).toContain('button');
     expect(rendered).not.toContain('&lt;button#save&gt;');
     expect(rendered).toContain('main > button#save');
+    expect(rendered).toContain('Make the primary action clearer.');
     expect(rendered).toContain('example.com');
     expect(rendered).toContain('selector');
     expect(rendered).toContain('bounds');
@@ -212,7 +214,7 @@ describe('browser annotation messages', () => {
     expect(rendered).toContain('Save');
     expect(rendered).toContain('Please update this button.');
     expect(rendered).not.toContain('RAW_HTML_SHOULD_NEVER_FLASH');
-    expect(rendered).not.toContain('justdo-browser-context-v1');
+    expect(rendered).not.toContain('EXTERNAL_UNTRUSTED_CONTENT');
   });
 });
 

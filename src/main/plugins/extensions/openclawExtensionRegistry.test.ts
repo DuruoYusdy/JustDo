@@ -24,6 +24,9 @@ describe('openclawExtensionRegistry', () => {
       [OpenClawExtensionId.PLAN_MODE]: {
         enabled: true,
       },
+      [OpenClawExtensionId.EMBEDDED_BROWSER]: {
+        enabled: false,
+      },
     });
   });
 });

@@ -123,6 +123,17 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(screen.queryByText('browserModeIsolatedNetworkNotice')).toBeNull();
   });
 
+  test('offers the embedded browser as a fourth browser mode', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    const browser = installElectronBrowserMock();
+
+    render(<BrowserSettingsTab />);
+
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeEmbeddedTitle/ }));
+    await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.Embedded));
+    expect(screen.getByText('browserModeEmbeddedActive')).toBeTruthy();
+  });
+
   test('persists the selected address bar search engine', async () => {
     mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
     installElectronBrowserMock();

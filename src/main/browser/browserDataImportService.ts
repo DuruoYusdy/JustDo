@@ -1,13 +1,13 @@
 import Database from 'better-sqlite3';
 import { execFile } from 'child_process';
-import { createDecipheriv } from 'crypto';
+import { createDecipheriv, pbkdf2Sync } from 'crypto';
 import { app, safeStorage, session } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
 import {
-  BROWSER_PANEL_PARTITION,
   type BrowserDownloadEntry,
   type BrowserDownloadState,
   type BrowserHistoryEntry,
@@ -15,6 +15,8 @@ import {
   type BrowserImportRequest,
   type BrowserImportResult,
   type BrowserImportSource,
+  browserPartitionForProfile,
+  isBrowserAgentProfile,
 } from '../../shared/browser';
 import {
   buildChromeCookieDetails,
@@ -27,10 +29,61 @@ const execFileAsync = promisify(execFile);
 const CHROME_DPAPI_PAYLOAD_ENV = 'JUSTDO_CHROME_DPAPI_PAYLOAD';
 const CHROME_DECRYPTION_ERROR = 'Chrome encryption key could not be decrypted.';
 
-const chromeRoot = (): string | null =>
-  process.platform === 'win32' && process.env.LOCALAPPDATA
-    ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'User Data')
-    : null;
+const normalizeCookieImportDomain = (value: string): string | null => {
+  const candidate = value.trim().toLowerCase().replace(/^\./, '');
+  if (!candidate || /[/:?#@]/u.test(candidate)) return null;
+  try {
+    const hostname = new URL(`https://${candidate}`).hostname.toLowerCase();
+    return hostname === candidate ? hostname : null;
+  } catch {
+    return null;
+  }
+};
+
+type ChromiumBrowser = BrowserImportSource['browser'];
+
+const CHROMIUM_BROWSER_DIRS: Record<ChromiumBrowser, string[]> = {
+  chrome: ['Google', 'Chrome', 'User Data'],
+  brave: ['BraveSoftware', 'Brave-Browser', 'User Data'],
+  edge: ['Microsoft', 'Edge', 'User Data'],
+  chromium: ['Chromium', 'User Data'],
+};
+
+const MAC_CHROMIUM_BROWSER_DIRS: Record<ChromiumBrowser, string[]> = {
+  chrome: ['Google', 'Chrome'],
+  brave: ['BraveSoftware', 'Brave-Browser'],
+  edge: ['Microsoft Edge'],
+  chromium: ['Chromium'],
+};
+
+const MAC_KEYCHAIN_ENTRIES: Record<ChromiumBrowser, { service: string; account: string }> = {
+  chrome: { service: 'Chrome Safe Storage', account: 'Chrome' },
+  brave: { service: 'Brave Safe Storage', account: 'Brave' },
+  edge: { service: 'Microsoft Edge Safe Storage', account: 'Microsoft Edge' },
+  chromium: { service: 'Chromium Safe Storage', account: 'Chromium' },
+};
+
+const CHROMIUM_BROWSER_NAMES: Record<ChromiumBrowser, string> = {
+  chrome: 'Google Chrome',
+  brave: 'Brave',
+  edge: 'Microsoft Edge',
+  chromium: 'Chromium',
+};
+
+const chromiumRoot = (browser: ChromiumBrowser): string | null => {
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return path.join(process.env.LOCALAPPDATA, ...CHROMIUM_BROWSER_DIRS[browser]);
+  }
+  if (process.platform === 'darwin') {
+    return path.join(
+      os.homedir(),
+      'Library',
+      'Application Support',
+      ...MAC_CHROMIUM_BROWSER_DIRS[browser],
+    );
+  }
+  return null;
+};
 
 const readJson = (filePath: string): Record<string, unknown> | null => {
   try {
@@ -44,22 +97,77 @@ const readJson = (filePath: string): Record<string, unknown> | null => {
 };
 
 export const listChromeImportSources = (): BrowserImportSource[] => {
-  const root = chromeRoot();
-  if (!root) return [];
-  const localState = readJson(path.join(root, 'Local State'));
-  const profile = localState?.profile as Record<string, unknown> | undefined;
-  const infoCache = profile?.info_cache as Record<string, unknown> | undefined;
-  if (!infoCache) return [];
-  return Object.entries(infoCache).flatMap(([id, raw]) => {
-    if (!profileIdPattern.test(id) || !fs.existsSync(path.join(root, id))) return [];
-    const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-    const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : id;
-    return [{ id, browser: 'chrome' as const, name: `Google Chrome · ${name.slice(0, 80)}` }];
+  return (Object.keys(CHROMIUM_BROWSER_DIRS) as ChromiumBrowser[]).flatMap(browser => {
+    const root = chromiumRoot(browser);
+    if (!root) return [];
+    const localState = readJson(path.join(root, 'Local State'));
+    const profile = localState?.profile as Record<string, unknown> | undefined;
+    const infoCache = profile?.info_cache as Record<string, unknown> | undefined;
+    const entries = infoCache
+      ? Object.entries(infoCache)
+      : fs.existsSync(path.join(root, 'Default'))
+        ? [['Default', {}] as const]
+        : [];
+    return entries.flatMap(([profileId, raw]) => {
+      if (!profileIdPattern.test(profileId) || !fs.existsSync(path.join(root, profileId)))
+        return [];
+      const record = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      const name =
+        typeof record.name === 'string' && record.name.trim() ? record.name.trim() : profileId;
+      return [
+        {
+          id: browser === 'chrome' ? profileId : `${browser}:${profileId}`,
+          profileId,
+          browser,
+          name: `${CHROMIUM_BROWSER_NAMES[browser]} · ${name.slice(0, 80)}`,
+          hasCookies:
+            fs.existsSync(path.join(root, profileId, 'Network', 'Cookies')) ||
+            fs.existsSync(path.join(root, profileId, 'Cookies')),
+        },
+      ];
+    });
   });
 };
 
-const chromeMasterKey = async (): Promise<Buffer> => {
-  const root = chromeRoot();
+const throwIfImportAborted = (signal?: AbortSignal): void => {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Browser profile import was cancelled.');
+};
+
+const chromeMasterKey = async (
+  root: string,
+  browser: ChromiumBrowser,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  throwIfImportAborted(signal);
+  if (process.platform === 'darwin') {
+    const entry = MAC_KEYCHAIN_ENTRIES[browser];
+    try {
+      const { stdout } = await execFileAsync(
+        'security',
+        ['find-generic-password', '-w', '-s', entry.service, '-a', entry.account],
+        { encoding: 'buffer', timeout: 30_000, maxBuffer: 1024 * 1024, signal },
+      );
+      const output = Buffer.from(stdout);
+      let start = 0;
+      let end = output.length;
+      while (start < end && output[start]! <= 0x20) start += 1;
+      while (end > start && output[end - 1]! <= 0x20) end -= 1;
+      const secret = Buffer.from(output.subarray(start, end));
+      output.fill(0);
+      if (!secret.length) throw new Error(CHROME_DECRYPTION_ERROR);
+      try {
+        return pbkdf2Sync(secret, 'saltysalt', 1003, 16, 'sha1');
+      } finally {
+        secret.fill(0);
+      }
+    } catch {
+      throwIfImportAborted(signal);
+      throw new Error(CHROME_DECRYPTION_ERROR);
+    }
+  }
   const state = root ? readJson(path.join(root, 'Local State')) : null;
   const osCrypt = state?.os_crypt as Record<string, unknown> | undefined;
   if (typeof osCrypt?.encrypted_key !== 'string')
@@ -82,6 +190,7 @@ const chromeMasterKey = async (): Promise<Buffer> => {
         timeout: 15_000,
         windowsHide: true,
         maxBuffer: 64 * 1024,
+        signal,
         env: { ...process.env, [CHROME_DPAPI_PAYLOAD_ENV]: payload.toString('base64') },
       },
     );
@@ -89,6 +198,7 @@ const chromeMasterKey = async (): Promise<Buffer> => {
     if (key.length !== 32) throw new Error(CHROME_DECRYPTION_ERROR);
     return key;
   } catch {
+    throwIfImportAborted(signal);
     // Do not propagate the PowerShell command or encrypted payload to IPC and the UI.
     throw new Error(CHROME_DECRYPTION_ERROR);
   }
@@ -106,6 +216,10 @@ const decryptChromeValue = (encrypted: Buffer, key: Buffer): Buffer | null => {
     }
   }
   try {
+    if (process.platform === 'darwin') {
+      const decipher = createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20));
+      return Buffer.concat([decipher.update(encrypted.subarray(3)), decipher.final()]);
+    }
     const iv = encrypted.subarray(3, 15);
     const payload = encrypted.subarray(15, -16);
     const tag = encrypted.subarray(-16);
@@ -148,6 +262,10 @@ const openImportedDataDb = (): Database.Database => {
       started_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS browser_profiles (
+      name TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS browser_downloads_updated_at
       ON browser_downloads(updated_at DESC);
     CREATE INDEX IF NOT EXISTS imported_history_last_visit_at
@@ -160,18 +278,53 @@ const openImportedDataDb = (): Database.Database => {
   return db;
 };
 
+export const listImportedBrowserProfiles = (): string[] => {
+  const db = openImportedDataDb();
+  try {
+    return (
+      db.prepare('SELECT name FROM browser_profiles ORDER BY created_at, name').all() as Array<{
+        name: string;
+      }>
+    ).map(row => row.name);
+  } finally {
+    db.close();
+  }
+};
+
+export const recordImportedBrowserProfile = (name: string): void => {
+  if (!isBrowserAgentProfile(name) || name === 'embedded') return;
+  const db = openImportedDataDb();
+  try {
+    db.prepare('INSERT OR IGNORE INTO browser_profiles(name, created_at) VALUES (?, ?)').run(
+      name,
+      Date.now(),
+    );
+  } finally {
+    db.close();
+  }
+};
+
 export const importChromeData = async (
   request: BrowserImportRequest,
+  signal?: AbortSignal,
 ): Promise<BrowserImportResult> => {
+  throwIfImportAborted(signal);
+  const requestedDomains = request.domains?.map(normalizeCookieImportDomain);
+  const source = listChromeImportSources().find(candidate => candidate.id === request.sourceId);
+  const profileId = source?.profileId ?? (source?.browser === 'chrome' ? source.id : '');
   if (
     !request.approved ||
-    !profileIdPattern.test(request.sourceId) ||
-    (!request.passwords && !request.cookies && !request.history)
+    !source ||
+    !profileIdPattern.test(profileId) ||
+    (!request.passwords && !request.cookies && !request.history) ||
+    (request.destinationProfile !== undefined &&
+      !isBrowserAgentProfile(request.destinationProfile)) ||
+    requestedDomains?.some(domain => domain === null)
   ) {
     return { success: false, errorCode: 'invalid-request', error: 'Invalid import request.' };
   }
-  const root = chromeRoot();
-  const profilePath = root ? path.join(root, request.sourceId) : '';
+  const root = chromiumRoot(source.browser);
+  const profilePath = root ? path.join(root, profileId) : '';
   if (!root || !fs.existsSync(profilePath)) {
     return {
       success: false,
@@ -182,11 +335,13 @@ export const importChromeData = async (
 
   const imported = { passwords: 0, cookies: 0, history: 0 };
   const skippedAppBound = { passwords: 0, cookies: 0 };
+  const failed = { cookies: 0 };
   let key: Buffer | null = null;
   if (request.passwords || request.cookies) {
     try {
-      key = await chromeMasterKey();
+      key = await chromeMasterKey(root!, source.browser, signal);
     } catch (error) {
+      throwIfImportAborted(signal);
       return {
         success: false,
         errorCode: 'decrypt-failed',
@@ -197,6 +352,7 @@ export const importChromeData = async (
 
   let destination: Database.Database | null = null;
   try {
+    throwIfImportAborted(signal);
     destination = openImportedDataDb();
     if (request.passwords && key) {
       const source = openSourceDb(path.join(profilePath, 'Login Data'));
@@ -215,6 +371,7 @@ export const importChromeData = async (
         const transaction = destination.transaction(() => {
           let importedCount = 0;
           for (const row of rows) {
+            throwIfImportAborted(signal);
             const password = decryptChromeValue(row.password_value, key!);
             if (password === null) {
               skippedAppBound.passwords += 1;
@@ -261,6 +418,7 @@ export const importChromeData = async (
         const transaction = destination.transaction(() => {
           let importedCount = 0;
           for (const row of rows) {
+            throwIfImportAborted(signal);
             const url = sanitizeBrowserHistoryUrl(row.url);
             if (!url) continue;
             const timestamp = chromeTimestampToUnixMs(row.last_visit_time);
@@ -276,7 +434,12 @@ export const importChromeData = async (
     }
 
     if (request.cookies && key) {
-      const source = openSourceDb(path.join(profilePath, 'Network', 'Cookies'));
+      const cookieDatabasePath = [
+        path.join(profilePath, 'Network', 'Cookies'),
+        path.join(profilePath, 'Cookies'),
+      ].find(candidate => fs.existsSync(candidate));
+      if (!cookieDatabasePath) throw new Error('Chrome cookie database is unavailable.');
+      const source = openSourceDb(cookieDatabasePath);
       try {
         const rawDatabaseVersion = Number(
           (
@@ -295,12 +458,13 @@ export const importChromeData = async (
           : "'' AS top_frame_site_key";
         const rows = source
           .prepare(
-            `SELECT host_key, name, path, encrypted_value, expires_utc, is_secure, is_httponly,
+            `SELECT host_key, name, value, path, encrypted_value, expires_utc, is_secure, is_httponly,
               samesite, ${partitionExpression} FROM cookies`,
           )
           .all() as Array<{
           host_key: string;
           name: string;
+          value: string;
           path: string;
           encrypted_value: Buffer;
           expires_utc: number;
@@ -309,28 +473,53 @@ export const importChromeData = async (
           samesite: number;
           top_frame_site_key: string;
         }>;
-        const targetSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+        const targetSession = session.fromPartition(
+          browserPartitionForProfile(request.destinationProfile ?? 'embedded'),
+        );
+        const requestedDomainSet = new Set(
+          requestedDomains?.filter(domain => domain !== null) ?? [],
+        );
         for (const row of rows) {
-          const decrypted = decryptChromeValue(row.encrypted_value, key);
+          throwIfImportAborted(signal);
+          const cookieDomain = row.host_key.toLowerCase().replace(/^\./, '');
+          if (
+            requestedDomainSet.size > 0 &&
+            ![...requestedDomainSet].some(
+              domain => cookieDomain === domain || cookieDomain.endsWith(`.${domain}`),
+            )
+          ) {
+            continue;
+          }
+          const decrypted = row.encrypted_value.length
+            ? decryptChromeValue(row.encrypted_value, key)
+            : Buffer.from(row.value ?? '', 'utf8');
           if (decrypted === null) {
             skippedAppBound.cookies += 1;
             continue;
           }
           const details = buildChromeCookieDetails(row, decrypted, databaseVersion);
-          if (!details) continue;
+          if (!details) {
+            failed.cookies += 1;
+            continue;
+          }
           try {
             await targetSession.cookies.set(details);
+            throwIfImportAborted(signal);
             imported.cookies += 1;
           } catch {
-            // Ignore malformed or Chromium-rejected cookie rows.
+            throwIfImportAborted(signal);
+            failed.cookies += 1;
           }
         }
+        throwIfImportAborted(signal);
         await targetSession.cookies.flushStore();
+        throwIfImportAborted(signal);
       } finally {
         source.close();
       }
     }
   } catch (error) {
+    throwIfImportAborted(signal);
     const errorCode = /locked|busy/i.test(String(error)) ? 'chrome-running' : 'source-unavailable';
     return {
       success: false,
@@ -342,7 +531,7 @@ export const importChromeData = async (
     destination?.close();
   }
 
-  return { success: true, imported, skippedAppBound };
+  return { success: true, imported, skippedAppBound, failed };
 };
 
 export const getImportedCredentials = (origin: string): BrowserImportedCredential[] => {
