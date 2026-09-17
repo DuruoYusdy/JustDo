@@ -232,13 +232,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         await navigator.clipboard.writeText(result.sessionId);
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
-            detail: i18nService.t('copySessionIdSuccess'),
+            detail: { message: i18nService.t('copySessionIdSuccess'), tone: 'success' },
           }),
         );
       } catch {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
-            detail: i18nService.t('copySessionIdFailed'),
+            detail: { message: i18nService.t('copySessionIdFailed'), tone: 'error' },
           }),
         );
       }

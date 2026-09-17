@@ -333,13 +333,13 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       await navigator.clipboard.writeText(value);
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
-          detail: i18nService.t('copySessionIdSuccess'),
+          detail: { message: i18nService.t('copySessionIdSuccess'), tone: 'success' },
         }),
       );
     } catch {
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
-          detail: i18nService.t('copySessionIdFailed'),
+          detail: { message: i18nService.t('copySessionIdFailed'), tone: 'error' },
         }),
       );
     }

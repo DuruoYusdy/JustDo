@@ -8,6 +8,14 @@ import Toast from './Toast';
 describe('Toast', () => {
   afterEach(cleanup);
 
+  test('vertically centers a compact notification without a title', () => {
+    const { container } = render(<Toast message="Session ID copied" onClose={() => undefined} />);
+
+    expect(screen.getByRole('status')).toBeTruthy();
+    expect(container.querySelector('.items-center')).toBeTruthy();
+    expect(container.querySelector('.items-start')).toBeNull();
+  });
+
   test('renders a non-modal warning notification with a title', () => {
     const onClose = vi.fn();
     const { container } = render(
