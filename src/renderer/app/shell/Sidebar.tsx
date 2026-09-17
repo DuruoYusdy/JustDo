@@ -14,6 +14,10 @@ import {
   selectIsOpenClawEngine,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
+import {
+  type CoworkSessionListAction,
+  requestCoworkSessionListAction,
+} from '@/features/cowork/sessionListActions';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
@@ -24,6 +28,7 @@ import PuzzleIcon from '@/shared/components/icons/PuzzleIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+import { store } from '@/store';
 
 interface SidebarProps {
   onShowSettings: () => void;
@@ -123,6 +128,23 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleRenameSession = async (sessionId: string, title: string) => {
     await coworkService.renameSession(sessionId, title);
+  };
+
+  const handleSessionListAction = async (
+    sessionId: string,
+    action: CoworkSessionListAction,
+  ) => {
+    await runGuardedFilePreviewNavigation(
+      onBeforeCoworkNavigation,
+      async () => {
+        onShowCowork();
+        const session = await coworkService.loadSession(sessionId);
+        if (session && store.getState().cowork.currentSession?.id === sessionId) {
+          requestCoworkSessionListAction({ action, sessionId });
+        }
+      },
+      { preserveTabs: true },
+    );
   };
 
   const handleEnterBatchMode = useCallback((sessionId: string) => {
@@ -362,6 +384,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
+          onExportSession={sessionId => void handleSessionListAction(sessionId, 'export')}
+          onCopySession={sessionId => void handleSessionListAction(sessionId, 'copy')}
           onToggleSelection={handleToggleSelection}
           onEnterBatchMode={handleEnterBatchMode}
         />

@@ -16,6 +16,8 @@ interface SessionGroupPanelProps {
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRename: (sessionId: string, title: string) => void;
+  onExportSession: (sessionId: string) => void;
+  onCopySession: (sessionId: string) => void;
   onTogglePinned: (sessionId: string, pinned: boolean) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
@@ -35,6 +37,8 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   onSelectSession,
   onDeleteSession,
   onRename,
+  onExportSession,
+  onCopySession,
   onTogglePinned,
   onToggleSelection,
   onEnterBatchMode,
@@ -57,6 +61,8 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
           onSelect={() => onSelectSession(session.id)}
           onDelete={() => onDeleteSession(session.id)}
           onRename={title => onRename(session.id, title)}
+          onExport={() => onExportSession(session.id)}
+          onCopy={() => onCopySession(session.id)}
           onTogglePinned={() => onTogglePinned(session.id, !session.pinned)}
           onToggleSelection={() => onToggleSelection(session.id)}
           onEnterBatchMode={() => onEnterBatchMode(session.id)}

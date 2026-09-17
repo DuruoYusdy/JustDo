@@ -86,6 +86,7 @@ export interface JustDoChatWrapperRef {
   getExportSnapshot: () => {
     messages: unknown[];
     runtimeSessionId: string | null;
+    sessionKey: string | null;
     isLoading: boolean;
   };
   preparePlanImplementationReset: (request: {
@@ -196,6 +197,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           return {
             messages: controller ? [...controller.getLoadedMessages()] : [],
             runtimeSessionId: controller?.state.currentSessionId ?? null,
+            sessionKey: controller?.state.sessionKey ?? null,
             isLoading: !controller?.state.connected || controller.state.chatLoading,
           };
         },

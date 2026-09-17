@@ -1,9 +1,11 @@
 import { useDraggable } from '@dnd-kit/core';
 import {
+  ArrowDownTrayIcon,
   BookmarkIcon,
   DocumentDuplicateIcon,
   ExclamationTriangleIcon,
   InformationCircleIcon,
+  Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -32,6 +34,8 @@ interface CoworkSessionItemProps {
   onSelect: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
+  onExport: () => void;
+  onCopy: () => void;
   onTogglePinned: () => void;
   onToggleSelection: () => void;
   onEnterBatchMode: () => void;
@@ -57,6 +61,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   onSelect,
   onDelete,
   onRename,
+  onExport,
+  onCopy,
   onTogglePinned,
   onToggleSelection,
   onEnterBatchMode,
@@ -177,6 +183,24 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     setMenuPosition(null);
   }, []);
 
+  const handleExportClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      closeMenu();
+      onExport();
+    },
+    [closeMenu, onExport],
+  );
+
+  const handleCopyClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      closeMenu();
+      onCopy();
+    },
+    [closeMenu, onCopy],
+  );
+
   const handleConfirmDelete = () => {
     onDelete();
     setShowConfirmDelete(false);
@@ -253,6 +277,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         closeMenu();
+        requestAnimationFrame(() => sessionItemRef.current?.focus());
       }
     };
     const handleScroll = () => closeMenu();
@@ -282,8 +307,55 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     );
     if (nextX !== menuPosition.x || nextY !== menuPosition.y) {
       setMenuPosition({ x: nextX, y: nextY });
+      return;
     }
+    const focusFrame = requestAnimationFrame(() => {
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(focusFrame);
   }, [groups.length, menuPosition, showGroupSubMenu]);
+
+  const handleSessionItemKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = event.currentTarget.getBoundingClientRect();
+      setMenuPosition(calculateMenuPosition(rect.left + 24, rect.bottom));
+      setShowConfirmDelete(false);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (isBatchMode) {
+        onToggleSelection();
+      } else {
+        onSelect();
+      }
+    }
+  };
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = [
+      ...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []),
+    ].filter(item => !item.disabled);
+    if (!items.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowUp'
+            ? (currentIndex - 1 + items.length) % items.length
+            : (currentIndex + 1) % items.length;
+    items[nextIndex]?.focus();
+  };
 
   const setSessionNodeRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -319,6 +391,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     tone: 'neutral' | 'danger';
     isCheckbox?: boolean;
     checked?: boolean;
+    disabled?: boolean;
+    title?: string;
   }
 
   const menuItems = useMemo(() => {
@@ -341,6 +415,24 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         label: copySessionIdLabel,
         onClick: handleCopySessionId,
         tone: 'neutral' as const,
+      },
+      {
+        key: 'export',
+        label: i18nService.t('coworkExportSession'),
+        onClick: handleExportClick,
+        tone: 'neutral' as const,
+        disabled: isRuntimeRunning,
+        title: isRuntimeRunning
+          ? i18nService.t('coworkExportWaitForCompletion')
+          : undefined,
+      },
+      {
+        key: 'copy',
+        label: i18nService.t('coworkCopySession'),
+        onClick: handleCopyClick,
+        tone: 'neutral' as const,
+        disabled: isRuntimeRunning,
+        title: isRuntimeRunning ? i18nService.t('coworkCopyWaitForCompletion') : undefined,
       },
     ];
     if (showBatchOption) {
@@ -376,6 +468,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     handleBatchClick,
     handleCopySessionId,
     handleDeleteClick,
+    handleExportClick,
+    handleCopyClick,
     handleShowDetails,
     handleTogglePinned,
     handleRenameClick,
@@ -386,6 +480,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     moveToGroupLabel,
     sessionDetailsLabel,
     togglePinnedLabel,
+    isRuntimeRunning,
   ]);
 
   const handleMoveToGroup = (groupId: string | null) => {
@@ -403,6 +498,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         {...listeners}
         style={{ opacity: isDragging ? 0.5 : 1 }}
         onContextMenu={!isBatchMode && !isRenaming ? openMenu : undefined}
+        onKeyDown={!isRenaming ? handleSessionItemKeyDown : undefined}
         onClick={() => {
           if (isRenaming) return;
           closeMenu();
@@ -413,6 +509,9 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
           onSelect();
         }}
         aria-current={isActive ? 'page' : undefined}
+        aria-label={session.title}
+        role="button"
+        tabIndex={isRenaming ? -1 : 0}
         className={`group relative min-h-8 rounded-lg pl-7 pr-2 py-1.5 cursor-pointer transition-all duration-150 ${
           isActive
             ? 'bg-primary/[0.12] text-primary shadow-sm ring-1 ring-inset ring-primary/25 hover:bg-primary/[0.16]'
@@ -520,17 +619,23 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               maxHeight: 'calc(100vh - 16px)',
             }}
             role="menu"
+            aria-label={session.title}
+            onKeyDown={handleMenuKeyDown}
           >
             {menuItems.map(item => (
               <button
                 key={item.key}
                 type="button"
+                role="menuitem"
+                tabIndex={-1}
                 onClick={item.onClick}
                 onMouseEnter={item.onMouseEnter}
+                disabled={item.disabled}
+                title={item.title}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
                   item.tone === 'danger'
                     ? 'text-red-500 hover:bg-red-500/10'
-                    : 'text-foreground hover:bg-surface-raised'
+                    : 'text-foreground hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent'
                 }`}
               >
                 {item.key === 'batch' && <ListChecksIcon className="h-4 w-4" />}
@@ -540,6 +645,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 )}
                 {item.key === 'rename' && <PencilSquareIcon className="h-4 w-4" />}
                 {item.key === 'copySessionId' && <DocumentDuplicateIcon className="h-4 w-4" />}
+                {item.key === 'export' && <ArrowDownTrayIcon className="h-4 w-4" />}
+                {item.key === 'copy' && <Square2StackIcon className="h-4 w-4" />}
                 {item.key === 'delete' && <TrashIcon className="h-4 w-4" />}
                 {item.key === 'moveToGroup' && (
                   <span className="h-4 w-4 flex items-center justify-center">→</span>

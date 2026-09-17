@@ -55,6 +55,8 @@ interface UngroupedDroppableZoneProps {
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
+  onExportSession: (sessionId: string) => void;
+  onCopySession: (sessionId: string) => void;
   onTogglePinned: (sessionId: string, pinned: boolean) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
@@ -83,6 +85,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   onSelectSession,
   onDeleteSession,
   onRenameSession,
+  onExportSession,
+  onCopySession,
   onTogglePinned,
   onToggleSelection,
   onEnterBatchMode,
@@ -157,6 +161,8 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
       onSelect={() => onSelectSession(session.id)}
       onDelete={() => onDeleteSession(session.id)}
       onRename={title => onRenameSession(session.id, title)}
+      onExport={() => onExportSession(session.id)}
+      onCopy={() => onCopySession(session.id)}
       onTogglePinned={() => onTogglePinned(session.id, !session.pinned)}
       onToggleSelection={() => onToggleSelection(session.id)}
       onEnterBatchMode={() => onEnterBatchMode(session.id)}
@@ -218,6 +224,8 @@ interface UngroupedSessionListProps {
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
+  onExportSession: (sessionId: string) => void;
+  onCopySession: (sessionId: string) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   groupRecentSessionsByDate?: boolean;
@@ -234,6 +242,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   onSelectSession,
   onDeleteSession,
   onRenameSession,
+  onExportSession,
+  onCopySession,
   onToggleSelection,
   onEnterBatchMode,
   groupRecentSessionsByDate = false,
@@ -486,6 +496,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     onSelectSession={onSelectSession}
                     onDeleteSession={onDeleteSession}
                     onRename={onRenameSession}
+                    onExportSession={onExportSession}
+                    onCopySession={onCopySession}
                     onTogglePinned={handleTogglePinned}
                     onToggleSelection={onToggleSelection}
                     onEnterBatchMode={onEnterBatchMode}
@@ -520,6 +532,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             onSelectSession={onSelectSession}
             onDeleteSession={onDeleteSession}
             onRenameSession={onRenameSession}
+            onExportSession={onExportSession}
+            onCopySession={onCopySession}
             onTogglePinned={handleTogglePinned}
             onToggleSelection={onToggleSelection}
             onEnterBatchMode={onEnterBatchMode}
