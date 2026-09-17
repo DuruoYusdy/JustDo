@@ -874,6 +874,9 @@ export class JustDoChatElement extends LitElement {
 
       .user-message-editor {
         width: min(620px, 72vw);
+        max-width: 100%;
+        margin-left: auto;
+        box-sizing: border-box;
         border-radius: 16px;
         background: var(--justdo-chat-user-bg, #f3f4f6);
         padding: 12px;
