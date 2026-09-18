@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk';
+import { saveMediaBuffer } from 'openclaw/plugin-sdk/media-store';
 
 import {
   BrowserToolOutputSchema,
@@ -12,10 +13,15 @@ import {
 const TOOL_NAME = 'browser';
 const RESOLVE_METHOD = 'embeddedBrowser.resolve';
 const REQUEST_TIMEOUT_MS = 125_000;
+const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
+const SCREENSHOT_MAX_BASE64_LENGTH = Math.ceil(SCREENSHOT_MAX_BYTES / 3) * 4 + 4;
+const SCREENSHOT_SHARE_UNAVAILABLE =
+  '[Screenshot sharing is unavailable because an outbound copy could not be prepared.]';
 const EMBEDDED_BROWSER_INSTRUCTIONS = [
   'Use the browser tool exclusively for browser interaction in this desktop task.',
   'Do not launch Chrome, the system default browser, or any other browser through exec, shell commands, scripts, or operating-system APIs.',
   'The browser screenshot action may be used for Agent observation, but never replace the live browser panel with an image-only interaction surface.',
+  'When the user explicitly asks to see a screenshot, attach the exact sanitized outbound copy path returned by the screenshot action. Do not attach routine observation screenshots.',
   'If the browser tool fails, report the failure instead of opening another browser.',
 ].join(' ');
 
@@ -71,6 +77,56 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const readString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+const formatScreenshotShareHint = (filePath: string): string =>
+  `[Screenshot saved to ${JSON.stringify(filePath)}. A sanitized outbound copy is ready at this path for explicit sharing.]`;
+
+const findScreenshotImage = (
+  content: unknown[],
+): { data: string; mimeType: 'image/png' | 'image/jpeg' } | undefined => {
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== 'image') continue;
+    const mimeType = block.mimeType;
+    const data = block.data;
+    if (
+      (mimeType !== 'image/png' && mimeType !== 'image/jpeg') ||
+      typeof data !== 'string' ||
+      data.length === 0 ||
+      data.length > SCREENSHOT_MAX_BASE64_LENGTH ||
+      data.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(data)
+    ) {
+      continue;
+    }
+    return { data, mimeType };
+  }
+  return undefined;
+};
+
+const appendScreenshotShareHint = async (content: unknown[]): Promise<unknown[]> => {
+  const image = findScreenshotImage(content);
+  if (!image) return content;
+
+  let shareHint = SCREENSHOT_SHARE_UNAVAILABLE;
+  try {
+    const buffer = Buffer.from(image.data, 'base64');
+    if (buffer.length === 0 || buffer.length > SCREENSHOT_MAX_BYTES) {
+      throw new Error('Screenshot exceeds the outbound media limit.');
+    }
+    const extension = image.mimeType === 'image/jpeg' ? 'jpg' : 'png';
+    const saved = await saveMediaBuffer(
+      buffer,
+      image.mimeType,
+      'outbound',
+      SCREENSHOT_MAX_BYTES,
+      `embedded-browser-screenshot.${extension}`,
+    );
+    shareHint = formatScreenshotShareHint(saved.path);
+  } catch {
+    // Private Agent observation remains useful when optional outbound staging fails.
+  }
+  return [...content, { type: 'text', text: shareHint }];
+};
+
 const neutralizeBrowserContent = (value: string): string =>
   value
     .replace(/\b(MEDIA|FILE)\s*:/giu, '$1\uFF1A')
@@ -300,8 +356,13 @@ const plugin = {
               if (!response.ok) throw new Error(response.error);
               if (isRecord(response.result) && Array.isArray(response.result.content)) {
                 const details = isRecord(response.result.details) ? response.result.details : {};
+                const content =
+                  readString(input.action) === 'screenshot'
+                    ? await appendScreenshotShareHint(response.result.content)
+                    : response.result.content;
                 return {
                   ...response.result,
+                  content,
                   details: {
                     ...details,
                     externalContent: {

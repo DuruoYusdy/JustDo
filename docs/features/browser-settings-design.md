@@ -52,8 +52,10 @@ plugin；该 plugin 同样注册名为 `browser` 的 Tool。任何模式下模�
 - 交互：`act` 及原生支持的 `batch`、`click`、`clickCoords`、`type`、`press`、`hover`、
   `scrollIntoView`、`drag`、`select`、`fill`、`resize`、`wait`、`evaluate`、`close`。
 
-`screenshot` 是 Agent 对当前实时 guest 的一次观察结果，不改变侧边栏承载方式；用户始终
-操作真实网页，不能把截图显示成可交互页面。`open` 创建的是当前任务侧边栏中的受管 Tab，
+`screenshot` 是 Agent 对当前实时 guest 的一次观察结果，不改变侧边栏承载方式；原图默认只供
+Agent 观察。仅当用户明确要求查看截图时，Tool 才提示 Agent 使用 OpenClaw 管理的、受大小限制的
+`outbound` 副本显式发送，普通观察截图不会自动进入会话。用户始终操作真实网页，不能把截图显示成
+可交互页面。`open` 创建的是当前任务侧边栏中的受管 Tab，
 不能启动外部 Chrome 或系统浏览器。能力尚未实现或无法满足原生返回契约时必须明确失败，
 不能静默降级、换浏览器或伪造成功。
 

@@ -599,11 +599,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
   }, [activeTabTargetId, draftKey, userInteractionLocked]);
   useEffect(() => {
-    if (!agentInteractionLocked) return;
-    activeWebview?.blur();
-    panelRef.current?.focus();
-  }, [activeWebview, agentInteractionLocked]);
-  useEffect(() => {
     if (!activeTabTargetId) return;
     window.electron.browser.setAgentActiveTab({
       sessionId: draftKey,

@@ -74,6 +74,7 @@ const registerGuest = (
       sendCommand: vi.fn().mockResolvedValue(undefined),
     };
   }
+  if (guest && !guest.focus) guest.focus = vi.fn();
   electron.handlers.get(BrowserIpc.AgentRegisterTab)?.(trustedEvent(), {
     sessionId: 'session-1',
     targetId,
@@ -809,10 +810,9 @@ describe('BrowserAgentBridge', () => {
 
   test('binds refs to a snapshot and types without clicking the target', async () => {
     const sendInputEvent = vi.fn();
-    const sendCommand = vi.fn().mockImplementation(async (method: string) => {
-      if (method === 'Input.insertText') return Promise.resolve(undefined);
-      return Promise.resolve(undefined);
-    });
+    const focus = vi.fn();
+    let typedValue = '';
+    const sendCommand = vi.fn().mockResolvedValue(undefined);
     const executeJavaScriptInIsolatedWorld = vi
       .fn()
       .mockImplementation((_worldId: number, scripts: Array<{ code: string }>) => {
@@ -838,6 +838,13 @@ describe('BrowserAgentBridge', () => {
         if (code.includes("=== 'type') element.focus")) {
           return { x: 20, y: 30, disabled: false, editable: true };
         }
+        if (code.includes("new view.InputEvent('input'")) {
+          if (code.includes('const value = "hello"')) typedValue = 'hello';
+          return true;
+        }
+        if (code.includes('const actualText =')) {
+          return code.includes(`actualText === ${JSON.stringify(typedValue)}`);
+        }
         throw new Error('Unexpected browser script.');
       });
     bridge = new BrowserAgentBridge(vi.fn(), senderId => senderId === 10);
@@ -849,6 +856,7 @@ describe('BrowserAgentBridge', () => {
       hostWebContents: { id: 10 },
       getTitle: () => 'Example',
       getURL: () => 'https://example.com/',
+      focus,
       executeJavaScriptInIsolatedWorld,
       sendInputEvent,
       debugger: {
@@ -872,10 +880,9 @@ describe('BrowserAgentBridge', () => {
       }),
     ).resolves.toMatchObject({ details: { typed: 'e1' } });
 
-    expect(sendCommand).toHaveBeenCalledWith('Input.insertText', { text: 'hello' });
-    expect(sendInputEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'keyDown', keyCode: 'Backspace' }),
-    );
+    expect(sendCommand).not.toHaveBeenCalledWith('Input.insertText', expect.anything());
+    expect(focus).not.toHaveBeenCalled();
+    expect(sendInputEvent).not.toHaveBeenCalled();
     const snapshotScript = executeJavaScriptInIsolatedWorld.mock.calls[0]?.[1]?.[0]?.code;
     expect(snapshotScript).toContain('input[type="password"]');
     expect(snapshotScript).toContain('split(/\\s+/)');
@@ -887,12 +894,26 @@ describe('BrowserAgentBridge', () => {
     const actionScript = executeJavaScriptInIsolatedWorld.mock.calls[1]?.[1]?.[0]?.code;
     expect(actionScript).toContain('element.focus');
     expect(actionScript).not.toContain('querySelectorAll');
+    const typeScript = executeJavaScriptInIsolatedWorld.mock.calls[2]?.[1]?.[0]?.code;
+    expect(typeScript).toContain("new view.InputEvent('input'");
+    expect(typeScript).toContain('const value = "hello"');
+    const verificationScript = executeJavaScriptInIsolatedWorld.mock.calls[3]?.[1]?.[0]?.code;
+    expect(verificationScript).toContain('const actualText =');
+    expect(verificationScript).toContain('actualText === "hello"');
     await expect(
       bridge.executeCommand('justdo:session-1', {
         action: 'act',
         request: { kind: 'click', ref: 'e1' },
       }),
     ).rejects.toThrow('stale');
+
+    await bridge.executeCommand('justdo:session-1', { action: 'snapshot' });
+    await expect(
+      bridge.executeCommand('justdo:session-1', {
+        action: 'act',
+        request: { kind: 'type', ref: 'e1', text: 'blocked' },
+      }),
+    ).rejects.toThrow('did not reach the selected element');
   });
 
   test('converts same-origin iframe snapshot refs to top-level click and hover coordinates', async () => {
@@ -1695,6 +1716,7 @@ describe('BrowserAgentBridge', () => {
 
   test('stops a slow trusted-input sequence promptly after cancellation', async () => {
     const sendInputEvent = vi.fn();
+    const appliedTypeScripts: string[] = [];
     const executeJavaScriptInIsolatedWorld = vi
       .fn()
       .mockImplementation((_worldId: number, scripts: Array<{ code: string }>) => {
@@ -1709,6 +1731,10 @@ describe('BrowserAgentBridge', () => {
         }
         if (code.includes('const rect = element.getBoundingClientRect')) {
           return { x: 10, y: 10, disabled: false, editable: true };
+        }
+        if (code.includes("new view.InputEvent('input'")) {
+          appliedTypeScripts.push(code);
+          return true;
         }
         throw new Error('Unexpected browser script.');
       });
@@ -1738,13 +1764,14 @@ describe('BrowserAgentBridge', () => {
       controller.signal,
     );
     await vi.waitFor(() =>
-      expect(sendInputEvent).toHaveBeenCalledWith({ type: 'char', keyCode: 'h' }),
+      expect(appliedTypeScripts.some(code => code.includes('const value = "h"'))).toBe(true),
     );
 
     controller.abort();
     await expect(pending).rejects.toThrow('cancelled');
     await new Promise(resolve => setTimeout(resolve, 50));
-    expect(sendInputEvent.mock.calls.filter(call => call[0]?.type === 'char')).toHaveLength(1);
+    expect(sendInputEvent).not.toHaveBeenCalled();
+    expect(appliedTypeScripts.some(code => code.includes('const value = "he"'))).toBe(false);
   });
 
   test.each([

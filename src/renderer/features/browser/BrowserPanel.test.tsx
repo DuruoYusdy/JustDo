@@ -698,7 +698,13 @@ describe('BrowserPanel embedded webview', () => {
       url: 'about:blank',
       profile: 'embedded',
     };
-    render(<BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />);
+    const { container } = render(
+      <BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />,
+    );
+    const webview = container.querySelector('webview') as HTMLElement;
+    webview.tabIndex = 0;
+    webview.focus();
+    const blur = vi.spyOn(webview, 'blur');
 
     await waitFor(() => expect(agentInteractionListener).not.toBeNull());
     act(() =>
@@ -710,6 +716,8 @@ describe('BrowserPanel embedded webview', () => {
       }),
     );
     expect(screen.getByTestId('browser-agent-interaction-lock')).not.toBeNull();
+    expect(blur).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(webview);
     expect(acknowledgeAgentInteraction).toHaveBeenCalledWith({
       sessionId: 'session-1',
       targetId: 'agent-tab',

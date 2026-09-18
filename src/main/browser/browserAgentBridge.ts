@@ -1792,6 +1792,11 @@ export class BrowserAgentBridge {
     ) as Promise<T>;
   }
 
+  private focusGuestForKeyboardInput(guest: Electron.WebContents): void {
+    if (guest.isDestroyed()) throw new Error('The browser tab is no longer available.');
+    guest.focus();
+  }
+
   private async executeInDebuggerWorld<T>(
     guestDebugger: Electron.Debugger,
     frameId: string,
@@ -4113,24 +4118,88 @@ export class BrowserAgentBridge {
         }
       } else {
         if (!prepared.editable) throw new Error('The selected element is not editable.');
-        const selectModifier = process.platform === 'darwin' ? 'meta' : 'control';
-        guest.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [selectModifier] });
-        guest.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [selectModifier] });
-        guest.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
-        guest.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
         const text = request.text as string;
+        const applyText = async (
+          value: string,
+          data: string | null,
+          inputType: 'deleteContentBackward' | 'insertText',
+        ): Promise<boolean> =>
+          this.executeInTargetWorld<boolean>(
+            tab,
+            guest,
+            target.frameSelector,
+            `(() => {
+              const element = ${target.expression};
+              if (!element?.isConnected) return false;
+              const tag = String(element.tagName || '').toLowerCase();
+              const value = ${JSON.stringify(value)};
+              if (tag === 'input') {
+                const Input = element.ownerDocument.defaultView?.HTMLInputElement;
+                const setter = Object.getOwnPropertyDescriptor(Input?.prototype ?? {}, 'value')?.set;
+                if (!setter) return false;
+                setter.call(element, value);
+              } else if (tag === 'textarea') {
+                const Textarea = element.ownerDocument.defaultView?.HTMLTextAreaElement;
+                const setter = Object.getOwnPropertyDescriptor(Textarea?.prototype ?? {}, 'value')?.set;
+                if (!setter) return false;
+                setter.call(element, value);
+              } else if (element.isContentEditable) {
+                element.textContent = value;
+              } else return false;
+              element.focus({ preventScroll: true });
+              const view = element.ownerDocument.defaultView;
+              const eventInit = {
+                bubbles: true,
+                composed: true,
+                inputType: ${JSON.stringify(inputType)},
+                data: ${JSON.stringify(data)},
+              };
+              const inputEvent = typeof view?.InputEvent === 'function'
+                ? new view.InputEvent('input', eventInit)
+                : new view.Event('input', { bubbles: true, composed: true });
+              element.dispatchEvent(inputEvent);
+              return true;
+            })()`,
+          );
         if (request.slowly === true) {
           const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 50));
+          if (!(await applyText('', null, 'deleteContentBackward'))) {
+            throw new Error('Browser text input did not reach the selected element.');
+          }
+          let value = '';
           for (const character of text) {
             assertActive();
-            guest.sendInputEvent({ type: 'char', keyCode: character });
+            value += character;
+            if (!(await applyText(value, character, 'insertText'))) {
+              throw new Error('Browser text input did not reach the selected element.');
+            }
             await this.waitWhileActive(delayMs, assertActive);
           }
-        } else if (text) {
-          const guestDebugger = await this.enableDebuggerDomains(tab, guest);
-          await guestDebugger.sendCommand('Input.insertText', { text });
+        } else if (!(await applyText(text, text, 'insertText'))) {
+          throw new Error('Browser text input did not reach the selected element.');
+        }
+        assertActive();
+        const typedIntoTarget = await this.executeInTargetWorld<boolean>(
+          tab,
+          guest,
+          target.frameSelector,
+          `(() => {
+            const element = ${target.expression};
+            if (!element?.isConnected) return false;
+            const tag = String(element.tagName || '').toLowerCase();
+            const actualText = tag === 'input' || tag === 'textarea'
+              ? String(element.value ?? '')
+              : element.isContentEditable
+                ? String(element.textContent ?? '')
+                : null;
+            return actualText === ${JSON.stringify(text)};
+          })()`,
+        );
+        if (!typedIntoTarget) {
+          throw new Error('Browser text input did not reach the selected element.');
         }
         if (request.submit === true) {
+          this.focusGuestForKeyboardInput(guest);
           guest.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
           guest.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
         }
@@ -4164,6 +4233,7 @@ export class BrowserAgentBridge {
       const key = typeof request.key === 'string' ? request.key.trim() : '';
       if (!key || key.length > 64) throw new Error('key is required.');
       const { keyCode, modifiers } = normalizeKeyChord(key);
+      this.focusGuestForKeyboardInput(guest);
       guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
       try {
         const delayMs = Math.max(0, Math.min(1_000, Number(request.delayMs) || 0));

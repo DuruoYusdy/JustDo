@@ -1,4 +1,12 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+const mediaStoreMocks = vi.hoisted(() => ({
+  saveMediaBuffer: vi.fn(),
+}));
+
+vi.mock('openclaw/plugin-sdk/media-store', () => ({
+  saveMediaBuffer: mediaStoreMocks.saveMediaBuffer,
+}));
 
 import {
   BROWSER_ACT_KINDS,
@@ -9,8 +17,14 @@ import embeddedBrowserPlugin from '../../../../openclaw-extensions/embedded-brow
 import { EmbeddedBrowserGateway } from '../../../shared/openclaw/extensions';
 
 type ToolResult = {
-  content: Array<{ text: string }>;
+  content: Array<{
+    type?: string;
+    text?: string;
+    data?: string;
+    mimeType?: string;
+  }>;
   isError?: boolean;
+  details?: Record<string, unknown>;
 };
 
 type ToolFactory = (context: { sessionKey?: string }) => {
@@ -77,6 +91,16 @@ const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
   return payload;
 };
 
+beforeEach(() => {
+  mediaStoreMocks.saveMediaBuffer.mockReset();
+  mediaStoreMocks.saveMediaBuffer.mockResolvedValue({
+    id: 'embedded-browser-screenshot---test.png',
+    path: 'C:\\openclaw-media\\outbound\\embedded-browser-screenshot---test.png',
+    size: 3,
+    contentType: 'image/png',
+  });
+});
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -110,7 +134,9 @@ describe('Embedded browser extension', () => {
     expect(agentTurnPrepare({}, { sessionKey: 'agent:main:other:session-1' })).toBeUndefined();
     expect(
       agentTurnPrepare({}, { sessionKey: 'agent:main:justdo:session-1' })?.prependContext,
-    ).toMatch(/Do not launch Chrome.*screenshot action may be used for Agent observation/);
+    ).toMatch(
+      /Do not launch Chrome.*screenshot action may be used for Agent observation.*explicitly asks to see a screenshot.*exact sanitized outbound copy path/,
+    );
     service.stop();
   });
 
@@ -138,6 +164,121 @@ describe('Embedded browser extension', () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('external and untrusted');
     expect(result.content[0]?.text).toContain('Example');
+    service.stop();
+  });
+
+  test('stages screenshot media for explicit sharing without making it automatic outbound media', async () => {
+    const { emit, factory, gatewayMethod, service } = registrations();
+    const tool = factory({ sessionKey: 'justdo:session-1' })!;
+    const screenshot = Buffer.from('png');
+    const outboundPath =
+      'C:\\openclaw-media\\outbound\\embedded-browser-screenshot---test.png';
+
+    const pending = tool.execute('call-1', { action: 'screenshot', targetId: 'embedded-1' });
+    const request = requestedEnvelope(emit);
+    gatewayMethod({
+      params: {
+        requestId: request.requestId,
+        ok: true,
+        result: {
+          content: [
+            {
+              type: 'image',
+              data: screenshot.toString('base64'),
+              mimeType: 'image/png',
+            },
+            { type: 'text', text: 'Browser screenshot captured for Agent observation.' },
+          ],
+          details: {
+            ok: true,
+            targetId: 'embedded-1',
+            media: { outbound: false },
+          },
+        },
+      },
+      respond: vi.fn(),
+    });
+
+    const result = await pending;
+
+    expect(mediaStoreMocks.saveMediaBuffer).toHaveBeenCalledWith(
+      screenshot,
+      'image/png',
+      'outbound',
+      5 * 1024 * 1024,
+      'embedded-browser-screenshot.png',
+    );
+    expect(result.content).toContainEqual(
+      expect.objectContaining({ type: 'image', data: screenshot.toString('base64') }),
+    );
+    expect(result.content).toContainEqual({
+      type: 'text',
+      text: expect.stringContaining(JSON.stringify(outboundPath)),
+    });
+    expect(result.details).toMatchObject({
+      media: { outbound: false },
+      externalContent: { source: 'browser', kind: 'screenshot' },
+    });
+    service.stop();
+  });
+
+  test('keeps screenshot observation available when outbound staging fails', async () => {
+    mediaStoreMocks.saveMediaBuffer.mockRejectedValueOnce(new Error('media store unavailable'));
+    const { emit, factory, gatewayMethod, service } = registrations();
+    const tool = factory({ sessionKey: 'justdo:session-1' })!;
+    const screenshotData = Buffer.from('png').toString('base64');
+
+    const pending = tool.execute('call-1', { action: 'screenshot' });
+    const request = requestedEnvelope(emit);
+    gatewayMethod({
+      params: {
+        requestId: request.requestId,
+        ok: true,
+        result: {
+          content: [{ type: 'image', data: screenshotData, mimeType: 'image/png' }],
+          details: { media: { outbound: false } },
+        },
+      },
+      respond: vi.fn(),
+    });
+
+    const result = await pending;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toContainEqual(
+      expect.objectContaining({ type: 'image', data: screenshotData }),
+    );
+    expect(result.content).toContainEqual({
+      type: 'text',
+      text: '[Screenshot sharing is unavailable because an outbound copy could not be prepared.]',
+    });
+    service.stop();
+  });
+
+  test('does not stage image content returned by non-screenshot actions', async () => {
+    const { emit, factory, gatewayMethod, service } = registrations();
+    const tool = factory({ sessionKey: 'justdo:session-1' })!;
+
+    const pending = tool.execute('call-1', { action: 'snapshot', labels: true });
+    const request = requestedEnvelope(emit);
+    gatewayMethod({
+      params: {
+        requestId: request.requestId,
+        ok: true,
+        result: {
+          content: [
+            { type: 'image', data: Buffer.from('labels').toString('base64'), mimeType: 'image/png' },
+          ],
+          details: { media: { outbound: false } },
+        },
+      },
+      respond: vi.fn(),
+    });
+
+    const result = await pending;
+
+    expect(mediaStoreMocks.saveMediaBuffer).not.toHaveBeenCalled();
+    expect(result.content).toHaveLength(1);
     service.stop();
   });
 
