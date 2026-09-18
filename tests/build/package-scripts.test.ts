@@ -165,6 +165,9 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   );
   expect(packageJson.scripts.postinstall).not.toContain('electron-builder install-app-deps');
   expect(packageJson.scripts['precompile:electron']).toBe('npm run rebuild:electron-native');
+  expect(packageJson.scripts['prestart:electron']).toBe(
+    'npm run rebuild:electron-native && npm run browser-extension:prepare',
+  );
   expect(rebuildScript).toContain("'--platform'");
   expect(rebuildScript).toContain("'--arch'");
   expect(rebuildScript).toContain("process.argv.includes('--force')");
@@ -183,6 +186,22 @@ test('uses a target-aware and runtime-verified Electron-native rebuild', () => {
   expect(builderHooks).toContain('Packaged better-sqlite3 failed Electron ABI verification');
   expect(builderHooks).toContain("['pty.node', 'conpty.node', 'conpty_console_list.node']");
   expect(builderHooks).toContain('Packaged node-pty failed Electron ABI verification');
+});
+
+test('restores Electron native modules after tests even when Vitest fails', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
+  ) as { scripts: Record<string, string> };
+  const testRunner = fs.readFileSync(
+    path.resolve(__dirname, '../../scripts/run-tests.cjs'),
+    'utf8',
+  );
+
+  expect(packageJson.scripts.test).toBe('node scripts/run-tests.cjs');
+  expect(packageJson.scripts).not.toHaveProperty('pretest');
+  expect(testRunner).toContain("['rebuild', 'better-sqlite3']");
+  expect(testRunner).toContain("path.join(__dirname, 'rebuild-electron-native.cjs')");
+  expect(testRunner).toContain('finally');
 });
 
 test('keeps build-only dependencies and diagnostics out of the packaged app', () => {

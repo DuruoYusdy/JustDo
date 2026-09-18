@@ -303,7 +303,7 @@ UI 应显示 source、eligible/missing、install state 和操作结果；破坏�
 ## 13. 安全模型
 
 - 只允许 Main 接触受管路径、archive、子进程、MCP transport 与 config 文件。
-- 所有 archive 防 traversal/symlink；所有 delete 验证 resolved target 位于确切 managed root。
+- Skill、Hook、Extension 的 ZIP 统一经 `safeZipExtractor` 逐项解包：写入前拒绝 traversal、绝对/Windows 别名路径、symlink、特殊文件和重复 entry，并限制 entry 数、单文件及总展开大小；所有 delete 验证 resolved target 位于确切 managed root。
 - 不自动安装任意 Skill 声明的 shell script；安装选项先展示来源和风险。
 - Marketplace provider 是不可信输入；响应 normalize 后才进 Renderer。
 - MCP env、Extension config、Skill API key 是 secret，不输出完整 config。
@@ -347,7 +347,7 @@ stateDiagram-v2
   Restore --> Failed: operation failed
 ```
 
-临时目录 cleanup 和 runtime 恢复放在 `finally` 语义中。目标 path 必须在解压后再次 canonicalize，拒绝 traversal、symlink escape 和不允许的根目录。已有同名项的 replace/冲突语义必须由具体 manager 明确，不能靠文件覆盖默认决定。
+临时目录 cleanup 和 runtime 恢复放在 `finally` 语义中。ZIP entry 必须在创建目录或文件前完成 path、类型、重复项和容量校验，不能依赖解压后的 symlink 扫描作为第一道边界；解压后仍再次 canonicalize 目标。已有同名项的 replace/冲突语义必须由具体 manager 明确，不能靠文件覆盖默认决定。
 
 ## 17. Secret 与配置投影
 

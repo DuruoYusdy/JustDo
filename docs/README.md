@@ -17,7 +17,7 @@
 | 应用版本      | `v2026.8.12`                       | `package.json.version`                   |
 | Electron      | `^42.6.2`（42.6 系列）             | `package.json`、lockfile                 |
 | OpenClaw      | `v2026.9.2`                        | `package.json.openclaw`                  |
-| Node.js       | `>=24.15.0 <25`                    | `package.json.engines`、`.nvmrc`         |
+| Node.js       | `24.21.0`；engine `>=24.15.0 <25`  | `.nvmrc`、`package.json.engines`         |
 | 包管理器      | npm                                | `package-lock.json`、scripts             |
 | Vite 开发端口 | `43127`                            | `package.json.devServer.port`            |
 | Renderer 状态 | 6 个 Redux slice                   | `src/renderer/store/index.ts`            |

@@ -1,5 +1,4 @@
 import { spawn } from 'child_process';
-import extractZip from 'extract-zip';
 import fs from 'fs';
 import JSON5 from 'json5';
 import os from 'os';
@@ -23,6 +22,7 @@ import {
   managedDirectorySuccess,
 } from '../../core/managedDirectoryOperations';
 import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/outboundHeaderPolicyService';
+import { extractZipSafely } from '../../core/safeZipExtractor';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
 
@@ -1518,7 +1518,7 @@ export class OpenClawExtensionImportService {
         temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-extension-import-'));
         const lowerPath = normalizedSourcePath.toLowerCase();
         if (lowerPath.endsWith('.zip')) {
-          await extractZip(normalizedSourcePath, { dir: temporaryDirectory });
+          await extractZipSafely(normalizedSourcePath, temporaryDirectory);
         } else {
           await tar.extract({
             file: normalizedSourcePath,

@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto';
-import extractZip from 'extract-zip';
 import fs from 'fs';
 import yaml from 'js-yaml';
 import os from 'os';
@@ -7,6 +6,7 @@ import path from 'path';
 import * as tar from 'tar';
 
 import { cpRecursiveSync } from '../../core/fsCompat';
+import { extractZipSafely } from '../../core/safeZipExtractor';
 
 const HOOK_FILE_NAME = 'HOOK.md';
 const HANDLER_FILE_NAMES = ['handler.ts', 'handler.js', 'index.ts', 'index.js'] as const;
@@ -208,7 +208,7 @@ export class OpenClawHookFiles {
     const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-hook-import-'));
     try {
       if (archivePath.toLowerCase().endsWith('.zip')) {
-        await extractZip(archivePath, { dir: extractDir });
+        await extractZipSafely(archivePath, extractDir);
       } else {
         await tar.extract({
           file: archivePath,

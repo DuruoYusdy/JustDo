@@ -101,7 +101,7 @@ Preview 只支持 shared allowlist extension，最大 2 MiB。读取流程用 `l
 ## 10. Plugin 文件安全
 
 - Skill/Hook/Extension目标必须在精确 managed root，删除前 canonicalize。
-- archive 支持类型有限；解压检查 traversal，Extension 递归拒绝 symlink。
+- archive 支持类型有限；ZIP 逐 entry 在写入前拒绝 traversal、绝对/Windows 别名路径、symlink、特殊文件和重复项，并限制展开规模；解压后的递归 symlink 检查作为纵深防御。
 - built-in/protected item（如受管 runtime services、built-in Hook）不可普通覆盖/删除；退役 permission extension 由同步代码定向清理。
 - Extension CLI 有 300 秒 timeout与 64K 输出上限；成功需明确模式和重新列举。
 - Marketplace response 逐字段 allowlist、长度/数量限制，provider error 脱敏；prepared payload finally cleanup。

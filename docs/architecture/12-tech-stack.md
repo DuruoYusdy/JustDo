@@ -6,13 +6,13 @@
 
 | 组件       | 当前版本/约束                     | 用途                                           |
 | ---------- | --------------------------------- | ---------------------------------------------- |
-| Node.js    | `24.15.0`，engine `>=24.15.0 <25` | 开发脚本、Main、OpenClaw tooling               |
+| Node.js    | `24.21.0`，engine `>=24.15.0 <25` | 开发脚本、Main、OpenClaw tooling               |
 | Electron   | `^42.6.2`（42.6 系列）            | 桌面进程、窗口、IPC、系统集成                  |
 | OpenClaw   | `v2026.9.2`                       | Agent/Gateway/session/tool/cron/plugin runtime |
-| npm        | package dependency `^11.18.0`     | 安装与脚本                                     |
+| npm        | package dependency `^11.19.1`     | 安装与脚本                                     |
 | TypeScript | `^5.7.3`                          | Renderer/Main/shared 静态检查                  |
 
-使用 `nvm use 24`。不要用 Node 22/25 生成或测试 native/runtime 产物；`better-sqlite3` ABI 与 Electron target 必须一致。
+使用 `.nvmrc` 固定的 Node `24.21.0`。不要用其他 Node 主版本生成或测试 native/runtime 产物；`better-sqlite3` ABI 与 Electron target 必须一致。
 
 ## 2. Renderer
 
@@ -31,7 +31,7 @@ Renderer 不运行 Node/Electron API。alias：`@/ -> src/renderer/`，`@shared/
 - `better-sqlite3 ^12.11.1`：同步 SQLite store，native binary必须重建。
 - `electron-log`：每日 Main 日志；`electron-updater`：Windows generic feed 更新。
 - `proxy-agent`、`http-mitm-proxy`：Main/system/Gateway 网络代理的不同路径。
-- `extract-zip`、`tar`、`yazl`、7zip-bin：plugin/runtime/log archive。
+- `yauzl` 安全逐项解压、`tar`、`yazl`、7zip-bin：plugin/runtime/log archive。
 - `json5`、`js-yaml`：OpenClaw/extension 配置与 manifest。
 - `@modelcontextprotocol/sdk`：MCP probe/resource transport。
 

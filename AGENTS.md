@@ -11,7 +11,7 @@ tasks through OpenClaw Gateway, with durable state in SQLite and bundled skills.
 - App: `v2026.8.27`
 - Electron: `42.7.0`
 - OpenClaw: `v2026.9.2`
-- Node: `>=24.15.0 <25` (`.nvmrc`)
+- Node: `24.21.0` via `.nvmrc`; engine `>=24.15.0 <25`
 - Package manager: npm
 - Dev server port: `43127`
 - License: MIT
@@ -47,7 +47,7 @@ npm run lint
 npm run validate:product-metadata
 npm run build
 npm run compile:electron
-npm test                       # pretest rebuilds better-sqlite3
+npm test                       # uses Node better-sqlite3, then restores Electron ABI
 npm run format:check
 npm run pack
 npm run dist

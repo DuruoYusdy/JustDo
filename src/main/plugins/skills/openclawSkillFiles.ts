@@ -1,4 +1,3 @@
-import extractZip from 'extract-zip';
 import fs from 'fs';
 import yaml from 'js-yaml';
 import os from 'os';
@@ -13,6 +12,7 @@ import {
   removeDirectoryWithRetry,
   replaceDirectoryTransactional,
 } from '../../core/managedDirectoryOperations';
+import { extractZipSafely } from '../../core/safeZipExtractor';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];
@@ -222,7 +222,7 @@ export class OpenClawSkillFiles {
     try {
       const lowerPath = archivePath.toLowerCase();
       if (lowerPath.endsWith('.zip')) {
-        await extractZip(archivePath, { dir: extractDir });
+        await extractZipSafely(archivePath, extractDir);
       } else {
         await tar.extract({
           file: archivePath,

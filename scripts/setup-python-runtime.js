@@ -16,7 +16,6 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { spawnSync } = require('child_process');
-const extractZip = require('extract-zip');
 const { path7za } = (() => {
   try {
     return require('7zip-bin');
@@ -720,7 +719,7 @@ function extractArchiveWith7z(archivePath, destDir) {
 async function extractArchiveToRuntime(archivePath) {
   const tempRoot = fs.mkdtempSync(path.join(PROJECT_ROOT, 'tmp-python-runtime-'));
   try {
-    // Use 7zip-bin instead of extract-zip (yauzl).
+    // Use 7zip-bin instead of the yauzl-based application ZIP extractor.
     // yauzl's lazyEntries mode can hang indefinitely on Windows when
     // extracting certain zip files (e.g. python embeddable runtime).
     // 7z reliably extracts these in under 1 second.
