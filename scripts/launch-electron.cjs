@@ -12,6 +12,7 @@ const {
   devServer: { port: devServerPort },
 } = require('../package.json');
 const resolvedDevServerPort = process.env.JUSTDO_DEV_SERVER_PORT || devServerPort;
+const DEV_SERVER_URL_SWITCH = '--justdo-dev-server-url';
 
 // Get electron executable path
 const electronPath = require('electron');
@@ -32,7 +33,7 @@ console.log('[Electron Launcher] ELECTRON_RUN_AS_NODE:', env.ELECTRON_RUN_AS_NOD
 
 // Spawn Electron with clean environment
 // Pass "." to make Electron use the current directory and package.json's main field
-const args = ['.'];
+const args = ['.', `${DEV_SERVER_URL_SWITCH}=${env.ELECTRON_START_URL}`];
 if (process.argv.length > 2) {
   args.push(...process.argv.slice(2));
 }

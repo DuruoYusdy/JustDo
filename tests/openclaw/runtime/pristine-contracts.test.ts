@@ -39,6 +39,8 @@ const EXPECTED_PATCH_FILES = [
   '022-justdo-reset-display-history.cjs',
   '023-managed-session-fork-target-key.cjs',
   '024-acp-allowed-agents-hot-reload.cjs',
+  '025-mxc-external-skill-paths.cjs',
+  '026-private-untrusted-context.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

@@ -2,10 +2,8 @@
 
 const { spawnSync } = require('child_process');
 const path = require('path');
-const {
-  assertNoActiveRuntimeDevLease,
-  resolveRuntimeDevLeaseDir,
-} = require('./openclaw-runtime-dev-lease.cjs');
+const { resolveRuntimeDevLeaseDir } = require('./openclaw-runtime-dev-lease.cjs');
+const { requestActiveRuntimeDevShutdown } = require('./openclaw-runtime-dev-shutdown.cjs');
 
 function resolveHostTargetId() {
   const platformMap = {
@@ -30,7 +28,7 @@ function resolveHostTargetId() {
 
 const targetId = resolveHostTargetId();
 const rootDir = path.resolve(__dirname, '..');
-assertNoActiveRuntimeDevLease(resolveRuntimeDevLeaseDir(rootDir));
+requestActiveRuntimeDevShutdown(rootDir, resolveRuntimeDevLeaseDir(rootDir));
 const npmScript = `openclaw:runtime:${targetId}`;
 const npmCliPath = process.env.npm_execpath;
 if (!npmCliPath) {

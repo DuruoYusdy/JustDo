@@ -78,7 +78,7 @@ const FILE_PREVIEW_UNICODE_HIGHLIGHT = {
 const configureFilePreviewThemes: BeforeMount = monaco => {
   monaco.editor.defineTheme(FILE_PREVIEW_DARK_THEME, {
     base: 'vs-dark',
-    inherit: false,
+    inherit: true,
     rules: [
       { token: '', foreground: 'E6EDF3' },
       { token: 'comment', foreground: '8B949E' },
@@ -119,7 +119,7 @@ const configureFilePreviewThemes: BeforeMount = monaco => {
   });
   monaco.editor.defineTheme(FILE_PREVIEW_LIGHT_THEME, {
     base: 'vs',
-    inherit: false,
+    inherit: true,
     rules: [
       { token: '', foreground: '1F2328' },
       { token: 'comment', foreground: '6E7781' },
@@ -452,15 +452,29 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
 
     useImperativeHandle(ref, () => ({ requestTransition }), [requestTransition]);
 
-    const handleEditorMount: OnMount = useCallback((editor, monaco) => {
-      editor.addAction({
-        id: 'file-preview.save',
-        label: i18nService.t('save'),
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-        run: () => saveActionRef.current(),
-      });
-      editor.focus();
-    }, []);
+    const applyEditorLanguage: OnMount = useCallback(
+      (editor, monaco) => {
+        const model = editor.getModel();
+        if (model && model.getLanguageId() !== editorLanguage) {
+          monaco.editor.setModelLanguage(model, editorLanguage);
+        }
+      },
+      [editorLanguage],
+    );
+
+    const handleEditorMount: OnMount = useCallback(
+      (editor, monaco) => {
+        applyEditorLanguage(editor, monaco);
+        editor.addAction({
+          id: 'file-preview.save',
+          label: i18nService.t('save'),
+          keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+          run: () => saveActionRef.current(),
+        });
+        editor.focus();
+      },
+      [applyEditorLanguage],
+    );
 
     useEffect(() => {
       const handleResize = () => setDrawerWidth(width => clampDrawerWidth(width));
@@ -707,10 +721,12 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
                     <div className="file-preview-readonly-editor">
                       <Editor
                         height="100%"
+                        path={preview.filePath}
                         language={editorLanguage}
                         theme={isDark ? FILE_PREVIEW_DARK_THEME : FILE_PREVIEW_LIGHT_THEME}
                         beforeMount={configureFilePreviewThemes}
                         value={content}
+                        onMount={applyEditorLanguage}
                         loading={
                           <div className="file-preview-editor-loading">
                             <ArrowPathIcon className="animate-spin" />

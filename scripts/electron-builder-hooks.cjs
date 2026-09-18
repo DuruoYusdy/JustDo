@@ -40,6 +40,7 @@ const {
   prepareBrowserExtension,
   verifyBrowserExtension,
 } = require('./prepare-browser-extension.cjs');
+const { compileBrowserExtensionNativeHost } = require('./prepare-browser-extension-dev-host.cjs');
 const {
   PATCH_MANIFEST_FILENAME,
   verifyOpenClawPatchManifest,
@@ -785,6 +786,7 @@ function installSkillDependencies() {
 
 async function beforePack(context) {
   prepareBrowserExtension();
+  if (isWindowsTarget(context)) compileBrowserExtensionNativeHost();
   rebuildElectronNativeModules(context);
   // Install skill dependencies first (for all platforms)
   installSkillDependencies();
@@ -1077,6 +1079,19 @@ function verifyPackagedBrowserExtension(context) {
     : path.join(context.appOutDir, 'resources');
   const extensionDir = path.join(resourcesRoot, 'browser-extension', 'chrome-extension');
   const result = verifyBrowserExtension(extensionDir);
+  if (
+    isWindowsTarget(context) &&
+    !existsSync(
+      path.join(
+        resourcesRoot,
+        'browser-extension',
+        'native-host',
+        'justdo-browser-extension-native-host-v2.exe',
+      ),
+    )
+  ) {
+    throw new Error('Packaged browser extension native host is missing.');
+  }
   console.log(
     `[electron-builder-hooks] Verified packaged OpenClaw browser extension ${result.manifest.version}.`,
   );

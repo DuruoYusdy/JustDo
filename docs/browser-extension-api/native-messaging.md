@@ -1,0 +1,216 @@
+# Native Messaging 启动与发现协议
+
+Native Host 只负责发现或拉起桌面 app-server，不承载对话内容。Chrome 扩展通过
+`chrome.runtime.connectNative('com.justdo.browserextension')` 建立长连接。
+
+## 注册
+
+打包后的 JustDo 首次成功启动时，在 Windows 当前用户范围写入：
+
+```text
+HKCU\Software\Google\Chrome\NativeMessagingHosts\com.justdo.browserextension
+```
+
+默认值指向 `<userData>/browser-extension/com.justdo.browserextension.json`。Manifest：
+
+```json
+{
+  "allowed_origins": ["chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/"],
+  "description": "JustDo browser native messaging host",
+  "name": "com.justdo.browserextension",
+  "path": "<absolute native host helper path>",
+  "type": "stdio"
+}
+```
+
+`npm run electron:dev` 会在选择 Vite 端口后编译独立 Native Host helper、生成相同 manifest
+并写入注册表，因此开发态和安装版走同一协议实现。开发态 manifest 指向
+`build/browser-extension/native-host/justdo-browser-extension-dev-host-<source digest>.exe`；安装版指向
+`resources/browser-extension/native-host/` 下的随包 helper。后启动的一方会更新当前用户注册，
+所以从安装版切回开发版时应重新运行 `npm run electron:dev`。
+
+manifest 同目录还有 `native-host.config.json`，只记录启动目标、启动参数、工作目录和 rendezvous
+路径。开发态额外记录当前 Vite URL，以及 `dist-electron/main.js` 和 Vite 服务两个就绪条件。
+Chrome 不读取此文件，由 helper 用注册表中的 manifest 路径定位它。开发 helper 只有在两个条件
+都满足时才允许拉起 Electron；否则向扩展返回开发环境未就绪错误，不打开 GUI 错误窗口。
+
+开发 helper 文件名包含其 C# 源码摘要。相同摘要的有效 PE 文件会直接复用，避免 Chrome 正在
+运行 helper 时 Windows 文件锁导致编译器无法覆盖；源码变化后会自然生成新的文件名。
+
+## 进程入口
+
+Chrome 启动 Native Host 时会把扩展 Origin 作为命令行参数传给独立 helper。Helper 仅在
+Origin 精确等于以下值时接受连接：
+
+```text
+chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/
+```
+
+Helper 自己读写 Native Messaging framing，不经过 Electron GUI 进程，避免 Windows Electron
+关闭或污染标准输入输出。它只在 `ensure`/`restart` 确认没有可用 rendezvous 时启动 JustDo。
+
+## 消息 framing
+
+每条消息由以下两部分组成：
+
+1. 4 字节无符号小端整数，表示 JSON body 的字节数。
+2. UTF-8 编码的 JSON body。
+
+单条消息最大 `1 MiB`。超过上限会终止 Host。请求、响应均使用标准 JSON-RPC 2.0 标头：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:1",
+  "method": "codexRuntime/hello",
+  "params": {}
+}
+```
+
+## `codexRuntime/hello`
+
+完成版本协商，不启动新的 app-server。
+
+请求：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:1",
+  "method": "codexRuntime/hello",
+  "params": {
+    "constraints": {
+      "manifestSchemaVersion": 2,
+      "nativeHostName": "com.justdo.browserextension",
+      "requiredAppServerProtocolVersion": 2,
+      "requiredNativeHostProtocolVersion": 2
+    }
+  }
+}
+```
+
+当前 Host 将 `constraints` 视为客户端声明，由扩展根据响应执行兼容性判断。
+
+响应：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:1",
+  "result": {
+    "manifestSchemaVersion": 2,
+    "nativeHostProtocolVersion": 2,
+    "supportedProtocolVersions": [2]
+  }
+}
+```
+
+## `codexRuntime/ensure`
+
+返回可用 app-server 地址。如果 rendezvous 指向仍存活的进程则复用，否则拉起 JustDo 并等待
+app-server 发布地址，最长等待 15 秒。
+
+请求：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:2",
+  "method": "codexRuntime/ensure",
+  "params": {
+    "clientId": "sidepanel-window-42",
+    "constraints": {
+      "manifestSchemaVersion": 2,
+      "nativeHostName": "com.justdo.browserextension",
+      "requiredAppServerProtocolVersion": 2,
+      "requiredNativeHostProtocolVersion": 2
+    }
+  }
+}
+```
+
+`clientId` 用于标识发起请求的浏览器窗口；当前 Host 不据此建立独立 server。
+
+响应：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:2",
+  "result": {
+    "localAppServerUrl": "ws://127.0.0.1:43128/app-server?token=<64 hex chars>",
+    "runtimeConfig": {
+      "protocolVersion": 2
+    }
+  }
+}
+```
+
+端口是动态值，客户端不得缓存。Token 是当前桌面进程生成的 256-bit capability，进程重启后失效。
+
+## `codexRuntime/restart`
+
+删除旧 rendezvous 并要求桌面应用重启 app-server。参数和结果与 `ensure` 相同，可额外携带原因：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:3",
+  "method": "codexRuntime/restart",
+  "params": {
+    "clientId": "sidepanel-window-42",
+    "reason": "sidepanel_retry",
+    "constraints": {}
+  }
+}
+```
+
+如果主应用已经运行，helper 拉起的第二实例通过
+`--justdo-browser-extension-restart-app-server` 通知现有实例停止、重新监听并发布新地址。
+
+## rendezvous 文件
+
+桌面进程把当前 capability 原子写入：
+
+```text
+<userData>/browser-extension/app-server.json
+```
+
+格式：
+
+```json
+{
+  "localAppServerUrl": "ws://127.0.0.1:43128/app-server?token=<64 hex chars>",
+  "pid": 12345,
+  "protocolVersion": 2
+}
+```
+
+Host 只接受 `ws:`、`127.0.0.1`、`/app-server`、64 位十六进制 token，并确认 `pid` 仍存活。
+应用正常退出时仅删除属于当前 PID 的 rendezvous，避免旧实例删除新实例发布的地址。
+
+## Native Host 错误
+
+| code     | 场景                               |
+| -------- | ---------------------------------- |
+| `-32700` | JSON body 无法解析                 |
+| `-32600` | 缺少 `jsonrpc: "2.0"` 或合法方法名 |
+| `-32601` | 方法不存在                         |
+| `-32603` | 启动失败、超时或其他内部错误       |
+
+错误响应：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "justdo-native:2",
+  "error": {
+    "code": -32603,
+    "message": "Unable to start the JustDo app server."
+  }
+}
+```
+
+Chrome 报 `Specified native messaging host not found` 表示尚未注册 manifest、manifest 路径失效，
+或扩展 ID 与 `allowed_origins` 不一致；该错误发生在 WebSocket 对话连接之前。开发态重新运行
+`npm run electron:dev`，安装态重新启动一次已安装应用，即会刷新注册。

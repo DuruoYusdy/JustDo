@@ -51,9 +51,17 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 
 聊天是当前唯一明确的 Renderer→Gateway 直连通道。`JustDoChatWrapper` 通过 `openclaw.engine.getPort/getToken` 取得连接信息，`GatewayClient` 建立 loopback WebSocket；`ChatController` 订阅 session/message 事件、请求常规 history，并在 IPC paged history 不可用时使用带 Bearer token 的 loopback REST fallback。产品 session start/continue、权限、文件、配置、SQLite 与大部分 Gateway 领域命令仍经过 Main。
 
+### 2.4 Chrome 扩展到 Main 的侧栏对话通道
+
+Chrome Side Panel 不获取 Gateway token，也不直接连接 Gateway。Windows 安装版和开发启动流程都会注册 `com.justdo.browserextension` Chrome Native Messaging host；独立 helper 用 JSON-RPC 2.0 的 `codexRuntime/hello`、`codexRuntime/ensure` 和 `codexRuntime/restart` 发现或拉起桌面进程，并返回动态 `localAppServerUrl`。Electron GUI 不直接承接 Native Messaging stdin/stdout。Native host manifest 只允许固定公钥派生的 JustDo extension id。
+
+Main 每次启动在 `127.0.0.1` 随机端口创建 WebSocket app-server，并为 URL 生成随机 256-bit capability。握手同时校验 capability、`/app-server` path 与精确 extension Origin，单消息限制为 8 MiB。协议采用 app-server 风格的 request/result/error 与 notification：完成 `initialize` 请求及 `initialized` 通知后，只开放 `thread/list`、`thread/read`、`thread/start`、`thread/unsubscribe`、`composer/options`、`turn/start` 和 `turn/interrupt`，并发送 `thread/started`、`thread/updated`、`turn/started` 与 `turn/completed`。composer options 和 turn payload 把已配置模型、会话权限及有界附件连接到现有 Cowork/OpenClaw 生命周期，不建立新的 transcript 或附件缓存。应用退出时清理 rendezvous 并停止监听。
+
+扩展与 OpenClaw relay 使用不同凭据和协议。relay 仍负责用户授权 tab 的自动化，side-chat 服务只负责产品会话。用户显式选择附带的页面标题、URL 和选中文本会被构造成不可信浏览器状态；Main 通过仅允许已认证本地后台客户端使用的 `chat.send.justdoUntrustedContext` 传给本轮 Agent。OpenClaw 的 Agent 输入会组合该状态与用户文本，但 native transcript 只持久化原始用户文本，因此不需要 Renderer 依赖过滤来维持新消息的正确展示，也不建立第二份消息持久化。
+
 这条通道意味着 Renderer 能接触 Gateway token 和原始聊天 wire event，必须由集中式 client/controller 处理，不能让各 React 组件各建连接或各写 parser。连接 generation、session key、run id 和 sequence 用于拒绝旧连接与迟到事件；token 只保存在控制器内存，不得进入 Redux、日志、导出或第三方请求。
 
-### 2.4 Multica 到 Main 的本机桥接
+### 2.5 Multica 到 Main 的本机桥接
 
 Multica 通过 OpenClaw 兼容启动器执行发现和 `agent` 命令。Windows 原生 launcher 启动一个带私有 switch 的短生命周期 Electron 进程；Main 在 single-instance lock 和 UI 初始化之前识别该模式，关闭 console 输出并作为 bridge client 连接已运行的 JustDo 实例。POSIX launcher 使用同一 client 契约。桥接只使用当前用户 named pipe/Unix socket，不开放网络端口。
 

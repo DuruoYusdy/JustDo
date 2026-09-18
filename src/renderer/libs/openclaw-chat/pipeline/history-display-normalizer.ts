@@ -1,6 +1,7 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
+import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
 import { normalizeTranscriptSessionKey } from '@/libs/openclaw-chat/model/chat-transcript-state';
@@ -9,7 +10,10 @@ import {
   FAILED_RUN_MESSAGE_ID,
 } from '@/libs/openclaw-chat/model/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
-import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
+import {
+  splitMediaFromOutput,
+  stripInboundMetadata,
+} from '@/libs/openclaw-chat/shims/backend-helpers';
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 const AGENT_RUN_FAILED_BEFORE_REPLY = 'The agent run failed before producing a reply.';
@@ -245,20 +249,114 @@ export function shouldHideMessage(message: unknown): boolean {
 }
 
 export function projectGatewayHistoryForDisplay(messages: unknown[]): unknown[] {
-  return messages
-    .map(projectGoalFeedbackForDisplay)
-    .map(projectBrowserAnnotationForDisplay)
-    .map(stripAssistantSilentReplySuffix)
-    .filter(message => !shouldHideMessage(message))
-    .filter(message => !isLegacyInterruptedStatusMessage(message))
-    .filter(message => !asRecord(message)?.__openclawStreamFallback);
+  return collapseAssistantMediaDeliveryCompanions(
+    messages
+      .map(projectGoalFeedbackForDisplay)
+      .map(projectBrowserAnnotationForDisplay)
+      .map(stripAssistantSilentReplySuffix)
+      .filter(message => !shouldHideMessage(message))
+      .filter(message => !isLegacyInterruptedStatusMessage(message))
+      .filter(message => !asRecord(message)?.__openclawStreamFallback),
+  );
+}
+
+function messageRecord(message: unknown): Record<string, unknown> | null {
+  const outer = asRecord(message);
+  return asRecord(outer?.message) ?? outer;
+}
+
+function isGatewayInjectedAssistantMessage(message: unknown): boolean {
+  const record = messageRecord(message);
+  if (!record || String(record.role ?? '').toLowerCase() !== 'assistant') return false;
+  const metadata = asRecord(record.metadata);
+  return [record.modelName, record.model, metadata?.modelName, metadata?.model].some(
+    isGatewayInjectedModelRef,
+  );
+}
+
+function assistantDeliveryMediaUrls(message: unknown): string[] {
+  const outer = asRecord(message);
+  const record = messageRecord(message);
+  const delivery = asRecord(record?.openclawDelivery) ?? asRecord(outer?.openclawDelivery);
+  return Array.isArray(delivery?.mediaUrls)
+    ? delivery.mediaUrls.filter(
+        (value): value is string => typeof value === 'string' && Boolean(value.trim()),
+      )
+    : [];
+}
+
+function fileNameFromMediaPath(value: string): string {
+  return value.trim().split(/[\\/]/u).pop()?.trim().toLowerCase() ?? '';
+}
+
+function messageDisplayContent(message: unknown): unknown {
+  const record = messageRecord(message);
+  return Array.isArray(record?.openclawDisplayContent)
+    ? record.openclawDisplayContent
+    : record?.content;
+}
+
+function managedAttachmentLabels(message: unknown): string[] {
+  const content = messageDisplayContent(message);
+  if (!Array.isArray(content)) return [];
+  return content.flatMap(block => {
+    const item = asRecord(block);
+    const attachment = asRecord(item?.attachment);
+    const url = typeof attachment?.url === 'string' ? attachment.url.trim() : '';
+    const label = typeof attachment?.label === 'string' ? attachment.label.trim() : '';
+    return url.startsWith('/api/chat/media/outgoing/') && label ? [label.toLowerCase()] : [];
+  });
+}
+
+function displayTextWithoutMediaDirectives(message: unknown): string {
+  const parsed = splitMediaFromOutput(messageText(messageDisplayContent(message)));
+  if (!parsed.mediaUrls?.length) return parsed.text.trim();
+  return (parsed.segments ?? [])
+    .flatMap(segment => (segment.type === 'text' ? [segment.text] : []))
+    .join('\n')
+    .trim();
+}
+
+function canonicalCompanionText(message: unknown): string {
+  return displayTextWithoutMediaDirectives(message).replace(/\s+/gu, ' ').trim();
+}
+
+/**
+ * OpenClaw persists a gateway-injected managed-media projection after the
+ * producer assistant row. When that row already owns the same local delivery,
+ * showing both creates a duplicate attachment and the managed copy cannot be
+ * opened without its Gateway authorization context.
+ */
+function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
+  const retained: T[] = [];
+  for (const message of messages) {
+    const previous = retained[retained.length - 1];
+    if (!previous || !isGatewayInjectedAssistantMessage(message)) {
+      retained.push(message);
+      continue;
+    }
+
+    const previousRecord = messageRecord(previous);
+    const mediaUrls = assistantDeliveryMediaUrls(previous);
+    const labels = managedAttachmentLabels(message);
+    const isMatchingCompanion =
+      String(previousRecord?.role ?? '').toLowerCase() === 'assistant' &&
+      mediaUrls.length > 0 &&
+      mediaUrls.length === labels.length &&
+      canonicalCompanionText(previous) === canonicalCompanionText(message) &&
+      mediaUrls.every((url, index) => fileNameFromMediaPath(url) === labels[index]);
+
+    if (!isMatchingCompanion) retained.push(message);
+  }
+  return retained;
 }
 
 function projectBrowserAnnotationForDisplay(message: unknown): unknown {
   const record = asRecord(message);
   if (!record || String(record.role ?? '').toLowerCase() !== 'user') return message;
   const projectText = (value: string): unknown[] | null => {
-    const parsed = parseBrowserAnnotationPrompt(stripInboundMetadata(value));
+    const normalized = stripInboundMetadata(value);
+    const parsed = parseBrowserAnnotationPrompt(normalized);
     if (!parsed) return null;
     return [
       { type: 'text', text: parsed.userText },

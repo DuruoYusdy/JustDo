@@ -4,6 +4,7 @@
 // sandbox skills directory as an external read-only ProcessContainer root.
 // Target: OpenClaw 2026.9.2 sandbox skill runtime path selection.
 // Scope: MXC only. Docker/SSH keep their container-relative skill projection.
+// Safety: only the runtime-owned materialized skills root is exposed, read-only, to MXC sessions.
 // Remove when: OpenClaw exposes a backend-owned skill prompt/read path mapping.
 
 const fs = require('fs');

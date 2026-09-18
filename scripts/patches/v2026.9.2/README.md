@@ -4,7 +4,7 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.9.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to twenty-one product-specific gaps. Live Thinking emission,
+The previous 49-patch integration has been reduced to twenty-two product-specific gaps. Live Thinking emission,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
@@ -54,6 +54,9 @@ enabled external-agent roster no longer discards the loaded Gateway runtime.
 Patch 025 keeps MXC materialized skills on their canonical external read-only host path. This avoids
 claiming an unenforceable nested read-only overlay beneath a writable Windows ProcessContainer
 workspace while leaving Docker and SSH path projection unchanged.
+Patch 026 lets the authenticated local JustDo backend provide bounded untrusted browser state to
+the agent-only turn body while OpenClaw persists the original user text unchanged. Other clients
+cannot activate this private context channel.
 
 | Patch                                                | Retained capability                                                                                                                                                        | Remove when upstream provides                                                                                                            |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,6 +81,7 @@ workspace while leaving Docker and SSH path projection unchanged.
 | `023-managed-session-fork-target-key.cjs`            | Lets authorized JustDo forks atomically include a selected complete assistant entry in an explicit same-agent managed session key without overwriting an existing session. | Upstream `sessions.fork` accepts an authorized caller-supplied target key and assistant cut semantics with equivalent lifecycle fencing. |
 | `024-acp-allowed-agents-hot-reload.cjs`              | Applies external-agent allowlist changes through native hot reload instead of restarting the Gateway.                                                                      | Upstream classifies `acp.allowedAgents` as hot-reloadable.                                                                               |
 | `025-mxc-external-skill-paths.cjs`                   | Uses MXC's external materialized skills directory as the prompt/tool read path instead of a nested path under the writable workspace.                                      | Upstream exposes backend-owned skill prompt/read path mapping for ProcessContainer backends.                                             |
+| `026-private-untrusted-context.cjs`                  | Adds bounded, authenticated local per-turn context to the agent body without storing it as the visible user message.                                                       | Upstream exposes a trusted-client per-turn context field with separate transcript and model projections.                                 |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.9.2 marker shape. `verify-openclaw-pristine-contracts`

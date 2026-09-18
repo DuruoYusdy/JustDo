@@ -4,3 +4,4 @@ export const APP_NAME = PRODUCT_NAME;
 export const APP_ID = 'justdo';
 export const DB_FILENAME = 'justdo.sqlite';
 export const INSTALLER_QUIT_SWITCH = '--justdo-request-quit-for-update';
+export const DEV_SERVER_URL_SWITCH = '--justdo-dev-server-url';

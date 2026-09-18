@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__PRODUCT_NAME__ Chat</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand" title="__PRODUCT_NAME__"><img src="icons/icon32.png" alt="" /></div>
+      <div class="conversation-picker">
+        <select id="session" aria-label="Conversation">
+          <option value="">New chat</option>
+        </select>
+      </div>
+      <div class="header-actions">
+        <button id="refresh" class="icon" type="button" title="Refresh" aria-label="Refresh">
+          ↻
+        </button>
+        <button
+          id="settings"
+          class="icon"
+          type="button"
+          title="Pairing settings"
+          aria-label="Pairing settings"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"
+            />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+      </div>
+    </header>
+    <main id="messages" aria-live="polite">
+      <div class="empty">
+        <img src="icons/icon128.png" alt="" />
+        <h1>What can I help with?</h1>
+      </div>
+    </main>
+    <p id="error" class="error hidden"></p>
+    <footer>
+      <div class="composer">
+        <div id="attachments" class="attachments hidden" aria-live="polite"></div>
+        <textarea id="prompt" rows="2" placeholder="Do anything"></textarea>
+        <div class="composer-toolbar">
+          <button
+            id="attach"
+            class="composer-action"
+            type="button"
+            title="Attach files"
+            aria-label="Attach files"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <input id="fileInput" type="file" multiple hidden />
+          <label
+            class="context-toggle"
+            title="Include page context (active page title, URL, visible text, and selected text)"
+          >
+            <input id="includePage" type="checkbox" aria-label="Include page context" checked />
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 3h7l4 4v14H7V3Z" />
+              <path d="M14 3v5h5M10 12h5M10 16h5" />
+            </svg>
+            <span class="visually-hidden">Page context</span>
+          </label>
+          <label class="select-control permission-control">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3 5 6v5c0 4.6 2.9 8.1 7 10 4.1-1.9 7-5.4 7-10V6l-7-3Z" />
+            </svg>
+            <select id="permission" aria-label="Permission mode" disabled>
+              <option value="ask">Ask for approval</option>
+              <option value="auto">Smart approval</option>
+              <option value="full">Full access</option>
+            </select>
+          </label>
+          <span class="toolbar-spacer"></span>
+          <label class="select-control model-control">
+            <select id="model" aria-label="Model" disabled>
+              <option value="">Default model</option>
+            </select>
+          </label>
+          <button
+            id="send"
+            class="send-button"
+            type="button"
+            title="Send"
+            aria-label="Send"
+            disabled
+          >
+            <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6 12 6-6 6 6M12 7v11" />
+            </svg>
+            <span class="stop-icon" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+    </footer>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

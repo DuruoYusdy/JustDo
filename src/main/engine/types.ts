@@ -107,6 +107,8 @@ export type CoworkStartOptions = {
   agentId?: string;
   clientTurnId?: string;
   planMode?: boolean;
+  /** Trusted local transport metadata supplied to the model but omitted from transcript history. */
+  untrustedContext?: string;
   /** Main-process admission receipt; never supplied across IPC. */
   onAccepted?: () => void;
 };

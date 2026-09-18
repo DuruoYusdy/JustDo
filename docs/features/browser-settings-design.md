@@ -109,28 +109,51 @@ OpenClaw 还提供 profile-aware 的 `/` 和 `/doctor` Browser routes，后续�
 
 ## 4. 浏览器扩展
 
-JustDo 不维护独立的 Chrome relay 实现。`resources/browser-extension/chrome-extension` 是锁定 OpenClaw runtime 所带扩展的未修改快照，当前 manifest 版本为 `2.2.0`。构建脚本只复制并验证以下契约：
+JustDo 不维护独立的 Chrome relay 实现。`resources/browser-extension/openclaw` 保存锁定 OpenClaw runtime 所带的配对扩展基线，`resources/browser-extension/conversation-overlay` 保存独立的侧栏对话覆盖层，构建结果生成到 `build/browser-extension/chrome-extension`。当前 manifest 版本为 `2.2.0`；OpenClaw relay、认证和 tab 授权模块保持上游同版本，构建脚本组合并验证以下契约：
 
-- manifest 保持 OpenClaw identity；
+- manifest 保持 OpenClaw relay 能力，并用固定公钥生成稳定的 JustDo extension id；
 - `openclaw-extension-relay.v2` 认证存在；
 - v2 challenge/response 模块、Options 页面和完整权限存在；
+- JustDo side panel、active-tab 注入权限、可选网页读取权限与 `nativeMessaging` permission 存在；
 - 16/32/48/128 图标尺寸正确。
 
-更新 OpenClaw 时必须从同一锁定 runtime 更新整个目录，不能只复制 `background.js` 或继续兼容旧 JustDo extension。扩展代码、Gateway relay 和认证协议必须保持同版本。
+更新 OpenClaw 时必须从同一锁定 runtime 整体替换 `openclaw/` 基线，再审查构建期接缝并组合对话覆盖层；不能只复制 `background.js`、从 `build/` 回灌混合产物或继续兼容旧扩展。Gateway relay 和认证协议必须保持同版本。
+
+### 源码所有权与升级接缝
+
+浏览器配对和侧栏对话是两个独立功能层。即使最终打包为同一个 Chrome 扩展，也不得把对话状态、app-server 协议或 UI 逻辑写入 OpenClaw relay/tab 模块：
+
+| 层级              | 文件/目录                                           | 维护规则                                                                     |
+| ----------------- | --------------------------------------------------- | ---------------------------------------------------------------------------- |
+| OpenClaw 配对基线 | `resources/browser-extension/openclaw/`             | 从锁定 OpenClaw 版本整体同步；除产品名占位适配外，不承载对话逻辑             |
+| 对话覆盖层        | `resources/browser-extension/conversation-overlay/` | 独立维护侧栏、app-server client 和第三方声明；不得改变 relay 或 tab 授权语义 |
+| 显式集成接缝      | 构建脚本中的 manifest/background/options overlay    | 注册 side panel、app-server 分发并组合配对布局；上游锚点漂移时明确失败       |
+
+升级顺序固定为：取得与 `package.json.openclaw.version` 相同版本的 pristine 扩展，整体替换并验证 `openclaw/`，随后审查构建脚本中的显式接缝，再组合 `conversation-overlay/` 并运行扩展测试。禁止用 `build/` 混合产物反向覆盖新的上游基线。对话 UI 的日常修改应只触及覆盖层；若必须修改集成接缝，提交中要说明原因，且不得顺手格式化或重写配对基线文件。
 
 ### 配对
 
-Windows 仍使用 OpenClaw 支持的高级手动配对。Main 调用锁定 runtime 的 `browser extension pair --json`，由 OpenClaw 负责 relay key 的安全创建、权限校验和并发复用；JustDo 只将返回的 pairing string 写入剪贴板。典型格式为：
+Windows 仍使用 OpenClaw 支持的高级手动配对。Main 调用锁定 runtime 的 `browser extension pair --json`，由 OpenClaw 负责 relay key 的安全创建、权限校验和并发复用；剪贴板中只包含 OpenClaw 原始 relay pairing，典型格式为：
 
 ```text
 ws://127.0.0.1:<relay-port>/extension?gateway=ws%3A%2F%2F127.0.0.1%3A<gateway-port>#<relay-key>
 ```
 
-默认 relay port 为 Gateway port + 10；显式 `browser.profiles.chrome.cdpPort` 优先。完整字符串属于密码，只进入系统剪贴板，不返回 Renderer、不写日志。
+默认 relay port 为 Gateway port + 10；显式 `browser.profiles.chrome.cdpPort` 优先。该字符串属于密码，只进入系统剪贴板，不返回 Renderer、不写日志。侧栏对话不依赖这条 pairing：它通过仅允许固定扩展 id 的 Chrome Native Messaging host 自动发现或拉起桌面应用。
 
 新版扩展在 Settings → Advanced manual pairing 接收该字符串，并使用 Browser Relay Authentication v2 完成连接绑定的挑战认证。JustDo 显式设置 `browser.extensionRelay.allowLegacyAuth=false`，不再开放 Basic/Bearer 和旧 token-subprotocol 通道。
 
 Browser service 由第一次 `browser.request` 或 OpenClaw 的 Gateway extension route 按需唤醒。旧的 `OPENCLAW_EAGER_BROWSER_CONTROL_SERVER` 环境变量不存在于 v2026.9.2，不得重新引入。
+
+### 侧栏对话
+
+扩展通过 Chrome Side Panel 提供新建会话、最近会话、历史刷新和发送消息。用户勾选“Include current page context”并授予网页读取权限时，扩展读取当前页标题、URL、最多 24,000 字符的可见正文与选中文本；Main 把这些字段包裹为不可信的 browser context 后再交给 Agent。发送后先乐观显示用户消息，Gateway 权威历史到达后按正文去重，避免输入气泡等待回复才出现。
+
+桌面应用安装后注册 `com.justdo.browserextension` Native Messaging host，`npm run electron:dev` 也会为当前源码目录注册开发配置。Windows 独立 helper 负责 Native Messaging framing 和桌面进程拉起，避免 Electron GUI 直接承接标准输入输出。扩展后台以 JSON-RPC 2.0 调用 `codexRuntime/hello`、`codexRuntime/ensure` 和 `codexRuntime/restart`，取得当前进程动态发布的 `localAppServerUrl`。侧栏随后连接只监听 `127.0.0.1` 随机端口的 WebSocket app-server，完成 `initialize` 请求与 `initialized` 通知握手，再使用 `thread/list`、`thread/read`、`thread/start`、`thread/unsubscribe`、`composer/options`、`turn/start` 和 `turn/interrupt`；Main 通过 `thread/started`、`thread/updated`、`turn/started` 与 `turn/completed` 主动通知状态。扩展工具栏点击默认直接打开对话侧栏，侧栏右上角设置按钮进入原有浏览器配对 options 页面。底部 composer 提供真实的附件、会话权限、模型和发送/停止控制。
+
+WebSocket URL 携带每次启动随机生成的 256-bit capability，握手还严格校验固定 extension id 的 Origin，单消息上限为 8 MiB，应用退出时关闭监听并清理 rendezvous。附件另有限制：最多 5 个、浏览器端原始文件合计最多 4 MiB、Main 端 base64 总长度最多 6 MiB。该 capability 与 Gateway token、relay key 相互独立，扩展不能借此调用任意 Gateway API。历史仍以 OpenClaw native transcript 为准，不新增 transcript cache。
+
+详细功能对照、协议和后续阶段见 [浏览器扩展侧栏对话](browser-extension-side-chat.md)。
 
 ### Tab 授权
 
@@ -161,6 +184,7 @@ Browser service 由第一次 `browser.request` 或 OpenClaw 的 Gateway extensio
 - “清除浏览数据”通过显式 IPC 清理两个内置浏览器 partition 与 `browser-import.sqlite`。历史、下载记录和导入的自动填充凭据按所选时间范围精确删除；Cookie、站点存储和缓存受 Electron session API 限制，只能同时清除两个 partition 的全部对应数据，界面必须明确提示，不能伪报时间精度。下载清理仍只删除记录，不删除磁盘文件。站点权限始终被 guest 权限策略拒绝，因此不展示无效的站点设置清理项。
 - Pairing string 只写剪贴板；日志仅记录非秘密 relay port 或动作结果。
 - 浏览器 extension 资源必须与锁定 OpenClaw 版本整体同步。
+- side-chat Native Messaging 与 WebSocket app-server 不得接受非固定扩展 id 或绑定非 loopback 地址，不得复用或返回 Gateway token；页面内容一律按不可信外部输入处理。
 - `dangerouslyAllowPrivateNetwork` 表示允许浏览器访问私网，不表示禁止互联网；UI 不得把 profile 隔离描述成网络隔离。
 - 本机端口探测只能辅助引导，不能替代 Gateway 的 `running`/`pageReady` 结果。
 - 切换模式时 app config 与 OpenClaw config 必须一起成功或一起回滚。

@@ -161,7 +161,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the twenty retained capability patches', () => {
+  test('contains exactly the twenty-two retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -183,6 +183,8 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '022-justdo-reset-display-history.cjs',
       '023-managed-session-fork-target-key.cjs',
       '024-acp-allowed-agents-hot-reload.cjs',
+      '025-mxc-external-skill-paths.cjs',
+      '026-private-untrusted-context.cjs',
     ]);
   });
 
@@ -706,6 +708,73 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       expect(metadataPatch.patchChatRegistration(registration, 'chat-send-handler.js')).toBe(
         registration,
       );
+
+      const privateContextPatch = patches.get('026') as PatchModule & {
+        patchAgentContext: (content: string, filePath: string) => string;
+        patchSchema: (content: string, filePath: string) => string;
+      };
+      const privateContextSchema = privateContextPatch.patchSchema(
+        [
+          'message: T.String(),',
+          'justdoHideUserMessage: T.Optional(T.Boolean()),',
+          '// JUSTDO_AGENT_REQUEST_METADATA_AND_HIDDEN_TURNS_V2026_9_2: chat send schema',
+          'systemProvenanceReceipt: receipt',
+        ].join('\n'),
+        'chat-schema.js',
+      );
+      expect(privateContextSchema).toContain(
+        'justdoUntrustedContext: T.Optional(T.String({ maxLength: 24000 }))',
+      );
+      expect(privateContextPatch.patchSchema(privateContextSchema, 'chat-schema.js')).toBe(
+        privateContextSchema,
+      );
+      expect(
+        privateContextPatch.patchSchema(
+          privateContextSchema.replace('maxLength: 24000', 'maxLength: 24e3'),
+          'gateway-bundle.mjs',
+        ),
+      ).toContain('maxLength: 24e3');
+      expect(() =>
+        privateContextPatch.patchSchema(
+          privateContextSchema.replace('maxLength: 24000', 'maxLength: 48000'),
+          'historical-chat-schema.js',
+        ),
+      ).toThrow('historical or partial');
+
+      const privateContextSource = privateContextPatch.patchAgentContext(
+        [
+          'function prepareChatSendUserTurn(params) {',
+          '  const { request, attachments } = params;',
+          '  const messageForAgent = request.systemProvenanceReceipt ? [request.systemProvenanceReceipt, attachments.parsedMessage].filter(Boolean).join("\\n\\n") : attachments.parsedMessage;',
+          '  return messageForAgent;',
+          '}',
+        ].join('\n'),
+        'chat-send-handler.js',
+      );
+      const evaluatePrivateContext = (client: Record<string, unknown>) =>
+        vm.runInNewContext(
+          `${privateContextSource}; prepareChatSendUserTurn({ client, request: { p: { justdoUntrustedContext: "browser state" } }, attachments: { parsedMessage: "user text" } })`,
+          { client },
+        ) as string;
+      expect(
+        evaluatePrivateContext({
+          internal: { isLocalClient: true },
+          connect: {
+            client: { id: 'gateway-client', mode: 'backend' },
+            scopes: ['operator.admin'],
+          },
+        }),
+      ).toBe('browser state\n\nuser text');
+      expect(evaluatePrivateContext({})).toBe('user text');
+      expect(() =>
+        privateContextPatch.patchAgentContext(
+          privateContextSource.replace(
+            'params.client?.internal?.isLocalClient === true',
+            'params.client?.auth?.operatorRoleActor === "local"',
+          ),
+          'historical-chat-send-handler.js',
+        ),
+      ).toThrow('historical or partial');
 
       const purpose = patches.get('007')?.__testing as {
         COMPACTION_BLOCK: string;

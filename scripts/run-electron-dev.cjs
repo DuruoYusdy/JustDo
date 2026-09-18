@@ -4,16 +4,15 @@ const {
   devServer: { port },
 } = require('../package.json');
 const { findFreePort } = require('./find-free-port.cjs');
-const {
-  acquireRuntimeDevLease,
-  resolveRuntimeDevLeaseDir,
-} = require('./openclaw-runtime-dev-lease.cjs');
+const { prepareBrowserExtensionDevHost } = require('./prepare-browser-extension-dev-host.cjs');
 
 const start = async () => {
-  const rootDir = path.resolve(__dirname, '..');
-  const releaseRuntimeLease = acquireRuntimeDevLease(resolveRuntimeDevLeaseDir(rootDir));
-  process.once('exit', releaseRuntimeLease);
   const devServerPort = await findFreePort(port);
+  const devServerUrl = `http://localhost:${devServerPort}`;
+  const nativeHost = prepareBrowserExtensionDevHost({ devServerUrl });
+  if (nativeHost) {
+    console.log(`[Electron Dev] Registered browser native host: ${nativeHost.manifestPath}`);
+  }
   const env = {
     ...process.env,
     JUSTDO_DEV_SERVER_PORT: String(devServerPort),
@@ -23,7 +22,7 @@ const start = async () => {
 
   const commands = [
     `vite --port ${devServerPort}`,
-    `wait-on -t 300000 --simultaneous 1 http://localhost:${devServerPort} dist-electron/.electron-ready && npm run start:electron`,
+    `wait-on -t 300000 --simultaneous 1 ${devServerUrl} dist-electron/.electron-ready && npm run start:electron`,
   ];
   const concurrentlyPackagePath = require.resolve('concurrently/package.json');
   const concurrentlyPackage = require(concurrentlyPackagePath);
@@ -45,13 +44,11 @@ const start = async () => {
   });
 
   child.on('error', error => {
-    releaseRuntimeLease();
     console.error('[Electron Dev] Failed to start development processes:', error);
     process.exit(1);
   });
 
   child.on('close', code => {
-    releaseRuntimeLease();
     process.exit(code ?? 1);
   });
 };

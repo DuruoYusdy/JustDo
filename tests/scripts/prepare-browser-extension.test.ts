@@ -11,6 +11,7 @@ const { prepareBrowserExtension, verifyBrowserExtension } =
       productName?: string;
       repoRoot: string;
     }) => {
+      overlayDir: string;
       outputDir: string;
       productName: string;
       sourceDir: string;
@@ -71,8 +72,24 @@ describe('browser extension preparation', () => {
         path.join(second.outputDir, 'modules', 'relay-core.js'),
         'utf8',
       );
+      const openClawManifest = JSON.parse(
+        fs.readFileSync(path.join(second.sourceDir, 'manifest.json'), 'utf8'),
+      ) as { action: { default_popup?: string }; side_panel?: unknown };
+      const openClawOptionsHtml = fs.readFileSync(
+        path.join(second.sourceDir, 'options.html'),
+        'utf8',
+      );
+      const optionsHtml = fs.readFileSync(path.join(second.outputDir, 'options.html'), 'utf8');
+      const optionsJs = fs.readFileSync(path.join(second.outputDir, 'options.js'), 'utf8');
 
       expect(first.sourceDir).toBe(second.sourceDir);
+      expect(path.basename(second.sourceDir)).toBe('openclaw');
+      expect(path.basename(second.overlayDir)).toBe('conversation-overlay');
+      expect(openClawManifest.action.default_popup).toBe('popup.html');
+      expect(openClawManifest.side_panel).toBeUndefined();
+      expect(openClawOptionsHtml).toContain('<h2>Diagnostics</h2>');
+      expect(fs.existsSync(path.join(second.sourceDir, 'sidepanel.html'))).toBe(false);
+      expect(fs.existsSync(path.join(second.overlayDir, 'sidepanel.html'))).toBe(true);
       expect(second.productName).toBe(projectProductName);
       expect(manifest).toMatchObject({
         name: projectProductName,
@@ -80,12 +97,41 @@ describe('browser extension preparation', () => {
         action: { default_title: projectProductName },
       });
       expect(manifest.description).toContain(projectProductName);
-      expect(manifest.permissions).not.toContain('nativeMessaging');
+      expect(manifest.permissions).toEqual(
+        expect.arrayContaining(['activeTab', 'nativeMessaging', 'scripting', 'sidePanel']),
+      );
+      expect(manifest.action).not.toHaveProperty('default_popup');
+      expect(manifest.host_permissions).toBeUndefined();
+      expect(manifest.optional_host_permissions).toEqual(['http://*/*', 'https://*/*']);
+      expect(fs.readFileSync(path.join(second.outputDir, 'background.js'), 'utf8')).toContain(
+        'openPanelOnActionClick: true',
+      );
+      expect(fs.readFileSync(path.join(second.outputDir, 'sidepanel.js'), 'utf8')).toContain(
+        'chrome.runtime.openOptionsPage()',
+      );
       expect(popup).toContain('chrome.runtime.openOptionsPage()');
       expect(relayCore).toContain('openclaw-extension-relay.v2');
       expect(relayCore).toContain('authVersion');
       expect(fs.existsSync(path.join(second.outputDir, 'modules', 'relay-auth-v2.js'))).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'options.html'))).toBe(true);
+      expect(optionsHtml).not.toContain('<h2>Diagnostics</h2>');
+      expect(optionsHtml).toContain('id="pairingForm" class="connection-form hidden"');
+      expect(optionsHtml).toMatch(
+        /<section id="connection">[\s\S]*id="pair"[\s\S]*id="disconnect"[\s\S]*<\/section>/,
+      );
+      expect(optionsHtml).toContain(
+        'id="pairedActions" class="connection-actions paired-actions hidden"',
+      );
+      expect(optionsJs).not.toContain('Paired; JustDo unavailable');
+      expect(optionsJs).toContain('status.state === "connecting"');
+      expect(optionsJs).toContain('pairingForm.classList.toggle("hidden", status.paired');
+      expect(optionsJs).toContain('if (succeeded) pairingString.value = ""');
+      expect(optionsJs).toContain('"Pairing saved."');
+      expect(optionsJs).toContain('setInterval(() =>');
+      expect(fs.existsSync(path.join(second.outputDir, 'sidepanel.html'))).toBe(true);
+      expect(
+        fs.existsSync(path.join(second.outputDir, 'modules', 'app-server-background.js')),
+      ).toBe(true);
       expect(fs.existsSync(path.join(second.outputDir, 'manifest.template.json'))).toBe(false);
       expect(() => verifyBrowserExtension(second.outputDir, { repoRoot })).not.toThrow();
     } finally {
@@ -173,7 +219,7 @@ describe('browser extension preparation', () => {
       fs.rmSync(path.join(outputDir, relativePath));
 
       expect(() => verifyBrowserExtension(outputDir, { repoRoot })).toThrow(
-        'files do not match the locked OpenClaw snapshot',
+        'files do not match the composed locked snapshots',
       );
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -190,6 +236,48 @@ describe('browser extension preparation', () => {
       expect(() => verifyBrowserExtension(outputDir, { repoRoot })).toThrow(
         'Browser extension file checksum mismatch: options.js',
       );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a modified OpenClaw baseline source file', () => {
+    const repoRoot = createFixture();
+
+    try {
+      fs.appendFileSync(
+        path.join(repoRoot, 'resources', 'browser-extension', 'openclaw', 'options.js'),
+        '\n// unexpected mutation\n',
+        'utf8',
+      );
+
+      expect(() => prepareBrowserExtension({ repoRoot })).toThrow(
+        'Browser extension OpenClaw baseline checksum mismatch: options.js',
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('accepts product-owned conversation overlay changes without a duplicate checksum edit', () => {
+    const repoRoot = createFixture();
+    const marker = '// product overlay change';
+
+    try {
+      fs.appendFileSync(
+        path.join(
+          repoRoot,
+          'resources',
+          'browser-extension',
+          'conversation-overlay',
+          'sidepanel.js',
+        ),
+        `\n${marker}\n`,
+        'utf8',
+      );
+
+      const { outputDir } = prepareBrowserExtension({ repoRoot });
+      expect(fs.readFileSync(path.join(outputDir, 'sidepanel.js'), 'utf8')).toContain(marker);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

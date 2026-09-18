@@ -1307,6 +1307,46 @@ test('persists enabled Plan mode before sending the first turn', async () => {
   internals.cleanupSessionTurn(session.id);
 });
 
+test('forwards private untrusted context from startSession to the Gateway payload', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string) => {
+    if (method === 'chat.send') return { runId: 'gateway-run-1' };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+    resolveTurn: (sessionId: string) => void;
+    cleanupSessionTurn: (sessionId: string) => void;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
+
+  const running = adapter.startSession(session.id, 'describe this page', {
+    agentId: 'main',
+    untrustedContext: '# Chrome tabs:\n- Current title: "Example"',
+  });
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.send', expect.anything()));
+
+  expect(request).toHaveBeenCalledWith(
+    'chat.send',
+    expect.objectContaining({
+      message: 'describe this page',
+      justdoUntrustedContext: '# Chrome tabs:\n- Current title: "Example"',
+    }),
+  );
+
+  internals.resolveTurn(session.id);
+  await running;
+  internals.cleanupSessionTurn(session.id);
+});
+
 test('rejects a session response that did not persist the permission mode', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -1923,6 +1963,92 @@ test('catches up a stable full history snapshot and uses deltas on later reads',
   expect(request).toHaveBeenLastCalledWith('chat.history', {
     sessionKey: 'agent:main:one',
     cursor: 'cursor-2',
+  });
+});
+
+test('can bypass a stale delta snapshot with an authoritative full history read', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({
+      messages: ['user'],
+      hasMore: false,
+      totalMessages: 1,
+      deltaCursor: 'cursor-stale',
+    })
+    .mockResolvedValueOnce({ kind: 'delta', messages: [], deltaCursor: 'cursor-stale' })
+    .mockResolvedValueOnce({
+      messages: ['user', 'assistant'],
+      hasMore: false,
+      totalMessages: 2,
+      deltaCursor: 'cursor-fresh',
+    })
+    .mockResolvedValueOnce({ kind: 'delta', messages: [], deltaCursor: 'cursor-fresh' });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await expect(adapter.fetchSessionHistoryByKey('agent:main:one')).resolves.toMatchObject({
+    messages: ['user'],
+  });
+  await expect(
+    adapter.fetchSessionHistoryByKey('agent:main:one', undefined, { forceFullSnapshot: true }),
+  ).resolves.toEqual({
+    sessionKey: 'agent:main:one',
+    messages: ['user', 'assistant'],
+  });
+  expect(request).toHaveBeenNthCalledWith(3, 'chat.history', {
+    sessionKey: 'agent:main:one',
+    limit: 1000,
+  });
+});
+
+test('keeps independent bounded delta snapshots for alternating sessions', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const cursorReads = new Map<string, number>();
+  const request = vi.fn(async (_method: string, params?: Record<string, unknown>) => {
+    const sessionKey = String(params?.sessionKey);
+    if (typeof params?.cursor !== 'string') {
+      return {
+        messages: [`${sessionKey}-initial`],
+        hasMore: false,
+        totalMessages: 1,
+        deltaCursor: `${sessionKey}-cursor-1`,
+      };
+    }
+    const reads = (cursorReads.get(sessionKey) ?? 0) + 1;
+    cursorReads.set(sessionKey, reads);
+    return {
+      kind: 'delta',
+      messages: reads === 1 ? [] : [`${sessionKey}-new`],
+      deltaCursor: `${sessionKey}-cursor-${reads + 1}`,
+    };
+  });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(),
+    stop: vi.fn(),
+    request,
+  };
+
+  await adapter.fetchSessionHistoryByKey('session-a');
+  await adapter.fetchSessionHistoryByKey('session-b');
+  await expect(adapter.fetchSessionHistoryByKey('session-a')).resolves.toMatchObject({
+    messages: ['session-a-initial', 'session-a-new'],
+  });
+  await expect(adapter.fetchSessionHistoryByKey('session-b')).resolves.toMatchObject({
+    messages: ['session-b-initial', 'session-b-new'],
+  });
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey: 'session-a',
+    cursor: 'session-a-cursor-2',
+  });
+  expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey: 'session-b',
+    cursor: 'session-b-cursor-2',
   });
 });
 

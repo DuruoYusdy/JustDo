@@ -177,6 +177,7 @@ apply the current patch set instead.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.
 - `openclawSkillFiles.ts` only extracts/copies/removes user-imported local skill files; it is not skill metadata authority.
+- Browser-extension pairing/relay code lives in the OpenClaw-owned `openclaw/` baseline; side-panel chat lives in the separate `conversation-overlay/`. Keep their changes separate according to `docs/features/browser-settings-design.md`. OpenClaw upgrades replace the pairing baseline first, then reapply and review only the explicit build-time integration seams; do not fold chat behavior into relay modules.
 
 ## Coding Rules
 

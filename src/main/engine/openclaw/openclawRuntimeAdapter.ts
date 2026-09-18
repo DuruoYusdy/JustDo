@@ -175,6 +175,7 @@ type SessionAbortResponse = {
 };
 const RUNTIME_STATUS_WARNING_INTERVAL_MS = 30_000;
 const FULL_HISTORY_SNAPSHOT_MAX_ATTEMPTS = 3;
+const SESSION_HISTORY_SNAPSHOT_CACHE_LIMIT = 16;
 
 class HistorySnapshotChangedError extends Error {
   constructor() {
@@ -363,11 +364,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private runtimeSessionSnapshotPromise: Promise<RuntimeSessionSnapshot> | null = null;
   private runtimeSessionSnapshotGeneration = 0;
   private lastRuntimeStatusWarningAt = 0;
-  private sessionHistorySnapshot: {
-    sessionKey: string;
-    messages: unknown[];
-    deltaCursor: string;
-  } | null = null;
+  private readonly sessionHistorySnapshots = new Map<
+    string,
+    { messages: unknown[]; deltaCursor: string }
+  >();
 
   // Collaborators
   private sessionRpc!: SessionRpc;
@@ -488,6 +488,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
       planMode: options.planMode,
+      untrustedContext: options.untrustedContext,
       onAccepted: options.onAccepted,
     });
   }
@@ -1338,6 +1339,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot?: string;
       clientTurnId?: string;
       planMode?: boolean;
+      untrustedContext?: string;
       hiddenUserMessage?: boolean;
       onAccepted?: () => void;
     },
@@ -1486,6 +1488,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               : {}),
             deliver: false,
             justdoUserInitiated: true,
+            ...(options.untrustedContext?.trim()
+              ? { justdoUntrustedContext: options.untrustedContext.trim() }
+              : {}),
             ...(options.hiddenUserMessage ? { justdoHideUserMessage: true } : {}),
             // Structured Goal admission rejects transient timeout overrides because
             // recovery must use only durable session settings.
@@ -4754,15 +4759,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async fetchSessionHistoryByKey(
     sessionKey: string,
     fallbackSessionId?: string | null,
+    options: { forceFullSnapshot?: boolean } = {},
   ): Promise<{ sessionKey: string; messages: unknown[] } | null> {
     const client = this.gatewayClient;
     if (!client) return null;
     try {
       const fetchHistory = async (key: string): Promise<unknown[]> => {
-        const cached =
-          this.sessionHistorySnapshot?.sessionKey === key
-            ? this.sessionHistorySnapshot
-            : undefined;
+        const cached = options.forceFullSnapshot
+          ? undefined
+          : this.sessionHistorySnapshots.get(key);
         if (cached) {
           const delta = parseChatHistoryCursorResultV2026_9_2(
             await client.request('chat.history', {
@@ -4772,14 +4777,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           );
           if (delta.kind === 'delta') {
             const messages = mergeGatewayHistoryPages(cached.messages, delta.messages);
-            this.sessionHistorySnapshot = {
-              sessionKey: key,
-              messages,
-              deltaCursor: delta.deltaCursor,
-            };
+            this.setSessionHistorySnapshot(key, messages, delta.deltaCursor);
             return messages;
           }
-          this.sessionHistorySnapshot = null;
+          this.sessionHistorySnapshots.delete(key);
         }
 
         for (let attempt = 1; attempt <= FULL_HISTORY_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
@@ -4837,9 +4838,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               if (delta.kind === 'reset') throw new HistorySnapshotChangedError();
               messages = mergeGatewayHistoryPages(messages, delta.messages);
               deltaCursor = delta.deltaCursor;
-              this.sessionHistorySnapshot = { sessionKey: key, messages, deltaCursor };
-            } else if (this.sessionHistorySnapshot?.sessionKey === key) {
-              this.sessionHistorySnapshot = null;
+              this.setSessionHistorySnapshot(key, messages, deltaCursor);
+            } else {
+              this.sessionHistorySnapshots.delete(key);
             }
             return messages;
           } catch (error) {
@@ -4886,6 +4887,20 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       };
     } catch {
       return null;
+    }
+  }
+
+  private setSessionHistorySnapshot(
+    sessionKey: string,
+    messages: unknown[],
+    deltaCursor: string,
+  ): void {
+    this.sessionHistorySnapshots.delete(sessionKey);
+    this.sessionHistorySnapshots.set(sessionKey, { messages, deltaCursor });
+    while (this.sessionHistorySnapshots.size > SESSION_HISTORY_SNAPSHOT_CACHE_LIMIT) {
+      const oldestKey = this.sessionHistorySnapshots.keys().next().value;
+      if (typeof oldestKey !== 'string') break;
+      this.sessionHistorySnapshots.delete(oldestKey);
     }
   }
 

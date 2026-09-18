@@ -24,6 +24,62 @@ afterEach(() => {
 });
 
 describe('projectGatewayHistoryForDisplay', () => {
+  test('collapses the managed-media companion when the producer row already owns the file', () => {
+    const source = {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: 'Generated the file.\n\n## Generated file\n\nMEDIA:C:\\workspace\\quick_sort.py\n\n## Checks',
+        },
+      ],
+      openclawDelivery: { mediaUrls: ['C:\\workspace\\quick_sort.py'] },
+    };
+    const companion = {
+      role: 'assistant',
+      model: 'gateway-injected',
+      content: [{ type: 'text', text: 'Generated the file.\n\n## Generated file\n\n## Checks' }],
+      openclawDisplayContent: [
+        { type: 'text', text: 'Generated the file.\n\n## Generated file\n\n## Checks' },
+        {
+          type: 'attachment',
+          attachment: {
+            url: '/api/chat/media/outgoing/session/file/full',
+            kind: 'document',
+            label: 'quick_sort.py',
+          },
+        },
+      ],
+    };
+
+    expect(projectGatewayHistoryForDisplay([source, companion])).toEqual([source]);
+  });
+
+  test('keeps a gateway-injected attachment that is not a duplicate delivery companion', () => {
+    const source = {
+      role: 'assistant',
+      content: 'Generated the first file.\nMEDIA:C:\\workspace\\first.py',
+      openclawDelivery: { mediaUrls: ['C:\\workspace\\first.py'] },
+    };
+    const distinct = {
+      role: 'assistant',
+      model: 'gateway-injected',
+      content: [
+        { type: 'text', text: 'Generated another file.' },
+        {
+          type: 'attachment',
+          attachment: {
+            url: '/api/chat/media/outgoing/session/file/full',
+            kind: 'document',
+            label: 'second.py',
+          },
+        },
+      ],
+    };
+
+    expect(projectGatewayHistoryForDisplay([source, distinct])).toEqual([source, distinct]);
+  });
+
   test('projects a persisted goal feedback command as the original user feedback', () => {
     const projected = projectGatewayHistoryForDisplay([
       {

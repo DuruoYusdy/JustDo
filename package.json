@@ -74,6 +74,8 @@
     "build:local-speech-model-artifacts": "node scripts/build-local-speech-model-artifacts.cjs",
     "openclaw:plugins": "node scripts/ensure-openclaw-plugins.cjs",
     "browser-extension:prepare": "node scripts/prepare-browser-extension.cjs",
+    "browser-extension:build-markdown": "node scripts/build-browser-extension-markdown.cjs",
+    "browser-extension:prepare-dev-host": "node scripts/prepare-browser-extension-dev-host.cjs",
     "openclaw:resources": "node scripts/sync-openclaw-runtime-resources.cjs",
     "openclaw:bundle": "node scripts/bundle-openclaw-gateway.cjs",
     "openclaw:precompile": "node scripts/precompile-openclaw-extensions.cjs",
@@ -101,7 +103,8 @@
     "node-pty": "^1.1.0",
     "npm": "^11.19.1",
     "opencc-js": "^1.4.2",
-    "tar": "^7.5.22"
+    "tar": "^7.5.22",
+    "ws": "^8.21.3"
   },
   "overrides": {
     "monaco-editor": {
@@ -141,6 +144,7 @@
     "@types/react-dom": "^18.2.0",
     "@types/uuid": "^10.0.0",
     "@types/yauzl": "^3.4.0",
+    "@types/ws": "^8.18.1",
     "@types/yazl": "^3.3.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",

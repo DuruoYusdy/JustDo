@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import type { WebContents } from 'electron';
 import {
   app,
@@ -34,7 +36,15 @@ import {
 } from '../shared/providers';
 import type { ProxySettings } from '../shared/proxy';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
-import { APP_NAME, INSTALLER_QUIT_SWITCH } from './core/appConstants';
+import { BrowserExtensionChatController } from './browser/browserExtensionChatController';
+import { BrowserExtensionChatServer } from './browser/browserExtensionChatServer';
+import {
+  BROWSER_EXTENSION_RESTART_SWITCH,
+  clearBrowserExtensionAppServer,
+  publishBrowserExtensionAppServer,
+  registerBrowserExtensionNativeHost,
+} from './browser/browserExtensionNativeMessaging';
+import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { registerAppShutdown } from './core/appShutdown';
 import { isAutoLaunched } from './core/autoLaunchManager';
 import { AutoUpdateService } from './core/autoUpdateService';
@@ -42,6 +52,7 @@ import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
 import { CustomerRegistrationService } from './core/customerRegistrationService';
 import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
 import { loadDeveloperConfig } from './core/developerConfigFile';
+import { getDevServerUrlFromCommandLine } from './core/devServerHandoff';
 import { setLanguage } from './core/i18n';
 import { isNsisInstalledApp } from './core/installedApp';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
@@ -164,6 +175,7 @@ import {
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './openclaw/runtime/openclawEngineManager';
+import { acquireOpenClawRuntimeDevLease } from './openclaw/runtime/openclawRuntimeDevLease';
 import { justDoSlashCommandPolicy } from './openclaw/slashCommands/slashCommandPolicies';
 import {
   createPluginMarketplaceService,
@@ -319,7 +331,7 @@ const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
-const DEV_SERVER_URL =
+let devServerUrl =
   process.env.ELECTRON_START_URL ||
   `http://localhost:${process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port}`;
 const enableVerboseLogging =
@@ -420,6 +432,8 @@ let localSpeechModelService: LocalSpeechModelService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let customerRegistrationService: CustomerRegistrationService | null = null;
 let windowsSandboxService: WindowsSandboxService | null = null;
+let browserExtensionChatServer: BrowserExtensionChatServer | null = null;
+let browserExtensionChatServerRestartPromise: Promise<void> | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
@@ -1138,7 +1152,7 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
   target.reloadIgnoringCache();
 };
 
-// Bridge subprocesses transparently relay CLI I/O and never join the UI singleton.
+// Bridge subprocesses never join the UI singleton.
 const gotTheLock = multicaBridgeArgv ? true : app.requestSingleInstanceLock();
 
 if (multicaBridgeArgv) {
@@ -1157,6 +1171,12 @@ if (multicaBridgeArgv) {
 } else if (!gotTheLock) {
   app.quit();
 } else {
+  const releaseRuntimeDevLease = acquireOpenClawRuntimeDevLease({
+    appPath: app.getAppPath(),
+    isPackaged: app.isPackaged,
+  });
+  process.once('exit', releaseRuntimeDevLease);
+
   registerStoreHandlers({
     getStore,
     onAppConfigChanged: async (nextConfig, previousConfig) => {
@@ -1227,7 +1247,7 @@ if (multicaBridgeArgv) {
     showSystemMenu,
   });
   registerImagePreviewHandlers({
-    devServerUrl: DEV_SERVER_URL,
+    devServerUrl,
     getIconPath: getAppIconPath,
     isDev,
     preloadPath: IMAGE_PREVIEW_PRELOAD_PATH,
@@ -1480,7 +1500,7 @@ if (multicaBridgeArgv) {
 
     mainWindow = createMainWindow({
       appName: APP_NAME,
-      devServerUrl: DEV_SERVER_URL,
+      devServerUrl,
       getBackgroundColor: () =>
         getInitialTheme() === 'dark' ? TITLEBAR_COLORS.dark.color : '#F8F9FB',
       getIconPath: getAppIconPath,
@@ -1551,6 +1571,11 @@ if (multicaBridgeArgv) {
   const runAppCleanup = async (): Promise<void> => {
     console.log('[Main] App is quitting, starting cleanup...');
     customerRegistrationService?.stop();
+    await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {
+      console.warn('[BrowserExtensionChat] Failed to clear app-server rendezvous:', error);
+    });
+    await browserExtensionChatServer?.stop();
+    browserExtensionChatServer = null;
     destroyTray();
     if (multicaBridgeServer) {
       await multicaBridgeServer.stop().catch(error => {
@@ -1595,6 +1620,43 @@ if (multicaBridgeArgv) {
       app.quit();
       return;
     }
+    if (commandLine.includes(BROWSER_EXTENSION_RESTART_SWITCH)) {
+      const server = browserExtensionChatServer;
+      if (server && !browserExtensionChatServerRestartPromise) {
+        const restartPromise = (async () => {
+          try {
+            await server.restart();
+            await publishBrowserExtensionAppServer(app.getPath('userData'), server.getCapability());
+          } catch (error) {
+            console.error('[BrowserExtensionChat] Failed to restart app-server:', error);
+          }
+        })();
+        browserExtensionChatServerRestartPromise = restartPromise;
+        void restartPromise.finally(() => {
+          if (browserExtensionChatServerRestartPromise === restartPromise) {
+            browserExtensionChatServerRestartPromise = null;
+          }
+        });
+      }
+      return;
+    }
+
+    const handedOffDevServerUrl = isDev ? getDevServerUrlFromCommandLine(commandLine) : null;
+    if (handedOffDevServerUrl) {
+      const existingWindow = mainWindow;
+      devServerUrl = handedOffDevServerUrl;
+      console.log(`[Main] Switching existing development window to ${handedOffDevServerUrl}`);
+      createWindow();
+      if (existingWindow && mainWindow && !mainWindow.isDestroyed()) {
+        void mainWindow.webContents.loadURL(handedOffDevServerUrl).catch(error => {
+          console.error('[Main] Failed to load handed-off development server:', error);
+        });
+      }
+      return;
+    }
+    if (isDev && commandLine.some(value => value.startsWith(`${DEV_SERVER_URL_SWITCH}=`))) {
+      console.warn('[Main] Ignored an invalid development server handoff URL.');
+    }
     createWindow();
   });
   const autoUpdateService = new AutoUpdateService({
@@ -1632,6 +1694,40 @@ if (multicaBridgeArgv) {
     await app.whenReady();
 
     store = await initStore();
+    const browserExtensionChatToken = randomBytes(32).toString('hex');
+    const extensionChatServer = new BrowserExtensionChatServer(
+      new BrowserExtensionChatController({
+        ensureEngineRunning: ensureOpenClawRunningForCowork,
+        getStore: getCoworkStore,
+        getRouter: getCoworkEngineRouter,
+        getRuntime: getOpenClawRuntimeAdapter,
+      }),
+      browserExtensionChatToken,
+      packageJson.version,
+    );
+    try {
+      await extensionChatServer.start();
+      browserExtensionChatServer = extensionChatServer;
+      await publishBrowserExtensionAppServer(
+        app.getPath('userData'),
+        extensionChatServer.getCapability(),
+      );
+      if (app.isPackaged) {
+        await registerBrowserExtensionNativeHost(
+          app.getPath('userData'),
+          process.execPath,
+          path.join(
+            process.resourcesPath,
+            'browser-extension',
+            'native-host',
+            'justdo-browser-extension-native-host-v2.exe',
+          ),
+        );
+      }
+      console.info('[BrowserExtensionChat] WebSocket app-server is listening on loopback.');
+    } catch (error) {
+      console.error('[BrowserExtensionChat] Failed to start loopback service:', error);
+    }
     const initialOutboundHeaderPolicy = getOutboundHeaderPolicyService().reconcile();
     await getOutboundHeaderProxy().start();
     activeOutboundHeaderPolicyDigest = initialOutboundHeaderPolicy.digest;
