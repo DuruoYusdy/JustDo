@@ -38,6 +38,7 @@ import type {
 import {
   DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS,
   groupSessionsByDate,
+  partitionSidebarSessions,
   type SessionDateGroupKey,
 } from '@/features/cowork/sessionPresentation';
 import { i18nService } from '@/services/i18n';
@@ -265,6 +266,17 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   );
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
+  const { multica: multicaSessions, regular: regularSessions } = useMemo(
+    () => partitionSidebarSessions(sessions),
+    [sessions],
+  );
+  const [isMulticaGroupExpanded, setIsMulticaGroupExpanded] = useState(false);
+
+  useEffect(() => {
+    if (multicaSessions.some(session => session.id === currentSessionId)) {
+      setIsMulticaGroupExpanded(true);
+    }
+  }, [currentSessionId, multicaSessions]);
 
   // DnD state
   const [activeSession, setActiveSession] = useState<CoworkSessionSummary | null>(null);
@@ -278,7 +290,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     const activeId = event.active.id as string;
     // Only show drag overlay for sessions, not groups
     if (!activeId.startsWith('group-drag-')) {
-      const session = sessions.find(s => s.id === activeId);
+      const session = regularSessions.find(s => s.id === activeId);
       setActiveSession(session || null);
     } else {
       setActiveSession(null);
@@ -317,6 +329,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
 
     // Session moving
     const sessionId = activeId;
+    if (multicaSessions.some(session => session.id === sessionId)) return;
     if (targetId.startsWith('group-') && !targetId.startsWith('group-drag-')) {
       const groupId = targetId.replace('group-', '');
       await coworkService.moveSessionToGroup(sessionId, groupId);
@@ -388,16 +401,18 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
       return b.createdAt - a.createdAt;
     };
-    const pinned = sessions.filter(s => !s.groupId && s.pinned).sort(sortByRecentActivity);
-    const unpinned = sessions.filter(s => !s.groupId && !s.pinned).sort(sortByRecentActivity);
+    const pinned = regularSessions.filter(s => !s.groupId && s.pinned).sort(sortByRecentActivity);
+    const unpinned = regularSessions
+      .filter(s => !s.groupId && !s.pinned)
+      .sort(sortByRecentActivity);
     return [...pinned, ...unpinned];
-  }, [sessions]);
+  }, [regularSessions]);
 
   // Grouped sessions by group ID
   const groupedSessionsByGroupId = useMemo(() => {
     const result: Record<string, CoworkSessionSummary[]> = {};
     for (const group of groups) {
-      const groupSessions = sessions.filter(s => s.groupId === group.id);
+      const groupSessions = regularSessions.filter(s => s.groupId === group.id);
       const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary) => {
         if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
         return b.createdAt - a.createdAt;
@@ -407,7 +422,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       result[group.id] = [...pinned, ...unpinned];
     }
     return result;
-  }, [sessions, groups]);
+  }, [regularSessions, groups]);
 
   if (sessions.length === 0 && isLoading) {
     return (
@@ -463,6 +478,47 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             </button>
           )}
         </div>
+        {multicaSessions.length > 0 && (
+          <>
+            <button
+              type="button"
+              className="session-group-header w-full"
+              onClick={() => setIsMulticaGroupExpanded(expanded => !expanded)}
+              aria-expanded={isMulticaGroupExpanded}
+            >
+              <span
+                className="group-indicator"
+                style={{ '--group-color': '#6f7ed8' } as React.CSSProperties}
+                aria-hidden="true"
+              >
+                <ChatBubbleLeftRightIcon />
+              </span>
+              <span className="group-name">{i18nService.t('multicaSessionGroup')}</span>
+              <span className="group-count">{multicaSessions.length}</span>
+              <ChevronRightIcon
+                className={`chevron-icon ${isMulticaGroupExpanded ? 'rotate-90' : ''}`}
+              />
+            </button>
+            <SessionGroupPanel
+              sessions={multicaSessions}
+              groups={[]}
+              isExpanded={isMulticaGroupExpanded}
+              currentSessionId={currentSessionId}
+              unreadSessionIds={unreadSessionIds}
+              runtimeRunningSessionIds={runtimeRunningSessionIds}
+              isBatchMode={isBatchMode}
+              selectedIds={selectedIds}
+              onSelectSession={onSelectSession}
+              onDeleteSession={onDeleteSession}
+              onRename={onRenameSession}
+              onExportSession={onExportSession}
+              onCopySession={onCopySession}
+              onTogglePinned={handleTogglePinned}
+              onToggleSelection={onToggleSelection}
+              onEnterBatchMode={onEnterBatchMode}
+            />
+          </>
+        )}
         {groups.length > 0 && (
           <>
             {groups.map((group, index) => {
@@ -484,7 +540,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     }
                   />
                   <SessionGroupPanel
-                    group={group}
                     sessions={groupSessions}
                     groups={groups}
                     isExpanded={isExpanded}
@@ -519,7 +574,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
               {i18nService.t('coworkNoSessions')}
             </p>
           </div>
-        ) : (
+        ) : regularSessions.length > 0 ? (
           <UngroupedDroppableZone
             unGroupedSessions={unGroupedSessions}
             unreadSessionIdSet={unreadSessionIdSet}
@@ -543,7 +598,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
               dispatch(moveSessionToGroup({ sessionId, groupId }));
             }}
           />
-        )}
+        ) : null}
       </div>
 
       {/* Drag overlay */}

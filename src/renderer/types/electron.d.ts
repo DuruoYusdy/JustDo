@@ -4,6 +4,9 @@ type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessio
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
+type ExternalSessionMetadata = import('../../shared/multica').ExternalSessionMetadata;
+type MulticaIntegrationResult = import('../../shared/multica').MulticaIntegrationResult;
+type MulticaIntegrationStatus = import('../../shared/multica').MulticaIntegrationStatus;
 type CoworkSessionDetailsResult =
   import('../../shared/cowork/sessionDetails').CoworkSessionDetailsResult<CoworkSession>;
 type CoworkSubagentDetailsResult =
@@ -139,6 +142,7 @@ interface CoworkSession {
     title: string;
     entryId: string;
   };
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }
@@ -150,6 +154,7 @@ interface CoworkSessionSummary {
   pinned: boolean;
   groupId?: string | null;
   agentId?: string;
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }
@@ -405,6 +410,12 @@ import type { Agent } from '@/features/agents/agentTypes';
 import type { McpServerFormData } from '@/features/plugins/types/mcp';
 
 interface IElectronAPI {
+  multica: {
+    getStatus: () => Promise<MulticaIntegrationStatus>;
+    enable: () => Promise<MulticaIntegrationResult>;
+    disable: () => Promise<MulticaIntegrationResult>;
+    refresh: () => Promise<MulticaIntegrationResult>;
+  };
   browser: {
     createLocalHtmlPreview: (
       filePath: string,

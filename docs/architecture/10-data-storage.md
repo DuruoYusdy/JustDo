@@ -42,22 +42,24 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 
 ## 3. Schema 总表
 
-当前共有 12 张核心表：
+当前共有 14 张核心表：
 
-| 表                                 | 用途                         | Owner                      |
-| ---------------------------------- | ---------------------------- | -------------------------- |
-| `kv`                               | 应用配置与内部同步元数据     | `SqliteStore`、领域 store  |
-| `cowork_sessions`                  | 产品会话索引/元数据          | `CoworkStore`              |
-| `cowork_session_runs`              | client turn/root run receipt | `CoworkStore`              |
-| `cowork_plan_handoffs`             | Plan artifact/handoff 状态   | `CoworkStore`              |
-| `cowork_config`                    | Cowork/runtime 设置          | `CoworkStore`              |
-| `agents`                           | Agent 产品定义               | `CoworkStore`              |
-| `mcp_servers`                      | 用户 MCP 配置                | `McpStore`                 |
-| `openclaw_hooks`                   | Hook 状态/config             | `OpenClawHookStore`        |
-| `session_groups`                   | 会话分组和顺序               | `GroupStore`               |
-| `scheduled_task_run_receipts`      | 应用内 cron 结果/未读        | `ScheduledTaskResultStore` |
-| `scheduled_task_result_cleanup`    | 结果 artifact 清理进度       | cleanup service            |
-| `scheduled_task_result_tombstones` | 已清理结果的删除标记         | cleanup service            |
+| 表                                   | 用途                          | Owner                         |
+| ------------------------------------ | ----------------------------- | ----------------------------- |
+| `kv`                                 | 应用配置与内部同步元数据      | `SqliteStore`、领域 store     |
+| `cowork_sessions`                    | 产品会话索引/元数据           | `CoworkStore`                 |
+| `cowork_external_sessions`           | 外部 runtime session 映射     | `MulticaExternalSessionStore` |
+| `cowork_external_session_tombstones` | 已删除外部 session 防复活记录 | `MulticaExternalSessionStore` |
+| `cowork_session_runs`                | client turn/root run receipt  | `CoworkStore`                 |
+| `cowork_plan_handoffs`               | Plan artifact/handoff 状态    | `CoworkStore`                 |
+| `cowork_config`                      | Cowork/runtime 设置           | `CoworkStore`                 |
+| `agents`                             | Agent 产品定义                | `CoworkStore`                 |
+| `mcp_servers`                        | 用户 MCP 配置                 | `McpStore`                    |
+| `openclaw_hooks`                     | Hook 状态/config              | `OpenClawHookStore`           |
+| `session_groups`                     | 会话分组和顺序                | `GroupStore`                  |
+| `scheduled_task_run_receipts`        | 应用内 cron 结果/未读         | `ScheduledTaskResultStore`    |
+| `scheduled_task_result_cleanup`      | 结果 artifact 清理进度        | cleanup service               |
+| `scheduled_task_result_tombstones`   | 已清理结果的删除标记          | cleanup service               |
 
 `scheduled_task_result_cleanup` 也是独立核心表；任何漏掉 cleanup 或 run receipt 的旧清单均不准确。`sqliteStore.ts` 的 `CREATE TABLE` 清单是最终依据。
 
@@ -103,6 +105,23 @@ WAL 是持久设置。备份不能只在运行中复制主 `.sqlite` 而忽略 W
 - `idx_cowork_sessions_agent_order(agent_id, pinned DESC, updated_at DESC)`。
 
 运行状态不能只信该表；启动会把遗留 running 重置为 idle，实时状态需结合 Gateway。
+
+### 5.1 `cowork_external_sessions`
+
+| 列                              | 语义                                         |
+| ------------------------------- | -------------------------------------------- |
+| `source`,`external_session_key` | 外部 runtime 与其 session id，组合唯一       |
+| `cowork_session_id`             | 关联产品 session，删除时级联                 |
+| `agent_id`,`cwd`                | 首次任务固定的执行身份与工作目录             |
+| `openclaw_session_key`          | local runtime 的原生 transcript key          |
+| `status`                        | running/completed/error/cancelled 的集成快照 |
+| `created_at`,`updated_at`       | Unix ms                                      |
+
+`idx_cowork_external_sessions_cowork` 支持从产品 session 回查来源；
+`idx_cowork_external_sessions_status` 支持运行状态诊断。该表不保存 prompt 或响应。
+恢复同一个外部 session 时必须保持 cwd/Agent；若产品 session 已被删除，外键级联删除映射，外部
+调用不得静默创建到旧身份的替代映射。删除触发器会先把 `(source, external_session_key)` 写入
+`cowork_external_session_tombstones`；tombstone 不含 transcript、cwd、Agent 或凭据。
 
 ## 6. 消息所有权
 
@@ -187,6 +206,8 @@ run_id PK、`archived_paths_json`、updated_at。它不是结果内容表，而�
 
 - 为 session 加 permission_mode/model_ref；
 - 为 session run 加 accepted_at；
+- 为早期未合入的 Multica session 映射补 `agent_id` 和 `openclaw_session_key`，已有 row 默认归属
+  `main`，缺失的原生 key 在下一次合法恢复时按外部 identity 确定性补齐；
 - 为 MCP 加 description；
 - 为 scheduled task receipt 加 `system_managed`，并幂等建立删除 tombstone 表；
 - 建立 main agent并继承旧 prompt；

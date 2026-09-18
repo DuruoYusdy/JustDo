@@ -2149,11 +2149,6 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CpuChipIcon className="h-5 w-5" />,
     },
     {
-      key: 'integrations',
-      label: i18nService.t('integrationsTab'),
-      icon: <PuzzlePieceIcon className="h-5 w-5" />,
-    },
-    {
       key: 'voice',
       label: i18nService.t('voiceSettings'),
       icon: <MicrophoneIcon className="h-5 w-5" />,
@@ -2187,6 +2182,11 @@ const Settings: React.FC<SettingsProps> = ({
           />
         </svg>
       ),
+    },
+    {
+      key: 'integrations',
+      label: i18nService.t('integrationsTab'),
+      icon: <PuzzlePieceIcon className="h-5 w-5" />,
     },
     {
       key: 'shortcuts',

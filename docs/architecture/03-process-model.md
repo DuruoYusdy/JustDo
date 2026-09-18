@@ -4,14 +4,15 @@
 
 ## 1. 进程与信任边界
 
-| 参与者        | 权限                        | 主要职责                                                     |
-| ------------- | --------------------------- | ------------------------------------------------------------ |
-| Renderer      | Chromium 页面权限           | UI、交互、Redux、聊天显示；不访问系统资源                    |
-| Browser guest | 沙箱化的外部 Chromium 页面  | 右侧工作区中的真实网页导航与原生输入                         |
-| Image preview | 独立沙箱化 Chromium 页面    | 在原生独立窗口中显示图片并处理缩放/拖动                      |
-| Preload       | 隔离上下文中的 Electron IPC | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
-| Main          | Node/Electron 完整权限      | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
-| Gateway       | 独立受管子进程              | Agent、tool、session/history、cron、plugin runtime           |
+| 参与者                  | 权限                        | 主要职责                                                     |
+| ----------------------- | --------------------------- | ------------------------------------------------------------ |
+| Renderer                | Chromium 页面权限           | UI、交互、Redux、聊天显示；不访问系统资源                    |
+| Browser guest           | 沙箱化的外部 Chromium 页面  | 右侧工作区中的真实网页导航与原生输入                         |
+| Image preview           | 独立沙箱化 Chromium 页面    | 在原生独立窗口中显示图片并处理缩放/拖动                      |
+| Preload                 | 隔离上下文中的 Electron IPC | 暴露固定 `window.electron` API，转换 listener 为 unsubscribe |
+| Main                    | Node/Electron 完整权限      | 验证输入、SQLite、文件/网络/进程、Gateway 和系统集成         |
+| Gateway                 | 独立受管子进程              | Agent、tool、session/history、cron、plugin runtime           |
+| Multica launcher/client | 当前用户本机进程            | 把白名单 OpenClaw CLI 请求转发到 Main 的认证本机管道         |
 
 BrowserWindow 与外部网页 guest 必须维持 Chromium sandbox 和 context isolation；生产路径不得使用全局 `--no-sandbox`。
 
@@ -52,6 +53,12 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 
 这条通道意味着 Renderer 能接触 Gateway token 和原始聊天 wire event，必须由集中式 client/controller 处理，不能让各 React 组件各建连接或各写 parser。连接 generation、session key、run id 和 sequence 用于拒绝旧连接与迟到事件；token 只保存在控制器内存，不得进入 Redux、日志、导出或第三方请求。
 
+### 2.4 Multica 到 Main 的本机桥接
+
+Multica 通过 OpenClaw 兼容启动器执行发现和 `agent` 命令。Windows 原生 launcher 启动一个带私有 switch 的短生命周期 Electron 进程；Main 在 single-instance lock 和 UI 初始化之前识别该模式，关闭 console 输出并作为 bridge client 连接已运行的 JustDo 实例。POSIX launcher 使用同一 client 契约。桥接只使用当前用户 named pipe/Unix socket，不开放网络端口。
+
+Main 启动时生成 per-process random token，并将 endpoint、pid、protocol version 和 token 写入权限受限的 `multica/bridge.json`。Server 对 token、frame 大小、连接数、握手时限、单连接单请求、argv 白名单、cwd 和任务级环境做运行时验证。实际 `agent` 请求由锁定的 OpenClaw CLI 连接已运行的 Gateway；桥接移除 Multica 传入的 `--local`，并保护应用的 state/config 与 Gateway 凭据不被任务环境覆盖。CLI 的 JSON 执行信封只在桥内解析，返回给 Multica 的 stdout 仅包含可见回复正文和附件引用，不暴露 run、模型、用量等内部元数据。这使外部任务使用当前应用中的 Agent、模型、技能和工具，并将 transcript 继续保存到同一 OpenClaw native SQLite。client 断开通过 AbortSignal 终止等待中的 CLI 请求，Cowork 只保存只读映射。
+
 ## 3. `window.electron` 能力面
 
 以下分组来自当前 preload；这里只列语义，不复制完整 TypeScript declaration。
@@ -88,6 +95,7 @@ Main/Gateway 状态变化通过 `webContents.send` 到 preload listener。preloa
 | `builtinModels`               | 手工刷新和生命周期变更事件                                               |
 | `log`                         | 路径、打开目录、导出 zip；debug 写入受 shared channel 控制               |
 | `scheduledTasks`              | job CRUD/run/history/session resolve/channel 与本地 result inbox         |
+| `multica`                     | 集成状态、启用/禁用、启动器生成与 Multica CLI 探测                       |
 | `networkStatus`               | online/offline 事件                                                      |
 
 `ipcRenderer` 兼容分组只允许白名单 channel，不能演化为任意 `send/invoke` 后门。

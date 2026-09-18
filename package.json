@@ -40,6 +40,7 @@
     "electron:dev": "rimraf dist-electron && npm run compile:electron && node scripts/run-electron-dev.cjs",
     "preelectron:dev": "npm run browser-extension:prepare && npm run setup:local-tts",
     "electron:dev:openclaw": "npm run openclaw:runtime:host && npm run electron:dev",
+    "multica:dev-agent": "node scripts/create-multica-dev-agent.cjs",
     "postinstall": "node scripts/patch-http-mitm-proxy.cjs && npm run rebuild:electron-native",
     "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs --dir",
     "dist": "npm run setup:python-runtime && npm run build && npm run compile:electron && electron-builder --config electron-builder.config.cjs",

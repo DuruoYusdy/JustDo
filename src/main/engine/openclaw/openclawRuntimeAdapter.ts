@@ -3625,6 +3625,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (mappedSessionId === sessionId) return sessionKey;
     }
     const session = this.store.getSession(sessionId);
+    if (session?.external?.sessionKey) return session.external.sessionKey;
     return session ? this.toSessionKey(sessionId, session.agentId || 'main') : '';
   }
 
@@ -4311,6 +4312,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (id === sessionId) keys.push(key);
     }
     const session = this.store.getSession(sessionId);
+    if (session?.external?.sessionKey && !keys.includes(session.external.sessionKey)) {
+      keys.push(session.external.sessionKey);
+    }
     const managedKey = buildManagedSessionKey(sessionId, session?.agentId);
     if (!keys.includes(managedKey)) keys.push(managedKey);
     return keys;

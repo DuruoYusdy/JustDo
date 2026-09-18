@@ -81,6 +81,11 @@ import {
   type MediaGenerationModelKind,
   MediaGenerationModelsIpc,
 } from '../shared/mediaGenerationModels';
+import {
+  MulticaIntegrationIpc,
+  type MulticaIntegrationResult,
+  type MulticaIntegrationStatus,
+} from '../shared/multica';
 import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
 import {
   type OnlineAsrConfigurationUpdate,
@@ -183,6 +188,16 @@ import {
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
   arch: process.arch,
+  multica: {
+    getStatus: (): Promise<MulticaIntegrationStatus> =>
+      ipcRenderer.invoke(MulticaIntegrationIpc.GetStatus),
+    enable: (): Promise<MulticaIntegrationResult> =>
+      ipcRenderer.invoke(MulticaIntegrationIpc.Enable),
+    disable: (): Promise<MulticaIntegrationResult> =>
+      ipcRenderer.invoke(MulticaIntegrationIpc.Disable),
+    refresh: (): Promise<MulticaIntegrationResult> =>
+      ipcRenderer.invoke(MulticaIntegrationIpc.Refresh),
+  },
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('store:set', key, value),

@@ -375,6 +375,49 @@ describe('cowork draft browser annotations', () => {
 describe('cowork session recent activity', () => {
   const activityTime = 1_700_000_000_000;
 
+  test('refreshes the selected external session status and native session key', () => {
+    const selected = coworkReducer(
+      undefined,
+      setCurrentSession({
+        ...createSession('session-1'),
+        status: 'running',
+        external: {
+          origin: 'multica',
+          readOnly: true,
+          status: 'running',
+          sessionKey: 'agent:main:multica:one',
+        },
+      }),
+    );
+
+    const updated = coworkReducer(
+      selected,
+      setSessions([
+        {
+          id: 'session-1',
+          title: 'Session',
+          status: 'completed',
+          pinned: false,
+          agentId: 'main',
+          external: {
+            origin: 'multica',
+            readOnly: true,
+            status: 'completed',
+            sessionKey: 'agent:main:multica:one',
+          },
+          createdAt: 1,
+          updatedAt: activityTime,
+        },
+      ]),
+    );
+
+    expect(updated.currentSession).toMatchObject({
+      status: 'completed',
+      updatedAt: activityTime,
+      external: { status: 'completed', sessionKey: 'agent:main:multica:one' },
+    });
+  });
+
   test('updates and marks a background session unread without storing a message', () => {
     const loaded = coworkReducer(
       undefined,

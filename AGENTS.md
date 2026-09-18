@@ -117,8 +117,9 @@ Redux store (`src/renderer/store/index.ts`) mounts **6 slices**:
 Do not document/use unmounted slices as active state.
 
 SQLite core tables in `src/main/data/sqliteStore.ts`:
-`kv`, `cowork_sessions`, `cowork_session_runs`, `cowork_plan_handoffs`, `cowork_config`, `agents`,
-`mcp_servers`, `openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
+`kv`, `cowork_sessions`, `cowork_external_sessions`, `cowork_external_session_tombstones`,
+`cowork_session_runs`, `cowork_plan_handoffs`, `cowork_config`, `agents`, `mcp_servers`,
+`openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
 `scheduled_task_result_cleanup`, `scheduled_task_result_tombstones`.
 
 OpenClaw owns durable message transcripts in its native SQLite store. JustDo

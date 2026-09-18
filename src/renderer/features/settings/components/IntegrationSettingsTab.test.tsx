@@ -14,6 +14,10 @@ vi.mock('@/services/i18n', () => ({
   i18nService: { t: (key: string) => key },
 }));
 
+vi.mock('./ToolIntegrationSettingsTab', () => ({
+  default: () => <div data-testid="tool-integration-settings-tab" />,
+}));
+
 const TestHarness: React.FC = () => {
   const [activeView, setActiveView] = useState<IntegrationSettingsViewId>(
     IntegrationSettingsView.AgentDelegation,
@@ -51,12 +55,12 @@ describe('IntegrationSettingsTab', () => {
     expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
   });
 
-  test('provides an intentionally empty application access slot', () => {
+  test('shows application access integrations in the second view', () => {
     renderTab();
 
     fireEvent.click(screen.getByRole('tab', { name: 'integrationAppAccessTab' }));
 
-    expect(screen.getByTestId('app-access-integration-slot')).toBeTruthy();
+    expect(screen.getByTestId('tool-integration-settings-tab')).toBeTruthy();
     expect(screen.queryByText('externalAgentsSectionTitle')).toBeNull();
   });
 });

@@ -98,6 +98,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: session.id,
     data: { session },
+    disabled: session.external?.readOnly === true,
   });
 
   useEffect(() => {
@@ -589,6 +590,11 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                 />
               ) : (
                 <div className="flex-1 min-w-0 flex items-center gap-1">
+                  {session.external?.origin === 'multica' && (
+                    <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-semibold uppercase leading-none text-primary">
+                      {i18nService.t('multicaSessionBadge')}
+                    </span>
+                  )}
                   <Tooltip
                     content={session.title}
                     position="top"

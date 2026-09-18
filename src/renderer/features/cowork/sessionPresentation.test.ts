@@ -5,6 +5,7 @@ import {
   DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS,
   getSessionDateGroupKey,
   groupSessionsByDate,
+  partitionSidebarSessions,
   sumSessionDetailTokenUsage,
 } from '@/features/cowork/sessionPresentation';
 
@@ -80,5 +81,37 @@ describe('session date grouping', () => {
 
     expect(groups.map(group => group.key)).toEqual(['pinned', 'today']);
     expect(groups[1].sessions.map(session => session.id)).toEqual(['newer-today', 'older-today']);
+  });
+});
+
+describe('sidebar source grouping', () => {
+  it('separates Multica sessions by metadata instead of title or user group', () => {
+    const local = summary('local', 1);
+    const olderMultica: CoworkSessionSummary = {
+      ...summary('external-old', 2),
+      title: '# Multica Agent Runtime',
+      groupId: 'user-group',
+      external: {
+        origin: 'multica',
+        readOnly: true,
+        status: 'completed',
+        sessionKey: 'agent:main:multica:old',
+      },
+    };
+    const newerMultica: CoworkSessionSummary = {
+      ...summary('external-new', 3),
+      title: 'A useful title',
+      external: {
+        origin: 'multica',
+        readOnly: true,
+        status: 'running',
+        sessionKey: 'agent:main:multica:new',
+      },
+    };
+
+    expect(partitionSidebarSessions([olderMultica, local, newerMultica])).toEqual({
+      multica: [newerMultica, olderMultica],
+      regular: [local],
+    });
   });
 });

@@ -18,6 +18,7 @@ import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
 } from '../../shared/displayTabRetention';
+import type { ExternalSessionMetadata, ExternalSessionStatus } from '../../shared/multica';
 import {
   type AgentRuntimeSettings,
   parseAgentRuntimeSettings,
@@ -120,6 +121,7 @@ export interface CoworkSession {
   agentId: string;
   modelRef?: string;
   forkSource?: CoworkSessionForkSource;
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }
@@ -137,6 +139,7 @@ export interface CoworkSessionSummary {
   pinned: boolean;
   groupId: string | null;
   agentId: string;
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }
@@ -689,6 +692,7 @@ export class CoworkStore {
     const forkSourceTitle =
       row.live_fork_source_title?.trim() || row.forked_from_session_title?.trim();
 
+    const external = this.getExternalSessionMetadata(row.id);
     return {
       id: row.id,
       title: row.title,
@@ -711,6 +715,7 @@ export class CoworkStore {
             },
           }
         : {}),
+      ...(external ? { external } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -818,6 +823,7 @@ export class CoworkStore {
       `);
     }
 
+    const externalBySessionId = this.listExternalSessionMetadata();
     return rows.map(row => ({
       id: row.id,
       title: row.title,
@@ -825,6 +831,7 @@ export class CoworkStore {
       pinned: Boolean(row.pinned),
       agentId: row.agent_id || 'main',
       groupId: row.group_id,
+      ...(externalBySessionId.get(row.id) ? { external: externalBySessionId.get(row.id) } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -841,6 +848,66 @@ export class CoworkStore {
       )
       .run();
     return result.changes;
+  }
+
+  private listExternalSessionMetadata(): Map<string, ExternalSessionMetadata> {
+    interface ExternalSessionRow {
+      cowork_session_id: string;
+      source: string;
+      status: ExternalSessionStatus;
+      openclaw_session_key: string | null;
+    }
+    let rows: ExternalSessionRow[];
+    try {
+      rows = this.getAll<ExternalSessionRow>(
+        `SELECT cowork_session_id, source, status, openclaw_session_key
+         FROM cowork_external_sessions
+         WHERE source = 'multica'`,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('no such table')) return new Map();
+      throw error;
+    }
+    return new Map(
+      rows.map(row => [
+        row.cowork_session_id,
+        {
+          origin: 'multica',
+          readOnly: true,
+          status: row.status,
+          sessionKey: row.openclaw_session_key ?? '',
+        },
+      ]),
+    );
+  }
+
+  private getExternalSessionMetadata(sessionId: string): ExternalSessionMetadata | undefined {
+    let row:
+      | { source: string; status: ExternalSessionStatus; openclaw_session_key: string | null }
+      | undefined;
+    try {
+      row = this.getOne<{
+        source: string;
+        status: ExternalSessionStatus;
+        openclaw_session_key: string | null;
+      }>(
+        `SELECT source, status, openclaw_session_key
+         FROM cowork_external_sessions
+         WHERE source = 'multica' AND cowork_session_id = ?`,
+        [sessionId],
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('no such table')) return undefined;
+      throw error;
+    }
+    return row
+      ? {
+          origin: 'multica',
+          readOnly: true,
+          status: row.status,
+          sessionKey: row.openclaw_session_key ?? '',
+        }
+      : undefined;
   }
 
   listRecentCwds(limit: number = 8): string[] {

@@ -125,6 +125,14 @@ const coworkSlice = createSlice({
 
     setSessions(state, action: PayloadAction<CoworkSessionSummary[]>) {
       state.sessions = action.payload;
+      if (state.currentSession) {
+        const summary = action.payload.find(session => session.id === state.currentSession?.id);
+        if (summary) {
+          state.currentSession.status = summary.status;
+          state.currentSession.external = summary.external;
+          state.currentSession.updatedAt = summary.updatedAt;
+        }
+      }
       const validSessionIds = new Set(action.payload.map(session => session.id));
       state.unreadSessionIds = state.unreadSessionIds.filter(id => {
         return validSessionIds.has(id) && id !== state.currentSessionId;
@@ -202,12 +210,15 @@ const coworkSlice = createSlice({
       if (nextSession) {
         state.currentSessionId = nextSession.id;
         if (!nextSession.id.startsWith('temp-')) {
-          const { id, title, status, pinned, createdAt, updatedAt } = nextSession;
+          const { id, title, status, pinned, agentId, external, createdAt, updatedAt } =
+            nextSession;
           const summary: CoworkSessionSummary = {
             id,
             title,
             status,
             pinned: pinned ?? false,
+            agentId,
+            external,
             createdAt,
             updatedAt,
           };
@@ -241,6 +252,8 @@ const coworkSlice = createSlice({
         title: session.title,
         status: session.status,
         pinned: session.pinned ?? false,
+        agentId: session.agentId,
+        external: session.external,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       };

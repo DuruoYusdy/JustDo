@@ -151,6 +151,13 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
     const currentSessionAgentId = currentSession?.agentId;
+    const canonicalSessionKey = currentSessionId
+      ? currentSession.external?.sessionKey ||
+        `agent:${currentSessionAgentId?.trim() || 'main'}:justdo:${currentSessionId}`
+      : null;
+    const externalSessionRefreshRevision = currentSession?.external
+      ? `${currentSession.external.status}:${currentSession.updatedAt}`
+      : '';
     const initialSessionRef = useRef(currentSession);
     const controllerRef = useRef<ChatController | null>(null);
     const chatElementRef = useRef<JustDoChatElement | null>(null);
@@ -362,7 +369,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       const initialSession = initialSessionRef.current;
       if (initialSession) {
         const agentId = initialSession.agentId?.trim() || 'main';
-        const sessionKey = `agent:${agentId}:justdo:${initialSession.id}`;
+        const sessionKey =
+          initialSession.external?.sessionKey || `agent:${agentId}:justdo:${initialSession.id}`;
         controller.state.sessionKey = sessionKey;
       }
 
@@ -418,6 +426,20 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       };
     }, []);
 
+    useEffect(() => {
+      const controller = controllerRef.current;
+      if (
+        !controller ||
+        !connectedRef.current ||
+        !canonicalSessionKey ||
+        !externalSessionRefreshRevision ||
+        controller.state.sessionKey !== canonicalSessionKey
+      ) {
+        return;
+      }
+      void controller.loadHistory(true);
+    }, [canonicalSessionKey, externalSessionRefreshRevision]);
+
     // Synchronize the imperative controller before the browser paints the new
     // Redux session. A passive effect leaves one frame where the chat still
     // projects the previous/partial controller transcript; for a cold session
@@ -427,8 +449,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       if (!controller || !currentSessionId) return;
 
       // Build the gateway session key (same format as the main-process session-key helpers).
-      const agentId = currentSessionAgentId?.trim() || 'main';
-      const sessionKey = `agent:${agentId}:justdo:${currentSessionId}`;
+      const sessionKey = canonicalSessionKey;
+      if (!sessionKey) return;
 
       if (connectedRef.current && controller.state.sessionKey !== sessionKey) {
         const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
@@ -444,7 +466,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           controller.state.sessionKey = sessionKey;
         }
       }
-    }, [currentSessionAgentId, currentSessionId]);
+    }, [canonicalSessionKey, currentSessionId]);
 
     if (connectionError) {
       return (

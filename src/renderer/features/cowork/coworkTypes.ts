@@ -1,5 +1,6 @@
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import type { ExternalSessionMetadata } from '@shared/multica';
 import type { CoworkInteractionKind } from '@shared/openclaw/extensions';
 
 export type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
@@ -68,6 +69,7 @@ export interface CoworkSession {
     title: string;
     entryId: string;
   };
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }
@@ -154,6 +156,7 @@ export interface CoworkSessionSummary {
   pinned: boolean;
   groupId?: string | null;
   agentId?: string;
+  external?: ExternalSessionMetadata;
   createdAt: number;
   updatedAt: number;
 }

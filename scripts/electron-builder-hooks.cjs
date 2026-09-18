@@ -44,6 +44,7 @@ const {
   PATCH_MANIFEST_FILENAME,
   verifyOpenClawPatchManifest,
 } = require('./verify-openclaw-runtime-patches.cjs');
+const { createMulticaAgentLauncher } = require('./create-multica-agent-launcher.cjs');
 
 function isWindowsTarget(context) {
   return context?.electronPlatformName === 'win32';
@@ -977,6 +978,8 @@ async function afterPack(context) {
 
   if (isWindowsTarget(context)) {
     verifyPackagedWindowsNativeModules(context);
+    const productFilename = context.packager.appInfo.productFilename;
+    createMulticaAgentLauncher(path.join(context.appOutDir, `${productFilename}-agent.exe`));
     const resourcesRoot = path.join(context.appOutDir, 'resources');
     const updateConfigPath = path.join(resourcesRoot, 'app-update.yml');
     const configuredMarkerPath = path.join(resourcesRoot, '.justdo-auto-update-configured');

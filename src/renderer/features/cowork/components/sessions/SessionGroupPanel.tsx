@@ -4,7 +4,6 @@ import CoworkSessionItem from '@/features/cowork/components/sessions/CoworkSessi
 import type { CoworkSessionSummary, SessionGroup } from '@/features/cowork/coworkTypes';
 
 interface SessionGroupPanelProps {
-  group: SessionGroup;
   sessions: CoworkSessionSummary[];
   groups: SessionGroup[];
   isExpanded: boolean;
@@ -21,11 +20,10 @@ interface SessionGroupPanelProps {
   onTogglePinned: (sessionId: string, pinned: boolean) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
-  onMoveToGroup: (sessionId: string, groupId: string | null) => void;
+  onMoveToGroup?: (sessionId: string, groupId: string | null) => void;
 }
 
 const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
-  group: _group,
   sessions,
   groups,
   isExpanded,
@@ -66,7 +64,9 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
           onTogglePinned={() => onTogglePinned(session.id, !session.pinned)}
           onToggleSelection={() => onToggleSelection(session.id)}
           onEnterBatchMode={() => onEnterBatchMode(session.id)}
-          onMoveToGroup={groupId => onMoveToGroup(session.id, groupId)}
+          onMoveToGroup={
+            onMoveToGroup ? groupId => onMoveToGroup(session.id, groupId) : undefined
+          }
         />
       ))}
     </div>

@@ -250,7 +250,9 @@ export const createSessionExportDocument = ({
     ? {
         extensions: {
           justdo: {
-            session_key: `agent:${session.agentId || 'main'}:justdo:${session.id}`,
+            session_key:
+              session.external?.sessionKey ||
+              `agent:${session.agentId || 'main'}:justdo:${session.id}`,
             runtime_session_id: runtimeSessionId,
             messages: messages.map(sanitizeRawValue),
           },

@@ -657,7 +657,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
   const canonicalGatewaySessionKey = currentSession
-    ? `agent:${currentSession.agentId?.trim() || 'main'}:justdo:${currentSession.id}`
+    ? currentSession.external?.sessionKey ||
+      `agent:${currentSession.agentId?.trim() || 'main'}:justdo:${currentSession.id}`
     : null;
   const [reportedGatewaySessionKey, setReportedGatewaySessionKey] = useState<{
     sessionId: string;
@@ -2227,6 +2228,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
     ) => {
+      if (currentSession.external?.readOnly) return false;
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const outboundPrompt = gatewayPrompt ?? prompt;
       const goalEdit = isGoalEditCommand(outboundPrompt);
@@ -2987,44 +2989,50 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             {/* Input */}
             <div className="shrink-0 pb-4 pt-2">
               <div className="cowork-content-width mx-auto min-w-0 space-y-1.5">
-                <div className="relative isolate rounded-2xl">
-                  <div className="shadow-glow-accent rounded-2xl">
-                    <CoworkPromptInput
-                      ref={promptInputRef}
-                      onSubmit={handleSendMessage}
-                      onStop={handleStopSession}
-                      stopOperationKey={getSessionStopOperationKey(
-                        currentSession.id,
-                        pendingStartRef.current,
-                      )}
-                      isStreaming={currentSessionRuntimeRunning}
-                      disabled={!isEngineReady || isQuestionInputBlocked}
-                      placeholder={i18nService.t('coworkContinuePlaceholder')}
-                      size="large"
-                      showModelSelector={true}
-                      sessionId={currentSession.id}
-                      modelAgentId={currentSession.agentId}
-                      slashCommandSessionKey={currentGatewaySessionKey ?? undefined}
-                      sessionModelRef={currentSession.modelRef}
-                      contextUsage={contextUsage}
-                      initialGoalObjective={initialGoalObjective}
-                      goalRunProgress={goalRunProgress}
-                      onGoalResumeAccepted={handleGoalResumeAccepted}
-                      onGoalPresenceChange={handleGoalPresenceChange}
-                    />
+                {currentSession.external?.readOnly ? (
+                  <div className="rounded-xl border border-border bg-surface-raised px-4 py-3 text-center text-xs leading-5 text-secondary">
+                    {i18nService.t('multicaSessionReadOnly')}
                   </div>
-                  {isQuestionInputBlocked && (
-                    <div
-                      className="mt-2 flex items-center justify-center text-center"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <span className="rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs font-medium text-secondary shadow-subtle">
-                        {inputBlockedMessage ?? i18nService.t('coworkQuestionInputBlocked')}
-                      </span>
+                ) : (
+                  <div className="relative isolate rounded-2xl">
+                    <div className="shadow-glow-accent rounded-2xl">
+                      <CoworkPromptInput
+                        ref={promptInputRef}
+                        onSubmit={handleSendMessage}
+                        onStop={handleStopSession}
+                        stopOperationKey={getSessionStopOperationKey(
+                          currentSession.id,
+                          pendingStartRef.current,
+                        )}
+                        isStreaming={currentSessionRuntimeRunning}
+                        disabled={!isEngineReady || isQuestionInputBlocked}
+                        placeholder={i18nService.t('coworkContinuePlaceholder')}
+                        size="large"
+                        showModelSelector={true}
+                        sessionId={currentSession.id}
+                        modelAgentId={currentSession.agentId}
+                        slashCommandSessionKey={currentGatewaySessionKey ?? undefined}
+                        sessionModelRef={currentSession.modelRef}
+                        contextUsage={contextUsage}
+                        initialGoalObjective={initialGoalObjective}
+                        goalRunProgress={goalRunProgress}
+                        onGoalResumeAccepted={handleGoalResumeAccepted}
+                        onGoalPresenceChange={handleGoalPresenceChange}
+                      />
                     </div>
-                  )}
-                </div>
+                    {isQuestionInputBlocked && (
+                      <div
+                        className="mt-2 flex items-center justify-center text-center"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <span className="rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs font-medium text-secondary shadow-subtle">
+                          {inputBlockedMessage ?? i18nService.t('coworkQuestionInputBlocked')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <p className="px-1 text-center text-[11px] font-light leading-4 text-muted">
                   {i18nService.t('aiGeneratedDisclaimer')}
                 </p>

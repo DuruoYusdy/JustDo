@@ -9,6 +9,11 @@ export interface SessionDateGroup {
   sessions: CoworkSessionSummary[];
 }
 
+export interface SidebarSessionBuckets {
+  multica: CoworkSessionSummary[];
+  regular: CoworkSessionSummary[];
+}
+
 export const DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS: readonly SessionDateGroupKey[] = [
   'previous7Days',
   'previous30Days',
@@ -27,6 +32,22 @@ const DATE_GROUP_ORDER: SessionDateGroupKey[] = [
 const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary): number => {
   if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
   return b.createdAt - a.createdAt;
+};
+
+export const partitionSidebarSessions = (
+  sessions: CoworkSessionSummary[],
+): SidebarSessionBuckets => {
+  const multica: CoworkSessionSummary[] = [];
+  const regular: CoworkSessionSummary[] = [];
+
+  for (const session of sessions) {
+    (session.external?.origin === 'multica' ? multica : regular).push(session);
+  }
+
+  return {
+    multica: multica.sort(sortByRecentActivity),
+    regular,
+  };
 };
 
 const localCalendarDay = (timestamp: number): number => {

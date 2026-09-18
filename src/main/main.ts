@@ -77,6 +77,21 @@ import { GroupStore } from './data/groupStore';
 import { SqliteStore } from './data/sqliteStore';
 import { CoworkEngineService } from './engine';
 import { bindCoworkRuntimeForwarder } from './engine/cowork/coworkRuntimeForwarder';
+import { runMulticaBridgeClient } from './integrations/multica/multicaBridgeClient';
+import {
+  MULTICA_DEV_BRIDGE_SWITCH,
+  parseMulticaBridgeArgv,
+} from './integrations/multica/multicaBridgeProtocol';
+import { MulticaBridgeServer } from './integrations/multica/multicaBridgeServer';
+import { resolvePackagedMulticaTargetPath } from './integrations/multica/multicaCommandLauncher';
+import { MulticaCommandService } from './integrations/multica/multicaCommandService';
+import {
+  resolveMulticaDevAgentExecutable,
+  resolvePackagedMulticaAgentExecutable,
+} from './integrations/multica/multicaDevAgent';
+import { MulticaExternalSessionStore } from './integrations/multica/multicaExternalSessionStore';
+import { MulticaIntegrationService } from './integrations/multica/multicaIntegrationService';
+import { runMulticaOpenClaw } from './integrations/multica/multicaOpenClawRunner';
 import {
   applyBrowserModeChange,
   registerAppHandlers,
@@ -108,6 +123,7 @@ import {
   registerSessionGroupHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
+import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
   registerExtensionHandlers,
   registerHookHandlers,
@@ -162,7 +178,11 @@ import {
 } from './plugins';
 import { LocalSpeechModelService } from './speech/localSpeechModelService';
 
-const outboundHeaderProxy = new OutboundHeaderProxy();
+let outboundHeaderProxy: OutboundHeaderProxy | null = null;
+const getOutboundHeaderProxy = (): OutboundHeaderProxy => {
+  outboundHeaderProxy ??= new OutboundHeaderProxy();
+  return outboundHeaderProxy;
+};
 const builtinModelForcedProxyBaseUrls =
   BUILTIN_MODEL_PROVIDER_CONFIG.enabled && isLoopbackBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl)
     ? [BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl]
@@ -277,11 +297,21 @@ const configureUserDataPath = (): void => {
 };
 
 configureUserDataPath();
-applyDependencyManagerConfigEnv(process.env);
-initLogger();
-enableSystemCaForCurrentProcess();
+const multicaBridgeArgv = parseMulticaBridgeArgv(process.argv);
+if (multicaBridgeArgv) {
+  console.log = () => undefined;
+  console.info = () => undefined;
+  console.warn = () => undefined;
+  console.error = () => undefined;
+} else {
+  applyDependencyManagerConfigEnv(process.env);
+  initLogger();
+  enableSystemCaForCurrentProcess();
+}
 
-const developerConfig: DeveloperConfig = loadDeveloperConfig(app.getPath('userData'));
+const developerConfig: DeveloperConfig = multicaBridgeArgv
+  ? { showDeveloperMode: false }
+  : loadDeveloperConfig(app.getPath('userData'));
 
 const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
@@ -396,6 +426,11 @@ let activeOutboundHeaderPolicyDigest: string | null = null;
 let openClawStatusForwarderBound = false;
 let openClawGatewayPortProxyBypassBound = false;
 let preventSleepBlockerId: number | null = null;
+let multicaExternalSessionStore: MulticaExternalSessionStore | null = null;
+let multicaCommandService: MulticaCommandService | null = null;
+let multicaBridgeServer: MulticaBridgeServer | null = null;
+let multicaBridgeStartPromise: Promise<void> | null = null;
+let multicaIntegrationService: MulticaIntegrationService | null = null;
 
 const initStore = async (): Promise<SqliteStore> => {
   if (!storeInitPromise) {
@@ -426,17 +461,18 @@ const getOutboundHeaderPolicyService = (): OutboundHeaderPolicyService => {
 const prepareOutboundHeaderNetworkGeneration = async (): Promise<void> => {
   const snapshot = getOutboundHeaderPolicyService().reconcile();
   if (activeOutboundHeaderPolicyDigest === snapshot.digest) return;
-  outboundHeaderProxy.stop();
-  await outboundHeaderProxy.start();
+  const proxy = getOutboundHeaderProxy();
+  proxy.stop();
+  await proxy.start();
   activeOutboundHeaderPolicyDigest = snapshot.digest;
 };
 
 const getOpenClawEngineManager = (): OpenClawEngineManager => {
   if (!openClawEngineManager) {
     openClawEngineManager = new OpenClawEngineManager({
-      beginNetworkGeneration: () => outboundHeaderProxy.rotateGatewayCapability(),
+      beginNetworkGeneration: () => getOutboundHeaderProxy().rotateGatewayCapability(),
       prepareNetworkGeneration: prepareOutboundHeaderNetworkGeneration,
-      buildNetworkEnvironment: baseEnv => outboundHeaderProxy.buildGatewayEnvironment(baseEnv),
+      buildNetworkEnvironment: baseEnv => getOutboundHeaderProxy().buildGatewayEnvironment(baseEnv),
     });
   }
   return openClawEngineManager;
@@ -522,14 +558,14 @@ const bindOpenClawGatewayPortProxyBypass = (): void => {
         bypassEntries,
         forcedBaseUrls: builtinModelForcedProxyBaseUrls,
       });
-      outboundHeaderProxy.setProxyBypassEntries(bypassEntries);
+      getOutboundHeaderProxy().setProxyBypassEntries(bypassEntries);
       return;
     }
     setProcessProxyRouting({
       bypassEntries: [],
       forcedBaseUrls: builtinModelForcedProxyBaseUrls,
     });
-    outboundHeaderProxy.setProxyBypassEntries([]);
+    getOutboundHeaderProxy().setProxyBypassEntries([]);
   });
   openClawGatewayPortProxyBypassBound = true;
 };
@@ -706,6 +742,87 @@ const getCoworkEngineRouter = () => {
 
 const getOpenClawRuntimeAdapter = () => {
   return coworkEngineService?.getRuntimeAdapter() ?? null;
+};
+
+const notifyCoworkSessionsChanged = (): void => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('cowork:sessions:changed');
+  }
+};
+
+const getMulticaExternalSessionStore = (): MulticaExternalSessionStore => {
+  multicaExternalSessionStore ??= new MulticaExternalSessionStore(getStore().getDatabase());
+  return multicaExternalSessionStore;
+};
+
+const ensureMulticaBridgeRunning = async (): Promise<void> => {
+  if (multicaBridgeServer?.running) return;
+  if (multicaBridgeStartPromise) return multicaBridgeStartPromise;
+  const candidate = new MulticaBridgeServer({
+    userDataPath: app.getPath('userData'),
+    commandService: getMulticaCommandService(),
+  });
+  multicaBridgeStartPromise = candidate
+    .start()
+    .then(() => {
+      multicaBridgeServer = candidate;
+    })
+    .finally(() => {
+      multicaBridgeStartPromise = null;
+    });
+  return multicaBridgeStartPromise;
+};
+
+const getMulticaIntegrationService = (): MulticaIntegrationService => {
+  multicaIntegrationService ??= new MulticaIntegrationService({
+    getStore,
+    getBridgeState: () => ({
+      running: multicaBridgeServer?.running === true,
+      activeTaskCount: multicaBridgeServer?.activeTaskCount ?? 0,
+    }),
+    ensureBridgeRunning: ensureMulticaBridgeRunning,
+    getOpenClawVersion: () => getOpenClawEngineManager().getStatus().version,
+    getLauncherTarget: () => {
+      if (process.platform === 'win32') {
+        return {
+          path: app.isPackaged
+            ? resolvePackagedMulticaAgentExecutable(process.execPath)
+            : resolveMulticaDevAgentExecutable(app.getAppPath(), app.getPath('userData')),
+          args: [],
+        };
+      }
+      return {
+        path: app.isPackaged
+          ? resolvePackagedMulticaTargetPath(process.execPath)
+          : process.execPath,
+        args: app.isPackaged
+          ? [MULTICA_DEV_BRIDGE_SWITCH]
+          : [app.getAppPath(), MULTICA_DEV_BRIDGE_SWITCH],
+      };
+    },
+  });
+  return multicaIntegrationService;
+};
+
+const getMulticaCommandService = (): MulticaCommandService => {
+  multicaCommandService ??= new MulticaCommandService({
+    getCoworkStore,
+    getExternalSessionStore: getMulticaExternalSessionStore,
+    getConfigPath: () => getOpenClawEngineManager().getConfigPath(),
+    getOpenClawVersion: () => getOpenClawEngineManager().getStatus().version,
+    runOpenClaw: (argv, cwd, taskEnv, signal) =>
+      runMulticaOpenClaw(
+        { buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment() },
+        argv,
+        cwd,
+        taskEnv,
+        signal,
+      ),
+    waitForConfigUpdates: waitForCoworkConfigUpdates,
+    isEnabled: () => getMulticaIntegrationService().isEnabled(),
+    onSessionsChanged: notifyCoworkSessionsChanged,
+  });
+  return multicaCommandService;
 };
 
 const getOpenClawSkillFiles = () => {
@@ -1009,10 +1126,23 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
   target.reloadIgnoringCache();
 };
 
-// 确保应用程序只有一个实例
-const gotTheLock = app.requestSingleInstanceLock();
+// Bridge subprocesses transparently relay CLI I/O and never join the UI singleton.
+const gotTheLock = multicaBridgeArgv ? true : app.requestSingleInstanceLock();
 
-if (!gotTheLock) {
+if (multicaBridgeArgv) {
+  void (async () => {
+    let code = 70;
+    try {
+      code = await runMulticaBridgeClient(app.getPath('userData'), multicaBridgeArgv);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+    } finally {
+      process.exitCode = code;
+      setImmediate(() => app.exit(code));
+    }
+  })();
+} else if (!gotTheLock) {
   app.quit();
 } else {
   registerStoreHandlers({
@@ -1054,6 +1184,7 @@ if (!gotTheLock) {
 
   registerNetworkHandlers();
   registerLogHandlers();
+  registerMulticaIntegrationHandlers(getMulticaIntegrationService);
   registerBrowserHandlers({
     getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
     buildCliEnvironment: () => getOpenClawEngineManager().buildCliEnvironment(),
@@ -1403,6 +1534,12 @@ if (!gotTheLock) {
     console.log('[Main] App is quitting, starting cleanup...');
     customerRegistrationService?.stop();
     destroyTray();
+    if (multicaBridgeServer) {
+      await multicaBridgeServer.stop().catch(error => {
+        console.error('[MulticaBridge] Failed to stop:', error);
+      });
+      multicaBridgeServer = null;
+    }
     // Prevent scheduled work from starting while dependent runtimes are draining.
     try {
       getCronJobService().stopPolling();
@@ -1423,7 +1560,7 @@ if (!gotTheLock) {
     }
     await browserAgentBridge.stop();
 
-    outboundHeaderProxy.stop();
+    outboundHeaderProxy?.stop();
 
     // Close the SQLite database to flush the WAL and release the file lock.
     try {
@@ -1478,7 +1615,7 @@ if (!gotTheLock) {
 
     store = await initStore();
     const initialOutboundHeaderPolicy = getOutboundHeaderPolicyService().reconcile();
-    await outboundHeaderProxy.start();
+    await getOutboundHeaderProxy().start();
     activeOutboundHeaderPolicyDigest = initialOutboundHeaderPolicy.digest;
 
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
@@ -1517,6 +1654,12 @@ if (!gotTheLock) {
     const resetCount = getCoworkStore().resetRunningSessions();
     if (resetCount > 0) {
       console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
+    }
+    const resetExternalCount = getMulticaExternalSessionStore().resetRunning();
+    if (resetExternalCount > 0) {
+      console.log(
+        `[MulticaBridge] Reset ${resetExternalCount} interrupted external session(s) to cancelled`,
+      );
     }
     // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
@@ -1573,6 +1716,11 @@ if (!gotTheLock) {
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
+
+    await ensureMulticaBridgeRunning().catch(error => {
+      console.error('[MulticaBridge] Failed to start:', error);
+      multicaBridgeServer = null;
+    });
 
     if (startupSync.success) {
       void ensureOpenClawRunningForCowork()

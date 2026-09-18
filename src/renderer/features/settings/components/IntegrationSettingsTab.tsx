@@ -4,6 +4,7 @@ import React from 'react';
 import { i18nService } from '@/services/i18n';
 
 import ExternalAgentsSettingsSection from './ExternalAgentsSettingsSection';
+import ToolIntegrationSettingsTab from './ToolIntegrationSettingsTab';
 
 export const IntegrationSettingsView = {
   AgentDelegation: 'agent-delegation',
@@ -82,7 +83,7 @@ const IntegrationSettingsTab: React.FC<Props> = ({
             onRetry={onExternalAgentSettingsRetry}
           />
         ) : (
-          <div data-testid="app-access-integration-slot" />
+          <ToolIntegrationSettingsTab />
         )}
       </div>
     </div>

@@ -195,6 +195,46 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_session_runs', 'accepted_at', 'INTEGER');
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS cowork_external_sessions (
+        source TEXT NOT NULL,
+        external_session_key TEXT NOT NULL,
+        cowork_session_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        openclaw_session_key TEXT,
+        cwd TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'error', 'cancelled')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (source, external_session_key),
+        FOREIGN KEY (cowork_session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_external_sessions_cowork
+        ON cowork_external_sessions(cowork_session_id);
+      CREATE INDEX IF NOT EXISTS idx_cowork_external_sessions_status
+        ON cowork_external_sessions(source, status, updated_at);
+
+      CREATE TABLE IF NOT EXISTS cowork_external_session_tombstones (
+        source TEXT NOT NULL,
+        external_session_key TEXT NOT NULL,
+        deleted_at INTEGER NOT NULL,
+        PRIMARY KEY (source, external_session_key)
+      );
+
+      CREATE TRIGGER IF NOT EXISTS trg_cowork_external_session_tombstone
+      BEFORE DELETE ON cowork_sessions
+      BEGIN
+        INSERT OR REPLACE INTO cowork_external_session_tombstones
+          (source, external_session_key, deleted_at)
+        SELECT source, external_session_key, CAST(unixepoch('subsec') * 1000 AS INTEGER)
+        FROM cowork_external_sessions
+        WHERE cowork_session_id = OLD.id;
+      END;
+    `);
+    this.ensureColumn('cowork_external_sessions', 'agent_id', "TEXT NOT NULL DEFAULT 'main'");
+    this.ensureColumn('cowork_external_sessions', 'openclaw_session_key', 'TEXT');
+
     // The former dual-session Plan design stored one globally unique
     // implementation key per handoff and a separate transcript lineage table.
     // Same-session reset deliberately does not preserve that Plan-only data.
@@ -203,16 +243,17 @@ export class SqliteStore {
       name: string;
       notnull: number;
     }>;
-    const existingPlanHandoffIndexes = this.db.pragma(
-      'index_list(cowork_plan_handoffs)',
-    ) as Array<{ name: string; unique: number }>;
+    const existingPlanHandoffIndexes = this.db.pragma('index_list(cowork_plan_handoffs)') as Array<{
+      name: string;
+      unique: number;
+    }>;
     const hasUniqueImplementationSessionKey = existingPlanHandoffIndexes.some(
       index =>
         index.unique === 1 &&
         (
-          this.db
-            .prepare('SELECT name FROM pragma_index_info(?)')
-            .all(index.name) as Array<{ name: string }>
+          this.db.prepare('SELECT name FROM pragma_index_info(?)').all(index.name) as Array<{
+            name: string;
+          }>
         ).some(column => column.name === 'implementation_session_key'),
     );
     if (

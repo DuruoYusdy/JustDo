@@ -14,6 +14,10 @@ Cowork 负责把本地产品会话映射到 OpenClaw session/run：
 
 Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话元数据和 run receipt，不再持久化消息副本。Main 与 Redux 也不保留 transcript projection。
 
+Multica 等受信本机集成可以通过专用 bridge 创建 Cowork session，但不能绕过这条所有权边界：
+bridge 只保存外部 session 映射，并用当前锁定的 OpenClaw CLI 以 local 模式执行。
+消息仍只写入 OpenClaw native store，Renderer 通过既有 history 路径投影。
+
 ## 2. 主要实现
 
 | 层         | 入口                                                                | 职责                                                             |
@@ -39,6 +43,14 @@ Gateway 仍是执行与 transcript 权威；JustDo SQLite 只保存产品会话�
 `cowork_session_runs` 用唯一 `client_turn_id` 防止双击或 IPC 重试创建第二个 session；Gateway 接受后将真实 `root_run_id` 绑定到 receipt。事件优先按 run id 映射，必要时再按受管 session key 解析。任意远端 key 不得自动映射到本地 session。
 
 Plan mode 的规划与实施始终使用同一个 canonical Gateway session key 和同一个 Gateway `sessionId`。批准后，Main 先让 `PresentPlan` 返回并等待规划 run 结束，再调用 OpenClaw 原生 `sessions.reset` 写入 transcript reset boundary。Patch 022 只对 `agent:<agent>:justdo:*` 会话调整 display-history window，使 `chat.history` 跨该 boundary 显示规划消息；OpenClaw 的 model-context window 仍从最新 boundary 之后开始。随后 Main 在同一 session 中发送隐藏的 `Implement the plan.` 消息，其中包含持久化计划文件路径和完整正文。
+
+### 3.1 外部 session 身份
+
+Multica 自己的 session id 不能直接作为 OpenClaw key。`cowork_external_sessions` 把
+`(source, external_session_key)` 映射到一个 local `sessionId`，并固定首次选择的 cwd 和 Agent。
+执行 key 按 `agent:<agent>:multica:<digest>` 确定性生成并保存；列表、详情、历史和删除
+通过该映射继续投影到 Cowork。外部 session 在 Renderer 中标记为只读，避免两个提交者并发
+控制同一 session。
 
 ## 4. Session 数据模型
 
