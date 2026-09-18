@@ -5,8 +5,10 @@ import {
   BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_GET_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL,
+  BROWSER_GUEST_ZOOM_CHANNEL,
   type BrowserImportedCredential,
   isBrowserGuestCommand,
+  resolveBrowserGuestWheelZoomDirection,
 } from '../shared/browser';
 
 type InspectionPoint = { x: number; y: number };
@@ -33,6 +35,18 @@ ipcRenderer.on(BROWSER_GUEST_COMMAND_CHANNEL, (_event, command: unknown) => {
   if (!isBrowserGuestCommand(command)) return;
   ipcRenderer.sendToHost(BROWSER_GUEST_COMMAND_CHANNEL, command);
 });
+
+window.addEventListener(
+  'wheel',
+  event => {
+    const direction = resolveBrowserGuestWheelZoomDirection(event);
+    if (!direction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    ipcRenderer.sendToHost(BROWSER_GUEST_ZOOM_CHANNEL, direction);
+  },
+  { capture: true, passive: false },
+);
 
 const describeAtPoints = (points: InspectionPoint[]): unknown[] => {
   const seen = new Set<string>();

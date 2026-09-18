@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isBrowserGuestZoomDirection,
   resolveBrowserGuestShortcut,
+  resolveBrowserGuestWheelZoomDirection,
   resolveBrowserPanelShortcutAction,
+  stepBrowserZoomFactor,
 } from '../../shared/browser';
 import {
   isAllowedBrowserPanelUrl,
@@ -129,5 +132,30 @@ describe('resolveBrowserGuestShortcut', () => {
     expect(
       resolveBrowserGuestShortcut(input({ type: 'keyUp', key: 'w', control: true })),
     ).toBeNull();
+  });
+});
+
+describe('browser guest zoom', () => {
+  it('accepts only one-step zoom directions and clamps the supported range', () => {
+    expect(isBrowserGuestZoomDirection(1)).toBe(true);
+    expect(isBrowserGuestZoomDirection(-1)).toBe(true);
+    expect(isBrowserGuestZoomDirection(0)).toBe(false);
+    expect(stepBrowserZoomFactor(1, 1)).toBe(1.1);
+    expect(stepBrowserZoomFactor(1, -1)).toBe(0.9);
+    expect(stepBrowserZoomFactor(2, 1)).toBe(2);
+    expect(stepBrowserZoomFactor(0.5, -1)).toBe(0.5);
+  });
+
+  it('maps only primary-modified vertical wheel input to zoom steps', () => {
+    expect(resolveBrowserGuestWheelZoomDirection({ ctrlKey: true, metaKey: false, deltaY: -1 })).toBe(
+      1,
+    );
+    expect(resolveBrowserGuestWheelZoomDirection({ ctrlKey: false, metaKey: true, deltaY: 1 })).toBe(
+      -1,
+    );
+    expect(
+      resolveBrowserGuestWheelZoomDirection({ ctrlKey: false, metaKey: false, deltaY: -1 }),
+    ).toBeNull();
+    expect(resolveBrowserGuestWheelZoomDirection({ ctrlKey: true, metaKey: false, deltaY: 0 })).toBeNull();
   });
 });

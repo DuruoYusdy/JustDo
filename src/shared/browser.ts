@@ -132,6 +132,7 @@ export type BrowserLocalHtmlPreviewResult =
     };
 
 export const BROWSER_GUEST_COMMAND_CHANNEL = 'justdo-browser-command';
+export const BROWSER_GUEST_ZOOM_CHANNEL = 'justdo-browser-zoom';
 export const BROWSER_GUEST_CREDENTIALS_GET_CHANNEL = 'justdo-browser-credentials:get';
 export const BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL = 'justdo-browser-credentials:offer';
 export const BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL = 'justdo-browser-credentials:fill';
@@ -192,6 +193,29 @@ export type BrowserGuestCommand = (typeof BrowserGuestCommands)[number];
 
 export const isBrowserGuestCommand = (value: unknown): value is BrowserGuestCommand =>
   typeof value === 'string' && BrowserGuestCommands.some(command => command === value);
+
+export type BrowserGuestZoomDirection = -1 | 1;
+
+export const isBrowserGuestZoomDirection = (
+  value: unknown,
+): value is BrowserGuestZoomDirection => value === -1 || value === 1;
+
+export const resolveBrowserGuestWheelZoomDirection = (input: {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  deltaY: number;
+}): BrowserGuestZoomDirection | null => {
+  if ((!input.ctrlKey && !input.metaKey) || input.deltaY === 0) return null;
+  return input.deltaY < 0 ? 1 : -1;
+};
+
+export const stepBrowserZoomFactor = (
+  current: number,
+  direction: BrowserGuestZoomDirection,
+): number => {
+  const safeCurrent = Number.isFinite(current) ? current : 1;
+  return Math.min(2, Math.max(0.5, Math.round((safeCurrent + direction * 0.1) * 10) / 10));
+};
 
 type BrowserShortcutInput = {
   type: string;

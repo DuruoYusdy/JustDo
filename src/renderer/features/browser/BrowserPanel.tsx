@@ -29,12 +29,15 @@ import {
   BROWSER_GUEST_COMMAND_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL,
   BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL,
+  BROWSER_GUEST_ZOOM_CHANNEL,
   browserPartitionForProfile,
   isBrowserGuestCommand,
+  isBrowserGuestZoomDirection,
   normalizeBrowserSearchEngine,
   resolveBrowserAddressInput,
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
+  stepBrowserZoomFactor,
 } from '@shared/browser';
 import React, {
   forwardRef,
@@ -124,7 +127,7 @@ const ANNOTATION_NOTICE_DURATION_MS = 3_500;
 // Bump this when guest creation preferences change. Besides documenting that those
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests
 // that were created by an older implementation instead of reusing a broken one.
-const BROWSER_WEBVIEW_CAPABILITY_VERSION = 'isolated-session-v2';
+const BROWSER_WEBVIEW_CAPABILITY_VERSION = 'isolated-session-v3';
 
 const getBrowserPanelMaxWidth = (availableWidth = window.innerWidth): number =>
   Math.max(BROWSER_PANEL_MIN_WIDTH, availableWidth - 32);
@@ -950,6 +953,18 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         if (details.channel === BROWSER_GUEST_COMMAND_CHANNEL) {
           const [command] = details.args ?? [];
           if (isBrowserGuestCommand(command)) runBrowserCommand(command, targetId);
+          return;
+        }
+        if (details.channel === BROWSER_GUEST_ZOOM_CHANNEL) {
+          const [direction] = details.args ?? [];
+          if (!isBrowserGuestZoomDirection(direction)) return;
+          try {
+            const nextFactor = stepBrowserZoomFactor(webview.getZoomFactor?.() ?? 1, direction);
+            webview.setZoomFactor?.(nextFactor);
+            if (activeTargetRef.current === targetId) setZoomFactor(nextFactor);
+          } catch {
+            // The guest can detach between receiving its wheel event and applying zoom.
+          }
           return;
         }
         if (details.channel === 'justdo-browser-viewport-changed') {

@@ -2,6 +2,7 @@
 
 import {
   BROWSER_AGENT_PANEL_TARGET_ID,
+  BROWSER_GUEST_ZOOM_CHANNEL,
   type BrowserAgentInteractionState,
   type BrowserAnnotationDraft,
   type BrowserPanelTab,
@@ -533,6 +534,20 @@ describe('BrowserPanel embedded webview', () => {
     await waitFor(() => expect(getZoomFactor).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByLabelText('More browser options'));
     expect(screen.getAllByRole('button', { name: 'Reset zoom' })[0]?.textContent).toBe('100%');
+  });
+
+  it('zooms the live guest from a primary-modified mouse wheel event', () => {
+    const { container } = render(<BrowserPanelHarness />);
+    const webview = container.querySelector('webview')!;
+    fireEvent(webview, new Event('dom-ready'));
+
+    const zoomEvent = new Event('ipc-message');
+    Object.assign(zoomEvent, { channel: BROWSER_GUEST_ZOOM_CHANNEL, args: [1] });
+    fireEvent(webview, zoomEvent);
+
+    expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+    fireEvent.click(screen.getByLabelText('More browser options'));
+    expect(screen.getByText('110%')).toBeTruthy();
   });
 
   it('keeps interaction on the live guest and navigates it directly', async () => {
