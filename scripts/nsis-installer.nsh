@@ -2,9 +2,18 @@
 !include "LogicLib.nsh"
 !include "StdUtils.nsh"
 !include "TextFunc.nsh"
+!include "x64.nsh"
 
-!define JUSTDO_POWERSHELL "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
 !define JUSTDO_INSTALLER_QUIT_SWITCH "--justdo-request-quit-for-update"
+
+!macro JustDoResolveNativePowerShell _OUTPUT
+  StrCpy ${_OUTPUT} "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${RunningX64}
+    ; The installer process is 32-bit. Sysnative bypasses WOW64 filesystem
+    ; redirection so Get-Process can resolve paths for the 64-bit application.
+    StrCpy ${_OUTPUT} "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+!macroend
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort
@@ -34,6 +43,7 @@ Var JustDoResourceLogPath
 Var JustDoInstallStartedTick
 Var JustDoCoreInstallStartedTick
 Var JustDoProcessCheckComplete
+Var JustDoPristineInstall
 Var JustDoInstallTerminalState
 Var JustDoInstallerPid
 Var JustDoInstallerSessionId
@@ -44,6 +54,46 @@ Var JustDoCurrentUserAppData
 Var JustDoCurrentUserLocalAppData
 Var JustDoCurrentTemp
 Var JustDoInstallerDirectory
+Var JustDoExtractorTempDirectory
+Var JustDoExtractorActive
+Var JustDoExtractorEnvironmentConfigured
+Var JustDoPreviousTemp
+Var JustDoPreviousTmp
+
+Function JustDoCleanupExtractorEnvironment
+  Push $0
+  Push $1
+  ${If} $JustDoExtractorEnvironmentConfigured == "1"
+    System::Call 'Kernel32::SetEnvironmentVariable(t "TEMP", t "$JustDoPreviousTemp")i.r0'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "TMP", t "$JustDoPreviousTmp")i.r0'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_TEMP_ROOT", t "")i.r0'
+    System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT", t "")i.r0'
+    StrCpy $JustDoExtractorEnvironmentConfigured "0"
+  ${EndIf}
+  ${If} $JustDoExtractorTempDirectory != ""
+    System::Call 'Kernel32::GetFileAttributes(t "$JustDoExtractorTempDirectory")i.r0'
+    ${If} $0 != -1
+      IntOp $1 $0 & 0x400
+      ${If} $1 != 0
+        ; Never recursively follow a directory junction or other reparse point.
+        RMDir "$JustDoExtractorTempDirectory"
+      ${Else}
+        ; The extractor owns recursive cleanup because it can validate the
+        ; complete path tree before deletion. Setup only removes an empty root,
+        ; avoiding a check/delete junction-replacement race in a user-writable
+        ; installation directory.
+        RMDir "$JustDoExtractorTempDirectory"
+      ${EndIf}
+    ${EndIf}
+    System::Call 'Kernel32::GetFileAttributes(t "$JustDoExtractorTempDirectory")i.r0'
+    ${If} $0 == -1
+      StrCpy $JustDoExtractorTempDirectory ""
+    ${EndIf}
+  ${EndIf}
+  StrCpy $JustDoExtractorActive "0"
+  Pop $1
+  Pop $0
+FunctionEnd
 
 !macro JustDoTryInstallLogDirectory _BASE _DIRECTORY_NAME
   ${If} $JustDoInstallLogDirectory == ""
@@ -150,6 +200,10 @@ FunctionEnd
 !macroend
 
 Function JustDoInstallerUserAbort
+  ${If} $JustDoExtractorActive == "1"
+    MessageBox MB_OK|MB_ICONINFORMATION "核心资源仍在安全写入和校验中，请等待此步骤完成后再关闭安装程序。 Core resources are still being written and verified; wait for this step to finish before closing setup." /SD IDOK
+    Abort
+  ${EndIf}
   StrCpy $JustDoInstallTerminalState "user-cancelled"
   !insertmacro JustDoLogInstallEvent "phase=installer-cancel reason=wizard-user-abort"
 FunctionEnd
@@ -165,6 +219,10 @@ Function .onInstFailed
   System::Call 'kernel32::GetLastError()i.r0'
   !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success error-level=$1 win32-last-error=$0"
   Call JustDoRestoreManagedRuntimes
+  Call JustDoCleanupExtractorEnvironment
+  ${If} $JustDoExtractorTempDirectory != ""
+    !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
+  ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete runtime-restore-result=$0"
 FunctionEnd
 
@@ -175,6 +233,12 @@ Function .onGUIEnd
     StrCpy $JustDoInstallTerminalState "closed-without-success-callback"
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=installer-session-end terminal-state=$JustDoInstallTerminalState last-event=$JustDoLastInstallEvent"
+  ${If} $JustDoExtractorActive != "1"
+    Call JustDoCleanupExtractorEnvironment
+    ${If} $JustDoExtractorTempDirectory != ""
+      !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 Function JustDoPollResourceProgress
@@ -395,7 +459,23 @@ Function JustDoInstFilesShow
 FunctionEnd
 
 !macro customPageAfterChangeDir
+  ; electron-builder defers the final all-users mode and custom directory until
+  ; after customInit. Its elevated inner instance also skips the normal section
+  ; process check, so run that check from the install-page PRE callback, after
+  ; instFilesPre has normalized the user-selected directory.
+  !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE JustDoInstFilesPre
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW JustDoInstFilesShow
+  ; Define the callback when electron-builder expands this macro, after its
+  ; multi-user template has declared $installMode.
+  Function JustDoInstFilesPre
+    Call instFilesPre
+    StrCpy $JustDoInstallMode "$installMode"
+    ${If} ${UAC_IsInnerInstance}
+      !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start"
+      Call JustDoCheckAppRunning
+    ${EndIf}
+  FunctionEnd
 !macroend
 !endif
 
@@ -406,11 +486,14 @@ FunctionEnd
   System::Call 'Kernel32::GetCurrentProcessId()i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  nsExec::ExecToStack /TIMEOUT=15000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Find'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
+  !insertmacro JustDoResolveNativePowerShell $R8
+  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Find'
   Pop ${_RESULT}
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_APP_PROCESS_NAME", t "")i'
 !macroend
 
 !macro WaitForJustDoProcesses _RESULT _MAX_ATTEMPTS
@@ -419,11 +502,14 @@ FunctionEnd
   System::Call 'Kernel32::GetCurrentProcessId()i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  nsExec::ExecToStack /TIMEOUT=90000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Wait -MaxAttempts ${_MAX_ATTEMPTS}'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
+  !insertmacro JustDoResolveNativePowerShell $R8
+  nsExec::ExecToStack /TIMEOUT=90000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Wait -MaxAttempts ${_MAX_ATTEMPTS}'
   Pop ${_RESULT}
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_APP_PROCESS_NAME", t "")i'
 !macroend
 
 !macro StopJustDoProcesses _RESULT
@@ -438,11 +524,14 @@ FunctionEnd
       System::Call 'Kernel32::GetCurrentProcessId()i.r0'
       System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
       System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-      nsExec::ExecToStack /TIMEOUT=15000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Stop'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
+      !insertmacro JustDoResolveNativePowerShell $R8
+      nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Stop'
       Pop ${_RESULT}
       Pop $R9
       System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
       System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_CALLER_PID", t "")i'
+      System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_APP_PROCESS_NAME", t "")i'
     ${EndIf}
   ${EndIf}
 !macroend
@@ -452,7 +541,8 @@ Function JustDoStageManagedRuntimes
   System::Call 'Kernel32::GetCurrentProcessId()i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  nsExec::ExecToStack /TIMEOUT=30000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StageRuntimes'
+  !insertmacro JustDoResolveNativePowerShell $R8
+  nsExec::ExecToStack /TIMEOUT=30000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StageRuntimes'
   Pop $0
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -469,7 +559,8 @@ Function JustDoStopLegacyPythonProcesses
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_USER_DATA_ROOT", "$APPDATA\${PRODUCT_NAME}").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  nsExec::ExecToStack /TIMEOUT=15000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StopLegacyPython'
+  !insertmacro JustDoResolveNativePowerShell $R8
+  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StopLegacyPython'
   Pop $0
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -487,7 +578,8 @@ Function JustDoRestoreManagedRuntimes
   System::Call 'Kernel32::GetCurrentProcessId()i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
-  nsExec::ExecToStack /TIMEOUT=30000 '"${JUSTDO_POWERSHELL}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action RestoreRuntimes'
+  !insertmacro JustDoResolveNativePowerShell $R8
+  nsExec::ExecToStack /TIMEOUT=30000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action RestoreRuntimes'
   Pop $0
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -514,6 +606,20 @@ Function JustDoCheckAppRunning
   !insertmacro JustDoLogInstallEvent "phase=process-check-start install-dir=$INSTDIR"
   InitPluginsDir
   File /oname=$PLUGINSDIR\justdo-process-helper.ps1 "${PROJECT_DIR}\scripts\nsis-process-helper.ps1"
+  ; A pristine installation has no process tree to close. Do not make it
+  ; depend on a machine-wide process inventory. This literal is the default
+  ; electron-builder multi-user key; INSTALL_REGISTRY_KEY is defined only
+  ; after the custom include has been parsed.
+  StrCpy $JustDoPristineInstall "0"
+  ReadRegStr $R8 HKCU "Software\${APP_GUID}" InstallLocation
+  ReadRegStr $R7 HKLM "Software\${APP_GUID}" InstallLocation
+  ${If} $R8 == ""
+  ${AndIf} $R7 == ""
+  ${AndIfNot} ${FileExists} "$INSTDIR\*.*"
+    StrCpy $JustDoPristineInstall "1"
+    !insertmacro JustDoLogInstallEvent "phase=process-check-skipped reason=pristine-install"
+    Goto JustDoInstallProcessReady
+  ${EndIf}
   ${If} ${Silent}
     !insertmacro FindJustDoProcesses $0
     !insertmacro JustDoLogInstallEvent "phase=process-check-result mode=silent result=$0 detail=$R9"
@@ -598,16 +704,19 @@ Function JustDoCheckAppRunning
           Quit
       ${EndIf}
   ${EndIf}
+  JustDoInstallProcessReady:
   !insertmacro JustDoLogInstallEvent "phase=process-check-complete result=ready"
-  Call JustDoStopLegacyPythonProcesses
-  Call JustDoStageManagedRuntimes
-  ${If} $0 != "0"
-    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=runtime-staging-failed result=$0"
-    ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-    ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-      Abort "无法安全暂存旧版运行环境，安装已停止。请重试并提供安装日志。"
-    ${Else}
-      Abort "Setup could not safely stage the previous runtime. Retry and provide the install log."
+  ${If} $JustDoPristineInstall != "1"
+    Call JustDoStopLegacyPythonProcesses
+    Call JustDoStageManagedRuntimes
+    ${If} $0 != "0"
+      !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=runtime-staging-failed result=$0"
+      ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+      ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+        Abort "无法安全暂存旧版运行环境，安装已停止。请重试并提供安装日志。"
+      ${Else}
+        Abort "Setup could not safely stage the previous runtime. Retry and provide the install log."
+      ${EndIf}
     ${EndIf}
   ${EndIf}
   System::Call 'kernel32::GetTickCount()i.r0'
@@ -631,6 +740,52 @@ FunctionEnd
 
 !ifndef BUILD_UNINSTALLER
 !macro preInit
+  ; An interactive installer can be started with credentials from another local
+  ; account (for example by "Run as administrator"). Per-user shell constants
+  ; would then point at that credentialed account. Re-enter once through the
+  ; current desktop shell before reading APPDATA/LOCALAPPDATA. A later explicit
+  ; "all users" selection still follows electron-builder's normal UAC flow.
+  ${If} ${UAC_IsAdmin}
+  ${AndIfNot} ${UAC_IsInnerInstance}
+    ${GetParameters} $0
+    ClearErrors
+    StrCpy $2 "0"
+    ${GetOptions} $0 "/currentuser" $1
+    ${IfNot} ${Errors}
+      StrCpy $2 "1"
+    ${EndIf}
+    ClearErrors
+    ${GetOptions} $0 "/allusers" $1
+    ${IfNot} ${Errors}
+    ${AndIf} $2 != "1"
+      Goto JustDoAccountBootstrapComplete
+    ${EndIf}
+    ClearErrors
+    ${GetOptions} $0 "--justdo-current-user-bootstrap" $1
+    ${If} ${Errors}
+      ${If} ${Silent}
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+      ${StdUtils.ExecShellAsUser} $1 "$EXEPATH" "open" '--justdo-current-user-bootstrap $0'
+      ${If} $1 == "ok"
+        Quit
+      ${EndIf}
+      ${If} $2 != "1"
+      ${AndIfNot} ${Silent}
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION "无法访问当前桌面账户。点击“是”将改为所有用户安装；点击“否”退出。 The current desktop account is unavailable. Click Yes to install for all users, or No to exit." IDYES JustDoBootstrapAllUsers IDNO JustDoBootstrapFailed
+        JustDoBootstrapAllUsers:
+          Exec '"$EXEPATH" --justdo-current-user-bootstrap /allusers $0'
+          Quit
+      ${EndIf}
+      JustDoBootstrapFailed:
+      MessageBox MB_OK|MB_ICONSTOP "无法以当前桌面账户启动安装程序。请关闭此窗口，然后直接双击安装包；不要使用“以管理员身份运行”。$\r$\n$\r$\nSetup could not restart under the current desktop account. Close this window and double-click the installer instead of using Run as administrator." /SD IDOK
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    JustDoAccountBootstrapComplete:
+  ${EndIf}
+
   ; Capture per-user shell paths before initMultiUser can switch all-users
   ; installs to the machine shell context. All later log relocation uses these
   ; fixed values, keeping outer and elevated-inner sessions discoverable.
@@ -740,7 +895,8 @@ FunctionEnd
   FileWrite $2 "detected-per-machine-installation: $hasPerMachineInstallation$\r$\n"
   FileWrite $2 "installer-language-id: $LANGUAGE$\r$\n"
   FileWrite $2 "post-multiuser-instdir: $INSTDIR$\r$\n"
-  StrCpy $JustDoInstallMode "$installMode"
+  ; The assisted install-mode and directory pages have not run yet. Capture the
+  ; final mode in JustDoInstFilesPre instead of caching this initial default.
   ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
   FileWrite $2 "registry-hkcu-install-location: $0$\r$\n"
   ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
@@ -748,13 +904,15 @@ FunctionEnd
   FileClose $2
   ClearErrors
   !insertmacro JustDoLogInstallEvent "phase=installer-init-complete"
-  ${If} ${UAC_IsInnerInstance}
-    ; electron-builder skips CHECK_APP_RUNNING for every elevated inner
-    ; instance. Run it here after initMultiUser has restored the selected mode
-    ; and path, otherwise interactive all-users installs reach customInstall
-    ; without the helper/runtime staging and abort with helper-missing.
-    !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start"
-    Call JustDoCheckAppRunning
+  ${If} ${Silent}
+    ; Silent installs do not visit the install page, so its PRE callback cannot
+    ; capture the final mode or prepare an elevated inner upgrade. initMultiUser
+    ; has already resolved command-line/registry mode and $INSTDIR here.
+    StrCpy $JustDoInstallMode "$installMode"
+    ${If} ${UAC_IsInnerInstance}
+      !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start mode=silent"
+      Call JustDoCheckAppRunning
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -934,6 +1092,48 @@ FunctionEnd
   Pop $0
   FileWrite $2 "set-electron-run-as-node: result=$0$\r$\n"
 
+  ; Keep temporary artifacts created by the extractor and its direct children
+  ; inside the selected install root. Independent endpoint-security processes
+  ; do not inherit this environment and are monitored only by free-space loss.
+  ReadEnvStr $JustDoPreviousTemp "TEMP"
+  ReadEnvStr $JustDoPreviousTmp "TMP"
+  StrCpy $JustDoExtractorEnvironmentConfigured "1"
+  StrCpy $JustDoExtractorTempDirectory "$INSTDIR\.justdo-installer-temp-$JustDoInstallerSessionId"
+  System::Call 'Kernel32::GetFileAttributes(t "$JustDoExtractorTempDirectory")i.r0'
+  ${If} $0 != -1
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-temp-collision"
+    StrCpy $JustDoExtractorTempDirectory ""
+    Abort "Setup cannot create its protected temporary directory. Retry the installation."
+  ${EndIf}
+  ClearErrors
+  CreateDirectory "$JustDoExtractorTempDirectory"
+  ${If} ${Errors}
+    StrCpy $JustDoExtractorTempDirectory ""
+    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=extractor-temp-create-failed"
+    Abort "Setup cannot create its protected temporary directory. Check the installation path and retry."
+  ${EndIf}
+  System::Call 'Kernel32::SetEnvironmentVariable(t "TEMP", t "$JustDoExtractorTempDirectory")i.r0'
+  ${If} $0 == 0
+    Call JustDoCleanupExtractorEnvironment
+    Abort "Setup cannot isolate its temporary files. Retry the installation."
+  ${EndIf}
+  System::Call 'Kernel32::SetEnvironmentVariable(t "TMP", t "$JustDoExtractorTempDirectory")i.r0'
+  ${If} $0 == 0
+    Call JustDoCleanupExtractorEnvironment
+    Abort "Setup cannot isolate its temporary files. Retry the installation."
+  ${EndIf}
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_TEMP_ROOT", t "$JustDoExtractorTempDirectory")i.r0'
+  ${If} $0 == 0
+    Call JustDoCleanupExtractorEnvironment
+    Abort "Setup cannot isolate its temporary files. Retry the installation."
+  ${EndIf}
+  System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT", t "$JustDoPreviousTemp")i.r0'
+  ${If} $0 == 0
+    Call JustDoCleanupExtractorEnvironment
+    Abort "Setup cannot isolate its temporary files. Retry the installation."
+  ${EndIf}
+  FileWrite $2 "extractor-temp-root: $JustDoExtractorTempDirectory$\r$\n"
+
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "tar-extract-start: $5-$4-$3 $7:$8:$9$\r$\n"
   !insertmacro JustDoSetInstallStatus \
@@ -981,6 +1181,7 @@ FunctionEnd
     StrCpy $0 "launch-$R7-$R8"
     Goto TarExtractFailed
   ${EndIf}
+  StrCpy $JustDoExtractorActive "1"
 
   ${If} ${Silent}
     ${StdUtils.WaitForProcEx} $0 $R8
@@ -1009,6 +1210,7 @@ FunctionEnd
     ${StdUtils.WaitForProcEx} $0 $R8
   ${EndIf}
   Call JustDoPollResourceProgress
+  StrCpy $JustDoExtractorActive "0"
 
   Delete "$JustDoResourceProgressFile"
   StrCpy $JustDoResourceProgressFile ""
@@ -1039,6 +1241,10 @@ FunctionEnd
     MessageBox MB_OK|MB_ICONEXCLAMATION "$1" /SD IDOK
     System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "")i'
     System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
+    Call JustDoCleanupExtractorEnvironment
+    ${If} $JustDoExtractorTempDirectory != ""
+      FileWrite $2 "extractor-temp-cleanup: incomplete path=$JustDoExtractorTempDirectory$\r$\n"
+    ${EndIf}
     SetDetailsPrint both
     FileClose $2
     Abort "Resource extraction failed."
@@ -1101,6 +1307,10 @@ FunctionEnd
   Pop $0
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK", t "")i'
   Pop $0
+  Call JustDoCleanupExtractorEnvironment
+  ${If} $JustDoExtractorTempDirectory != ""
+    FileWrite $2 "extractor-temp-cleanup: incomplete path=$JustDoExtractorTempDirectory$\r$\n"
+  ${EndIf}
   FileWrite $2 "clear-electron-run-as-node: result=$0$\r$\n"
 
   ; Marks installations completed by NSIS. Packaged-but-uninstalled win-unpacked

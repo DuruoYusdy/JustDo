@@ -17,20 +17,54 @@ try {
       [IO.Path]::AltDirectorySeparatorChar
     ) + [IO.Path]::DirectorySeparatorChar
   $callerPid = [int][Environment]::GetEnvironmentVariable('JUSTDO_CALLER_PID', 'Process')
+  $appProcessName = [Environment]::GetEnvironmentVariable('JUSTDO_APP_PROCESS_NAME', 'Process')
   $helperPid = $PID
+
+  function Test-AppExecutableLocked {
+    if ([string]::IsNullOrWhiteSpace($appProcessName)) { return $false }
+    $appExecutablePath = Join-Path $installRoot "$appProcessName.exe"
+    if (-not (Test-Path -LiteralPath $appExecutablePath)) { return $false }
+    try {
+      $stream = [IO.File]::Open(
+        $appExecutablePath,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::None
+      )
+      $stream.Dispose()
+      return $false
+    } catch {
+      return $true
+    }
+  }
 
   function Get-InstalledProcesses {
     @(
-      Get-CimInstance Win32_Process | Where-Object {
+      Get-Process -ErrorAction Stop | Where-Object {
+        $process = $_
         try {
-          $_.ProcessId -ne $helperPid -and
-          $_.ProcessId -ne $callerPid -and
-          -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
-          [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
+          $executablePath = $process.Path
+          if ([string]::IsNullOrWhiteSpace($executablePath) -and
+              -not [string]::IsNullOrWhiteSpace($appProcessName) -and
+              $process.ProcessName -ieq $appProcessName) {
+            throw 'Application process path is unavailable.'
+          }
+          $process.Id -ne $helperPid -and
+          $process.Id -ne $callerPid -and
+          -not [string]::IsNullOrWhiteSpace($executablePath) -and
+          [IO.Path]::GetFullPath($executablePath).StartsWith(
             $installRoot,
             [StringComparison]::OrdinalIgnoreCase
           )
         } catch {
+          # A same-named application whose path cannot be inspected must not be
+          # silently treated as closed. Other protected system processes are
+          # irrelevant and remain safely ignored.
+          if (-not [string]::IsNullOrWhiteSpace($appProcessName) -and
+              $process.ProcessName -ieq $appProcessName -and
+              (Test-AppExecutableLocked)) {
+            throw
+          }
           $false
         }
       }
@@ -100,12 +134,12 @@ try {
       ) + [IO.Path]::DirectorySeparatorChar
 
     @(
-      Get-CimInstance Win32_Process | Where-Object {
+      Get-Process -ErrorAction Stop | Where-Object {
         try {
-          $executablePath = [IO.Path]::GetFullPath($_.ExecutablePath)
-          $_.ProcessId -ne $helperPid -and
-          $_.ProcessId -ne $callerPid -and
-          -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+          $executablePath = [IO.Path]::GetFullPath($_.Path)
+          $_.Id -ne $helperPid -and
+          $_.Id -ne $callerPid -and
+          -not [string]::IsNullOrWhiteSpace($_.Path) -and
           $executablePath.StartsWith(
             $legacyPythonRoot,
             [StringComparison]::OrdinalIgnoreCase
@@ -141,7 +175,15 @@ try {
     Assert-SafeRuntimeStagingRoot
     if (-not (Test-Path -LiteralPath $runtimeStagingRoot)) { return @() }
 
-    $restored = [Collections.Generic.List[string]]::new()
+    $stagingEntries = @(Get-ChildItem -LiteralPath $runtimeStagingRoot -Force)
+    foreach ($entry in $stagingEntries) {
+      if ($entry.Name -notin $managedRuntimeNames -or
+          -not $entry.PSIsContainer -or
+          ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Runtime staging directory contains an unexpected or unsafe entry.'
+      }
+    }
+
     foreach ($runtimeName in $managedRuntimeNames) {
       $stagedPath = Join-Path $runtimeStagingRoot $runtimeName
       if (-not (Test-Path -LiteralPath $stagedPath)) { continue }
@@ -149,15 +191,18 @@ try {
       if (Test-Path -LiteralPath $destinationPath) {
         throw "Runtime restore destination already exists: $runtimeName"
       }
+    }
+
+    $restored = [Collections.Generic.List[string]]::new()
+    foreach ($runtimeName in $managedRuntimeNames) {
+      $stagedPath = Join-Path $runtimeStagingRoot $runtimeName
+      if (-not (Test-Path -LiteralPath $stagedPath)) { continue }
+      $destinationPath = Join-Path (Join-Path $installDirectory 'resources') $runtimeName
       [IO.Directory]::CreateDirectory((Split-Path -Parent $destinationPath)) | Out-Null
       Move-Item -LiteralPath $stagedPath -Destination $destinationPath
       $restored.Add($runtimeName)
     }
 
-    $unknownEntries = @(Get-ChildItem -LiteralPath $runtimeStagingRoot -Force)
-    if ($unknownEntries.Count -gt 0) {
-      throw 'Runtime staging directory contains unexpected entries.'
-    }
     Remove-Item -LiteralPath $runtimeStagingRoot -Force
     return $restored.ToArray()
   }
@@ -176,7 +221,7 @@ try {
     }
     'Stop' {
       Get-InstalledProcesses | ForEach-Object {
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        try { $_.Kill() } catch { }
       }
       for ($attempt = 0; $attempt -lt 15; $attempt++) {
         if ((Get-InstalledProcesses).Count -eq 0) { exit 0 }
@@ -190,7 +235,7 @@ try {
       # tree; never match every python.exe on the machine.
       $matched = @(Get-LegacyPythonProcesses)
       $matched | ForEach-Object {
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        try { $_.Kill() } catch { }
       }
       for ($attempt = 0; $attempt -lt 20; $attempt++) {
         $remaining = @(Get-LegacyPythonProcesses)
@@ -199,7 +244,7 @@ try {
           exit 0
         }
         $remaining | ForEach-Object {
-          Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+          try { $_.Kill() } catch { }
         }
         Start-Sleep -Milliseconds 250
       }

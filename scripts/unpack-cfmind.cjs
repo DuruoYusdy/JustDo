@@ -20,7 +20,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const { createZstdDecompress } = require('zlib');
@@ -40,6 +40,13 @@ let progressWriteWarningShown = false;
 let lastProgressPercent = null;
 let lastProgressMode = 'indeterminate';
 let diagnosticWriteWarningShown = false;
+let activeExtractorChild = null;
+let activeExtractionAbort = null;
+let diskGrowthFailure = null;
+
+const GIB = 1024 * 1024 * 1024;
+const DISK_RESERVE_BYTES = 2 * GIB;
+const INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
 
 function sanitizeDiagnosticValue(value) {
   return String(value ?? '')
@@ -144,12 +151,161 @@ function readArchiveMetadata() {
     writeDiagnostic('info', 'archive-metadata-read', {
       schemaVersion: metadata.schemaVersion,
       totalEntries: metadata.totalEntries,
+      uncompressedBytes: metadata.uncompressedBytes || 'unknown',
     });
     return metadata;
   } catch (error) {
     diagnosticWarning('unable to read archive metadata', error);
     return null;
   }
+}
+
+function createDiskGrowthGuard(metadata, archiveSizeBytes) {
+  const declaredBytes = Number(metadata?.uncompressedBytes);
+  const hasDeclaredSize = Number.isSafeInteger(declaredBytes) && declaredBytes > 0;
+  const estimatedBytes = hasDeclaredSize
+    ? declaredBytes
+    : Math.max(archiveSizeBytes * 8, archiveSizeBytes + 4 * GIB);
+  if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes <= 0) {
+    throw new Error('Unable to establish a safe extraction size limit.');
+  }
+  if (!hasDeclaredSize) {
+    writeDiagnostic('warn', 'disk-growth-guard-using-archive-fallback', {
+      archiveSizeBytes,
+      estimatedBytes,
+    });
+  }
+
+  const roots = [
+    { role: 'destination', value: destDir },
+    { role: 'original-temp', value: process.env.JUSTDO_INSTALLER_ORIGINAL_TEMP_ROOT },
+  ].filter(item => typeof item.value === 'string' && item.value.trim().length > 0);
+  const extractionRequirementBytes = BigInt(
+    estimatedBytes + Math.max(GIB, Math.ceil(estimatedBytes * 0.1)),
+  );
+  const configuredGrowthBudget = Math.max(estimatedBytes * 3, estimatedBytes + 4 * GIB);
+  const volumes = [];
+  for (const item of roots) {
+    const root = path.resolve(item.value);
+    try {
+      const stats = fs.statfsSync(root, { bigint: true });
+      const availableBytes = stats.bavail * stats.bsize;
+      const volumeRoot = path.parse(root).root.toLowerCase();
+      if (volumes.some(volume => volume.volumeRoot === volumeRoot)) continue;
+      const reserveBytes = BigInt(DISK_RESERVE_BYTES);
+      if (availableBytes <= reserveBytes) {
+        throw new Error(`Insufficient free space on ${volumeRoot}`);
+      }
+      if (
+        item.role === 'destination' &&
+        availableBytes < extractionRequirementBytes + reserveBytes
+      ) {
+        throw new Error(`Insufficient free space to extract resources on ${volumeRoot}`);
+      }
+      volumes.push({
+        availableBytes,
+        maximumGrowthBytes:
+          availableBytes - reserveBytes < BigInt(configuredGrowthBudget)
+            ? availableBytes - reserveBytes
+            : BigInt(configuredGrowthBudget),
+        reserveBytes,
+        root,
+        volumeRoot,
+      });
+    } catch (error) {
+      throw new Error(`Unable to establish disk guard for ${item.role}: ${error.message}`);
+    }
+  }
+
+  writeDiagnostic('info', 'disk-growth-guard-started', {
+    estimatedBytes,
+    reserveBytes: DISK_RESERVE_BYTES,
+    monitoredVolumes: volumes.length,
+  });
+
+  let stopped = false;
+  const sampleVolumes = () => {
+    if (stopped) return;
+    for (const volume of volumes) {
+      try {
+        const stats = fs.statfsSync(volume.root, { bigint: true });
+        const availableBytes = stats.bavail * stats.bsize;
+        const consumedBytes = volume.availableBytes - availableBytes;
+        if (availableBytes > volume.reserveBytes && consumedBytes < volume.maximumGrowthBytes) {
+          continue;
+        }
+
+        stopped = true;
+        writeDiagnostic('error', 'unexpected-disk-growth', {
+          availableBytes,
+          consumedBytes,
+          maximumGrowthBytes: volume.maximumGrowthBytes,
+          reserveBytes: volume.reserveBytes,
+          volumeRoot: volume.root,
+        });
+        reportProgress(null, 'Installation stopped because temporary disk usage grew unexpectedly');
+        diskGrowthFailure = new Error(
+          `Unexpected disk growth exceeded the installer limit on ${volume.root}`,
+        );
+        activeExtractorChild?.kill();
+        activeExtractionAbort?.();
+        return;
+      } catch (error) {
+        diskGrowthFailure = new Error(
+          `Unable to sample guarded volume ${volume.volumeRoot}: ${error.message}`,
+        );
+        activeExtractorChild?.kill();
+        activeExtractionAbort?.();
+        return;
+      }
+    }
+  };
+  const timer = setInterval(sampleVolumes, 1000);
+  timer.unref();
+
+  return {
+    checkNow() {
+      sampleVolumes();
+      assertNoDiskGrowthFailure();
+    },
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+}
+
+function assertNoDiskGrowthFailure() {
+  if (diskGrowthFailure) throw diskGrowthFailure;
+}
+
+async function runValidationProcess(executable, args, timeoutMs) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    activeExtractorChild = child;
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', chunk => {
+      stdout = `${stdout}${chunk}`.slice(-8192);
+    });
+    child.stderr?.on('data', chunk => {
+      stderr = `${stderr}${chunk}`.slice(-8192);
+    });
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      activeExtractorChild = null;
+      if (diskGrowthFailure) {
+        reject(diskGrowthFailure);
+        return;
+      }
+      resolve({ signal, status: code, stderr, stdout });
+    });
+  });
 }
 
 function createEntryProgressReporter(totalEntries) {
@@ -223,6 +379,7 @@ async function extractArchive(entryProgress) {
         stdio: [isZstd ? 'pipe' : 'ignore', 'ignore', 'pipe'],
       },
     );
+    activeExtractorChild = child;
     writeDiagnostic('info', 'archive-extractor-started', {
       extractor: 'windows-native-tar',
       pid: child.pid || '',
@@ -286,8 +443,10 @@ async function extractArchive(entryProgress) {
       [processResult, pumpError] = await Promise.all([processResultPromise, pumpResultPromise]);
     } finally {
       clearInterval(heartbeat);
+      activeExtractorChild = null;
     }
 
+    assertNoDiskGrowthFailure();
     if (processResult.error || processResult.code !== 0 || pumpError) {
       const detail = stderr.trim();
       writeDiagnostic('error', 'archive-extractor-failed', {
@@ -322,7 +481,12 @@ async function extractArchive(entryProgress) {
     input: isZstd ? 'zstd-decoded-stream' : 'archive-file',
   });
   const tar = loadTarModule();
-  if (isZstd) {
+  if (!isZstd) {
+    throw new Error('A cancellable native tar extractor is required for this archive format.');
+  }
+  const abortController = new AbortController();
+  activeExtractionAbort = () => abortController.abort(diskGrowthFailure);
+  try {
     await pipeline(
       fs.createReadStream(tarPath),
       createZstdDecompress(),
@@ -330,14 +494,12 @@ async function extractArchive(entryProgress) {
         cwd: destDir,
         onentry: entryProgress.onEntry,
       }),
+      { signal: abortController.signal },
     );
-  } else {
-    await tar.extract({
-      file: tarPath,
-      cwd: destDir,
-      onentry: entryProgress.onEntry,
-    });
+  } finally {
+    activeExtractionAbort = null;
   }
+  assertNoDiskGrowthFailure();
   entryProgress.complete();
   writeDiagnostic('info', 'archive-extractor-complete', {
     extractor: 'npm-tar',
@@ -416,9 +578,54 @@ function loadTarModule() {
   }
 
   writeDiagnostic('error', 'tar-module-unavailable', { attemptedPath: asarTarPath });
-  console.error('[unpack-cfmind] Error: cannot load tar module');
-  console.error(`[unpack-cfmind] Tried: ${asarTarPath}`);
-  process.exit(1);
+  throw new Error(`Cannot load the fallback tar module from ${asarTarPath}`);
+}
+
+function cleanupManagedInstallerTempRoot() {
+  const configuredRoot = process.env.JUSTDO_INSTALLER_TEMP_ROOT;
+  if (!configuredRoot) return;
+
+  const managedRoot = path.resolve(configuredRoot);
+  const destinationRoot = path.resolve(destDir);
+  const installationRoot = path.dirname(destinationRoot);
+  // GetTickCount is read through a signed NSIS integer and can be negative
+  // after wraparound, producing either "pid-tick" or "pid--tick".
+  const expectedName = /^\.justdo-installer-temp-\d+--?\d+$/;
+  if (
+    path.basename(destinationRoot).toLowerCase() !== 'resources' ||
+    path.dirname(managedRoot).toLowerCase() !== installationRoot.toLowerCase() ||
+    !expectedName.test(path.basename(managedRoot))
+  ) {
+    writeDiagnostic('warn', 'extractor-temp-cleanup-refused', {
+      reason: 'path-outside-managed-boundary',
+      path: managedRoot,
+    });
+    return;
+  }
+  if (!fs.existsSync(managedRoot)) return;
+
+  const assertNoReparsePoints = currentPath => {
+    const stat = fs.lstatSync(currentPath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`reparse point found at ${currentPath}`);
+    }
+    if (!stat.isDirectory()) return;
+    for (const entry of fs.readdirSync(currentPath)) {
+      assertNoReparsePoints(path.join(currentPath, entry));
+    }
+  };
+
+  try {
+    assertNoReparsePoints(managedRoot);
+    fs.rmSync(managedRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    writeDiagnostic('info', 'extractor-temp-cleanup-complete', { path: managedRoot });
+  } catch (error) {
+    writeDiagnostic('warn', 'extractor-temp-cleanup-incomplete', {
+      path: managedRoot,
+      message: error?.message || '',
+      code: error?.code || '',
+    });
+  }
 }
 
 // ============================================================
@@ -426,6 +633,13 @@ function loadTarModule() {
 // ============================================================
 
 async function main() {
+  let diskGrowthGuard = { checkNow() {}, stop() {} };
+  const installTimeout = setTimeout(() => {
+    diskGrowthFailure = new Error('Resource installation exceeded the 30 minute safety limit.');
+    activeExtractorChild?.kill();
+    activeExtractionAbort?.();
+  }, INSTALL_TIMEOUT_MS);
+  installTimeout.unref();
   try {
     writeDiagnostic('info', 'resource-install-start', {
       pid: process.pid,
@@ -453,6 +667,7 @@ async function main() {
 
     // Ensure destination directory exists
     fs.mkdirSync(destDir, { recursive: true });
+    diskGrowthGuard = createDiskGrowthGuard(archiveMetadata, archiveStat.size);
     try {
       const filesystem = fs.statfsSync(destDir, { bigint: true });
       writeDiagnostic('info', 'destination-filesystem-inspected', {
@@ -659,14 +874,10 @@ async function main() {
       }
       if (process.env.JUSTDO_INSTALLER_PYTHON_IMPORT_CHECK === '1') {
         const importCheckStartedAt = Date.now();
-        const importCheck = spawnSync(
+        const importCheck = await runValidationProcess(
           path.join(pythonDir, 'python.exe'),
           ['-c', 'import pip, requests, yaml, openpyxl, pypdf, bs4'],
-          {
-            encoding: 'utf8',
-            stdio: 'pipe',
-            timeout: 60_000,
-          },
+          60_000,
         );
         if (importCheck.status !== 0) {
           const detail = (importCheck.stderr || importCheck.stdout || '').trim();
@@ -688,6 +899,7 @@ async function main() {
 
       reportProgress(null, 'OpenClaw runtime verified');
       writeDiagnostic('info', 'runtime-validation-complete');
+      diskGrowthGuard.checkNow();
       fs.rmSync(transactionStatePath, { force: true });
       if (fs.existsSync(transactionStatePath)) {
         throw new Error(`Unable to commit runtime upgrade transaction: ${transactionStatePath}`);
@@ -771,8 +983,14 @@ async function main() {
       durationMs: Date.now() - t0,
       extractedEntries: entryProgress.count,
     });
+    diskGrowthGuard.checkNow();
+    diskGrowthGuard.stop();
+    clearTimeout(installTimeout);
+    cleanupManagedInstallerTempRoot();
     process.exit(0);
   } catch (err) {
+    diskGrowthGuard.stop();
+    clearTimeout(installTimeout);
     console.error(`[unpack-cfmind] Extraction failed: ${err.message}`);
     reportProgress(null, `Extraction failed: ${err.message}`);
     writeDiagnostic('error', 'resource-install-failed', {
@@ -782,6 +1000,7 @@ async function main() {
       stack: err.stack || '',
       progressPercent: lastProgressPercent,
     });
+    cleanupManagedInstallerTempRoot();
     process.exit(1);
   }
 }
