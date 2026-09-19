@@ -161,7 +161,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the nineteen retained capability patches', () => {
+  test('contains exactly the twenty retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -182,6 +182,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '021-isolated-openai-compatible-media-providers.cjs',
       '022-justdo-reset-display-history.cjs',
       '023-managed-session-fork-target-key.cjs',
+      '024-acp-allowed-agents-hot-reload.cjs',
     ]);
   });
 
@@ -1446,6 +1447,38 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(testing.transformMemoryManager(transformed, 'memory.js')).toBe(transformed);
     expect(() =>
       testing.transformMemoryManager(`${source}\n${source}`, 'ambiguous-memory.js'),
+    ).toThrow('ambiguous');
+  });
+
+  test('classifies ACP allowlist changes for native hot reload', () => {
+    const testing = patches.get('024')?.__testing as {
+      INSERTED: string;
+      MARKER: string;
+      transformReloadPlan: (content: string, filePath: string) => string;
+    };
+    const source = [
+      'const policies = [{',
+      '  prefixes: [',
+      '    "diagnostics.cacheTrace.enabled",',
+      '    "acp.runtime.installCommand",',
+      '    "attachments.ttlHours",',
+      '  ],',
+      '  kind: "hot",',
+      '}];',
+    ].join('\n');
+
+    const transformed = testing.transformReloadPlan(source, 'config-reload-plan.js');
+
+    expect(transformed).toContain(testing.INSERTED);
+    expect(transformed).toContain(testing.MARKER);
+    expect(testing.transformReloadPlan(transformed, 'config-reload-plan.js')).toBe(transformed);
+    const misplaced = transformed.replace(`    ${testing.INSERTED}\n`, '') +
+      `\n${testing.INSERTED}`;
+    expect(() => testing.transformReloadPlan(misplaced, 'misplaced-reload-plan.js')).toThrow(
+      'partial',
+    );
+    expect(() =>
+      testing.transformReloadPlan(`${source}\n${source}`, 'ambiguous-reload-plan.js'),
     ).toThrow('ambiguous');
   });
 

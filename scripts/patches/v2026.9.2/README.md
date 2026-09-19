@@ -4,7 +4,7 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.9.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to nineteen product-specific gaps. Live Thinking emission,
+The previous 49-patch integration has been reduced to twenty product-specific gaps. Live Thinking emission,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
@@ -48,6 +48,9 @@ Patch 023 lets an authorized JustDo client atomically fork a transcript through 
 assistant entry into an explicit, unused managed session key. The target remains restricted to the
 same agent's `agent:<agent>:justdo:*` namespace; callers without `operator.admin` cannot select it,
 and assistant-entry inclusion is unavailable for linked upstream sessions.
+Patch 024 classifies the ACP agent allowlist as hot-reloadable. OpenClaw already resolves this
+prospective admission policy from the newly published configuration snapshot, so changing the
+enabled external-agent roster no longer discards the loaded Gateway runtime.
 
 | Patch                                                | Retained capability                                                                                                                                                        | Remove when upstream provides                                                                                                            |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -70,6 +73,7 @@ and assistant-entry inclusion is unavailable for linked upstream sessions.
 | `021-isolated-openai-compatible-media-providers.cjs` | Routes native OpenAI image/video providers through capability-scoped config views without sharing language credentials.                                                    | Upstream supports capability-scoped OpenAI-compatible media provider configuration.                                                      |
 | `022-justdo-reset-display-history.cjs`               | Keeps JustDo session display history visible across context-clearing reset boundaries without retaining it in model context.                                               | Upstream supports context-only reset boundaries independently from display-history visibility.                                           |
 | `023-managed-session-fork-target-key.cjs`            | Lets authorized JustDo forks atomically include a selected complete assistant entry in an explicit same-agent managed session key without overwriting an existing session. | Upstream `sessions.fork` accepts an authorized caller-supplied target key and assistant cut semantics with equivalent lifecycle fencing. |
+| `024-acp-allowed-agents-hot-reload.cjs`               | Applies external-agent allowlist changes through native hot reload instead of restarting the Gateway.                                                                      | Upstream classifies `acp.allowedAgents` as hot-reloadable.                                                                                |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.9.2 marker shape. `verify-openclaw-pristine-contracts`

@@ -50,6 +50,7 @@ type GatewayExitListener = (code: number | null, signal: NodeJS.Signals | null) 
 
 const GATEWAY_PORT_SCAN_LIMIT = 80;
 const GATEWAY_BOOT_TIMEOUT_MS = 300 * 1000;
+const GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS = 60 * 1000;
 const GATEWAY_HEALTH_POLL_INTERVAL_MS = 1_000;
 const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
 const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
@@ -912,13 +913,22 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     if (isGatewayProcessAlive(this.gatewayProcess)) {
+      const existingProcess = this.gatewayProcess;
       const port = this.gatewayPort ?? this.readGatewayPort();
       if (port) {
+        const lifecycleBeforeHealth =
+          this.gatewayConfigReloadMonitor.getGatewayLifecycleGeneration();
+        const restartPendingBeforeHealth =
+          this.gatewayConfigReloadMonitor.isGatewayRestartPending();
         const healthy = await this.isGatewayHealthy(port);
         console.log(
           `[OpenClaw] startGateway: existing process health check (${elapsed()}), healthy=${healthy}`,
         );
-        if (healthy) {
+        if (
+          healthy &&
+          this.gatewayProcess === existingProcess &&
+          isGatewayProcessAlive(existingProcess)
+        ) {
           if (this.status.phase !== 'running') {
             this.setStatus({
               phase: 'running',
@@ -929,10 +939,58 @@ export class OpenClawEngineManager extends EventEmitter {
           }
           return this.getStatus();
         }
+
+        // A native config restart deliberately keeps the process alive while
+        // its HTTP listener is briefly unavailable. Treating that interval as
+        // a hung process turns a fast in-process restart into a full cold
+        // bundle/plugin startup. Wait for the coordinator's next ready marker
+        // before considering process replacement.
+        const lifecycleAfterHealth =
+          this.gatewayConfigReloadMonitor.getGatewayLifecycleGeneration();
+        if (
+          restartPendingBeforeHealth ||
+          this.gatewayConfigReloadMonitor.isGatewayRestartPending() ||
+          lifecycleAfterHealth > lifecycleBeforeHealth
+        ) {
+          console.log(
+            `[OpenClaw] startGateway: existing process is restarting in place; waiting for ready (${elapsed()})`,
+          );
+          const restartedInPlace = await this.gatewayConfigReloadMonitor.waitForGatewayReadyAfter(
+            lifecycleBeforeHealth,
+            GATEWAY_IN_PROCESS_RESTART_TIMEOUT_MS,
+          );
+          if (
+            restartedInPlace &&
+            this.gatewayProcess === existingProcess &&
+            isGatewayProcessAlive(existingProcess)
+          ) {
+            console.log(
+              `[OpenClaw] startGateway: existing process completed in-process restart (${elapsed()})`,
+            );
+            return this.getStatus();
+          }
+          console.warn(
+            `[OpenClaw] startGateway: in-process restart did not become ready; replacing process (${elapsed()})`,
+          );
+        }
       }
 
-      await this.stopGatewayProcess(this.gatewayProcess);
-      this.gatewayProcess = null;
+      // The exit handler may have cleared or replaced the owned process while
+      // an async health/restart wait was pending. Never stop a newer generation
+      // or pass a cleared handle into the process shutdown path.
+      if (this.gatewayProcess === existingProcess) {
+        if (isGatewayProcessAlive(existingProcess)) {
+          await this.stopGatewayProcess(existingProcess);
+        }
+        if (this.gatewayProcess === existingProcess) {
+          this.gatewayProcess = null;
+        }
+      }
+    }
+
+    if (this.shutdownRequested) {
+      console.log('[OpenClaw] startGateway: shutdown requested during process recovery; aborting');
+      return this.getStatus();
     }
 
     const runtime = this.resolveRuntimeMetadata();
@@ -1014,6 +1072,11 @@ export class OpenClawEngineManager extends EventEmitter {
     });
     console.log(`[OpenClaw] startGateway: pre-fork setup done (${elapsed()})`);
 
+    if (this.shutdownRequested) {
+      console.log('[OpenClaw] startGateway: shutdown requested before process creation; aborting');
+      return this.getStatus();
+    }
+
     this.setStatus({
       phase: 'starting',
       version: runtime.version,
@@ -1084,6 +1147,10 @@ export class OpenClawEngineManager extends EventEmitter {
       `[OpenClaw] startGateway: waitForGatewayReady returned (${elapsed()}), ready=${ready}`,
     );
     if (!ready) {
+      if (this.shutdownRequested) {
+        console.log('[OpenClaw] startGateway: startup cancelled by shutdown');
+        return this.getStatus();
+      }
       this.setStatus({
         phase: 'error',
         version: runtime.version,

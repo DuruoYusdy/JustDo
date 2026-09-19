@@ -25,6 +25,7 @@ describe('GatewayConfigReloadMonitor', () => {
     expect(classifyGatewayConfigReloadPath('models.providers.builtin_models')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('plugins.load.paths')).toBe('restart');
     expect(classifyGatewayConfigReloadPath('plugins.entries.ask-user.enabled')).toBe('hot');
+    expect(classifyGatewayConfigReloadPath('acp.allowedAgents')).toBe('hot');
     expect(classifyGatewayConfigReloadPath('gateway.remote.url')).toBe('dynamic');
     expect(classifyGatewayConfigReloadPath('gateway.bind')).toBe('restart');
     expect(
@@ -113,6 +114,9 @@ describe('GatewayConfigReloadMonitor', () => {
     monitor.observeLine(
       '[reload] config change requires gateway restart (gateway.bind) — restarting now',
     );
+    expect(monitor.isGatewayRestartPending()).toBe(false);
+    monitor.observeLine('[gateway] received SIGUSR1; restarting');
+    expect(monitor.isGatewayRestartPending()).toBe(true);
     const result = monitor.waitForReloadAfter(generation);
     let settled = false;
     void result.then(() => {
@@ -124,6 +128,27 @@ describe('GatewayConfigReloadMonitor', () => {
     monitor.observeLine('[gateway] ready');
 
     await expect(result).resolves.toBe(true);
+    expect(monitor.isGatewayRestartPending()).toBe(false);
+  });
+
+  it('clears the in-process restart marker when the managed process exits', () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    monitor.observeLine('[gateway] received SIGUSR1; restarting');
+    expect(monitor.isGatewayRestartPending()).toBe(true);
+
+    monitor.observeGatewayExit();
+
+    expect(monitor.isGatewayRestartPending()).toBe(false);
+  });
+
+  it('tracks an explicit native restart without a preceding config change', () => {
+    const monitor = new GatewayConfigReloadMonitor();
+
+    monitor.observeLine('[gateway] received SIGUSR1; restarting');
+    expect(monitor.isGatewayRestartPending()).toBe(true);
+
+    monitor.observeLine('[gateway] ready');
+    expect(monitor.isGatewayRestartPending()).toBe(false);
   });
 
   it('tracks Gateway ready independently from config reload records', async () => {

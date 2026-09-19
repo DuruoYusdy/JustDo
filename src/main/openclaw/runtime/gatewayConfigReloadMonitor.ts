@@ -39,6 +39,7 @@ const RELOAD_RULES: ReloadRule[] = [
   { prefix: 'plugins.installs', kind: 'restart' },
   { prefix: 'talk.provider', kind: 'hot' },
   { prefix: 'talk.realtime.provider', kind: 'hot' },
+  { prefix: 'acp.allowedAgents', kind: 'hot' },
   { prefix: 'meta', kind: 'dynamic' },
   { prefix: 'identity', kind: 'dynamic' },
   { prefix: 'wizard', kind: 'dynamic' },
@@ -104,6 +105,7 @@ export class GatewayConfigReloadMonitor {
   private gatewayLifecycleGeneration = 0;
   private lastGatewayReadyGeneration = 0;
   private lastGatewayExitGeneration = 0;
+  private gatewayRestartPending = false;
   private readonly records: ReloadRecord[] = [];
   private readonly listeners = new Set<() => void>();
 
@@ -115,7 +117,12 @@ export class GatewayConfigReloadMonitor {
     return this.gatewayLifecycleGeneration;
   }
 
+  isGatewayRestartPending(): boolean {
+    return this.gatewayRestartPending;
+  }
+
   observeGatewayExit(): void {
+    this.gatewayRestartPending = false;
     this.lastGatewayExitGeneration = ++this.gatewayLifecycleGeneration;
     this.notify();
   }
@@ -158,7 +165,17 @@ export class GatewayConfigReloadMonitor {
       return;
     }
 
+    if (
+      line.includes('[gateway] received SIGUSR1; restarting') ||
+      line.includes('[gateway] restart mode: in-process restart')
+    ) {
+      this.gatewayRestartPending = true;
+      this.notify();
+      return;
+    }
+
     if (GATEWAY_READY_LINE_PATTERN.test(line)) {
+      this.gatewayRestartPending = false;
       this.lastGatewayReadyGeneration = ++this.gatewayLifecycleGeneration;
       for (const record of this.records) {
         if (!record.outcome && record.restartAccepted) {

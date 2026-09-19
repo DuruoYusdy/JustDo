@@ -38,6 +38,7 @@ const EXPECTED_PATCH_FILES = [
   '021-isolated-openai-compatible-media-providers.cjs',
   '022-justdo-reset-display-history.cjs',
   '023-managed-session-fork-target-key.cjs',
+  '024-acp-allowed-agents-hot-reload.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

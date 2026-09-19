@@ -81,6 +81,90 @@ test('uses the dedicated Gateway bundle directly on POSIX only', () => {
   }
 });
 
+test('retains a Gateway that becomes ready during an overlapping health probe', async () => {
+  const existingProcess = { pid: 1234, exitCode: null };
+  let lifecycle = 0;
+  let restartPending = true;
+  const waitForGatewayReadyAfter = vi.fn(async (generation: number) =>
+    lifecycle > generation,
+  );
+  const stopGatewayProcess = vi.fn(async () => undefined);
+  const manager = Object.create(OpenClawEngineManager.prototype) as unknown as {
+    shutdownRequested: boolean;
+    status: {
+      phase: 'running';
+      version: string;
+      message: string;
+      canRetry: false;
+    };
+    desiredVersion: string;
+    gatewayProcess: typeof existingProcess | null;
+    gatewayPort: number;
+    startGatewayPromise: Promise<unknown> | null;
+    gatewayConfigReloadMonitor: {
+      getGatewayLifecycleGeneration: () => number;
+      isGatewayRestartPending: () => boolean;
+      waitForGatewayReadyAfter: typeof waitForGatewayReadyAfter;
+    };
+    ensureReady: () => Promise<{
+      phase: 'running';
+      version: string;
+      message: string;
+      canRetry: false;
+    }>;
+    isGatewayHealthy: () => Promise<boolean>;
+    stopGatewayProcess: typeof stopGatewayProcess;
+    doStartGateway: () => Promise<{ phase: string }>;
+  };
+  manager.shutdownRequested = false;
+  manager.status = {
+    phase: 'running',
+    version: 'v2026.9.2',
+    message: 'running',
+    canRetry: false,
+  };
+  manager.desiredVersion = 'v2026.9.2';
+  manager.gatewayProcess = existingProcess;
+  manager.gatewayPort = 42872;
+  manager.startGatewayPromise = null;
+  manager.gatewayConfigReloadMonitor = {
+    getGatewayLifecycleGeneration: () => lifecycle,
+    isGatewayRestartPending: () => restartPending,
+    waitForGatewayReadyAfter,
+  };
+  manager.ensureReady = vi.fn(async () => manager.status);
+  manager.isGatewayHealthy = vi.fn(async () => {
+    lifecycle = 1;
+    restartPending = false;
+    return false;
+  });
+  manager.stopGatewayProcess = stopGatewayProcess;
+
+  await expect(manager.doStartGateway()).resolves.toMatchObject({ phase: 'running' });
+
+  expect(waitForGatewayReadyAfter).toHaveBeenCalledWith(0, 60_000);
+  expect(stopGatewayProcess).not.toHaveBeenCalled();
+  expect(manager.gatewayProcess).toBe(existingProcess);
+
+  // A concurrent stop owns the process after the restart wait and must prevent
+  // the same start attempt from falling through to a new cold launch.
+  lifecycle = 0;
+  restartPending = true;
+  manager.shutdownRequested = false;
+  manager.gatewayProcess = existingProcess;
+  manager.isGatewayHealthy = vi.fn(async () => false);
+  waitForGatewayReadyAfter.mockImplementationOnce(async () => {
+    manager.shutdownRequested = true;
+    manager.gatewayProcess = null;
+    return false;
+  });
+
+  await expect(manager.doStartGateway()).resolves.toMatchObject({ phase: 'running' });
+
+  expect(stopGatewayProcess).not.toHaveBeenCalled();
+  expect(manager.gatewayProcess).toBeNull();
+});
+
 test('keeps the inherited CLI environment when outbound proxy mode is not requested', () => {
   const baseEnv = { PATH: 'base' };
   const buildNetworkEnvironment = vi.fn();
