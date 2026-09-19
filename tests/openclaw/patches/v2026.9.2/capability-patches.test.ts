@@ -1472,6 +1472,11 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(transformed).toContain(testing.INSERTED);
     expect(transformed).toContain(testing.MARKER);
     expect(testing.transformReloadPlan(transformed, 'config-reload-plan.js')).toBe(transformed);
+    const bundled = transformed.replace(
+      testing.INSERTED,
+      `"acp.allowedAgents",\n    /*${testing.MARKER}*/`,
+    );
+    expect(testing.transformReloadPlan(bundled, 'gateway-bundle.mjs')).toBe(bundled);
     const misplaced = transformed.replace(`    ${testing.INSERTED}\n`, '') +
       `\n${testing.INSERTED}`;
     expect(() => testing.transformReloadPlan(misplaced, 'misplaced-reload-plan.js')).toThrow(

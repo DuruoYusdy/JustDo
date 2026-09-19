@@ -20,17 +20,19 @@ const {
 const MARKER = 'JUSTDO_ACP_ALLOWED_AGENTS_HOT_RELOAD_V2026_9_2';
 const ANCHOR = '"acp.runtime.installCommand",';
 const INSERTED = `"acp.allowedAgents", /*${MARKER}*/`;
+const INSERTED_PATTERN =
+  /"acp\.allowedAgents",(?:[ \t]*|\r?\n[ \t]*)\/\*JUSTDO_ACP_ALLOWED_AGENTS_HOT_RELOAD_V2026_9_2\*\//g;
 const POLICY_ANCHOR_PATTERN =
   /^([ \t]*)"diagnostics\.cacheTrace\.enabled",\r?\n([ \t]*)"acp\.runtime\.installCommand",/gm;
 const PATCHED_POLICY_PATTERN =
-  /^([ \t]*)"diagnostics\.cacheTrace\.enabled",\r?\n\1"acp\.allowedAgents", \/\*JUSTDO_ACP_ALLOWED_AGENTS_HOT_RELOAD_V2026_9_2\*\/\r?\n\1"acp\.runtime\.installCommand",/gm;
+  /^([ \t]*)"diagnostics\.cacheTrace\.enabled",\r?\n\1"acp\.allowedAgents",(?:[ \t]*|\r?\n\1)\/\*JUSTDO_ACP_ALLOWED_AGENTS_HOT_RELOAD_V2026_9_2\*\/\r?\n\1"acp\.runtime\.installCommand",/gm;
 
 const countPattern = (content, pattern) =>
   [...content.matchAll(new RegExp(pattern.source, pattern.flags.replace('g', '') + 'g'))].length;
 
 function transformReloadPlan(content, filePath) {
   const markerCount = countOccurrences(content, MARKER);
-  const insertedCount = countOccurrences(content, INSERTED);
+  const insertedCount = countPattern(content, INSERTED_PATTERN);
   const patchedPolicyCount = countPattern(content, PATCHED_POLICY_PATTERN);
   if (markerCount === 1 && insertedCount === 1 && patchedPolicyCount === 1) return content;
   if (markerCount !== 0 || insertedCount !== 0) {
@@ -78,7 +80,7 @@ function verifyPatch(runtimeDir) {
     const content = fs.readFileSync(filePath, 'utf8');
     if (
       countOccurrences(content, MARKER) !== 1 ||
-      countOccurrences(content, INSERTED) !== 1 ||
+      countPattern(content, INSERTED_PATTERN) !== 1 ||
       countPattern(content, PATCHED_POLICY_PATTERN) !== 1
     ) {
       throw new Error(`${filePath}: ACP allowedAgents hot-reload contract is incomplete`);
@@ -92,6 +94,7 @@ module.exports = {
   __testing: {
     ANCHOR,
     INSERTED,
+    INSERTED_PATTERN,
     MARKER,
     PATCHED_POLICY_PATTERN,
     POLICY_ANCHOR_PATTERN,
