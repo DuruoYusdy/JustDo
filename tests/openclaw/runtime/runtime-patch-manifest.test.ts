@@ -128,6 +128,7 @@ function createFixture() {
     'sync-openclaw-runtime-current.cjs',
     'bundle-openclaw-gateway.cjs',
     'ensure-openclaw-plugins.cjs',
+    'patch-mxc-sandbox-plugin.cjs',
     'sync-openclaw-runtime-resources.cjs',
     'precompile-openclaw-extensions.cjs',
     'prune-openclaw-runtime.cjs',
@@ -140,6 +141,8 @@ function createFixture() {
     path.join(repoRoot, 'src', 'main', 'openclaw', 'runtime', 'openclawGatewayBundleLauncher.cjs'),
     '// fixture\n',
   );
+  fs.mkdirSync(path.join(repoRoot, 'src', 'shared'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'src', 'shared', 'mxcNativeBinaries.json'), '{}\n');
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, 'resources', 'builtin-skills.json'), '{}\n');
@@ -551,6 +554,20 @@ module.exports = { applyPatch, verifyPatch };
     );
   });
 
+  test('rejects an MXC plugin patch recipe changed after the runtime was built', () => {
+    const { repoRoot, runtimeRoot } = createFixture();
+    writeOpenClawPatchManifest(runtimeRoot, { repoRoot });
+
+    fs.appendFileSync(
+      path.join(repoRoot, 'scripts', 'patch-mxc-sandbox-plugin.cjs'),
+      '// changed\n',
+    );
+
+    expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
+      /source proof is missing, incomplete, or stale/,
+    );
+  });
+
   test('rejects a patch helper changed after the runtime was built', () => {
     const { patchRoot, repoRoot, runtimeRoot } = createFixture();
     const helperPath = path.join(patchRoot, '_patch-utils.js');
@@ -674,6 +691,22 @@ module.exports = { applyPatch, verifyPatch };
       'dist/extensions/acpx/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe',
     ];
     for (const relativePath of acpxFixtureFiles) {
+      const filePath = path.join(runtimeRoot, relativePath);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, 'fixture\n');
+    }
+    const mxcFixtureFiles = [
+      'dist/extensions/mxc/dist/index.js',
+      'dist/extensions/mxc/dist/mxc-spawn-launcher.mjs',
+      'dist/extensions/mxc/package.json',
+      'dist/extensions/mxc/openclaw.plugin.json',
+      'dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/bin/x64/wxc-exec.exe',
+      'dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/bin/x64/wxc-host-prep.exe',
+      'dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/dist/index.js',
+      'dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/LICENSE.md',
+      'dist/extensions/mxc/node_modules/@microsoft/mxc-sdk/node_modules/node-pty/prebuilds/win32-x64/conpty.node',
+    ];
+    for (const relativePath of mxcFixtureFiles) {
       const filePath = path.join(runtimeRoot, relativePath);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, 'fixture\n');

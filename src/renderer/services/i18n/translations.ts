@@ -1222,6 +1222,33 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     moveDown: '下移',
 
     refresh: '刷新',
+    saveFailed: '保存失败',
+    securitySettings: '安全',
+    windowsSandboxTitle: 'Windows 原生沙盒',
+    windowsSandboxDescription:
+      '通过 Windows ProcessContainer 运行命令。工作目录可写，目录外访问由系统策略限制，沙盒命令默认无法联网。',
+    windowsSandboxChecking: '正在检查沙盒状态…',
+    windowsSandboxStatus_unsupported_platform: '当前系统不支持 Windows 原生沙盒',
+    windowsSandboxStatus_plugin_missing: '安装包中缺少 MXC 沙盒组件',
+    windowsSandboxStatus_broker_unavailable: 'Windows IsoEnvBroker 服务不可用',
+    windowsSandboxStatus_host_preparation_recommended: '沙盒可用；建议完成一次系统盘兼容性准备',
+    windowsSandboxStatus_ready: '原生沙盒已就绪',
+    windowsSandboxStatus_check_failed: '沙盒自检失败',
+    windowsSandboxInitialize: '准备系统盘',
+    windowsSandboxInitializing: '准备中…',
+    windowsSandboxExecutionMode: '任务执行方式',
+    windowsSandboxLocalMode: '本机执行',
+    windowsSandboxLocalModeDescription: '兼容性最好；命令使用当前 Windows 用户权限运行。',
+    windowsSandboxMode: 'Windows 沙盒执行',
+    windowsSandboxModeDescription:
+      '命令在一次性的 Windows ProcessContainer 中运行，不创建长期存在的本地沙盒账号；浏览器与模型请求仍由应用单独管理。',
+    windowsSandboxNetworkAccess: '沙盒网络',
+    windowsSandboxAllowNetwork: '允许沙盒命令联网',
+    windowsSandboxAllowNetworkDescription:
+      '允许沙盒内运行的命令访问外部网络。工作目录隔离仍然有效。',
+    windowsSandboxNetworkWarning:
+      '启用后，沙盒内的程序可以向任意网络地址发起出站连接；MXC 当前不支持域名白名单。',
+    windowsSandboxOpenDiagnostics: '打开 MXC 组件目录',
     coworkPlaceholder: '分配一个任务或提问任何问题',
     coworkModelSettingsRequired: '请先在模型设置中配置可用模型与 API Key。',
     modelSelectorNoModels: '请先在设置中配置模型',
@@ -3763,6 +3790,35 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     moveDown: 'Move Down',
 
     refresh: 'Refresh',
+    saveFailed: 'Failed to save',
+    securitySettings: 'Security',
+    windowsSandboxTitle: 'Windows native sandbox',
+    windowsSandboxDescription:
+      'Runs commands in a Windows ProcessContainer. The workspace is writable, access outside it is restricted by OS policy, and sandboxed commands are offline by default.',
+    windowsSandboxChecking: 'Checking sandbox status…',
+    windowsSandboxStatus_unsupported_platform: 'Windows native sandbox is not supported here',
+    windowsSandboxStatus_plugin_missing: 'MXC sandbox components are missing from this build',
+    windowsSandboxStatus_broker_unavailable: 'The Windows IsoEnvBroker service is unavailable',
+    windowsSandboxStatus_host_preparation_recommended:
+      'Sandbox is available; one-time system drive preparation is recommended',
+    windowsSandboxStatus_ready: 'Native sandbox is ready',
+    windowsSandboxStatus_check_failed: 'Sandbox self-check failed',
+    windowsSandboxInitialize: 'Prepare system drive',
+    windowsSandboxInitializing: 'Preparing…',
+    windowsSandboxExecutionMode: 'Task execution mode',
+    windowsSandboxLocalMode: 'Run locally',
+    windowsSandboxLocalModeDescription:
+      'Best compatibility; commands run with the current Windows user permissions.',
+    windowsSandboxMode: 'Run in Windows sandbox',
+    windowsSandboxModeDescription:
+      'Commands run in ephemeral Windows ProcessContainers without persistent local sandbox accounts. Browser and model traffic remain separately managed by the app.',
+    windowsSandboxNetworkAccess: 'Sandbox network',
+    windowsSandboxAllowNetwork: 'Allow sandboxed commands to access the network',
+    windowsSandboxAllowNetworkDescription:
+      'Allows commands running in the sandbox to make outbound network connections. Workspace isolation remains active.',
+    windowsSandboxNetworkWarning:
+      'Sandboxed programs can connect to any network address when enabled; MXC does not currently support a domain allowlist.',
+    windowsSandboxOpenDiagnostics: 'Open MXC component folder',
     coworkPlaceholder: 'Assign a task or ask any question',
     coworkModelSettingsRequired: 'Please configure models and API keys in Model Settings first.',
     modelSelectorNoModels: 'Please configure models in settings first',

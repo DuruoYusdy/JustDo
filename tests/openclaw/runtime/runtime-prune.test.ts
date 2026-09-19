@@ -4,12 +4,16 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-const { pruneRuntimeExtensions } = require('../../../scripts/prune-openclaw-runtime.cjs') as {
+const {
+  pruneRuntimeExtensions,
+  shouldPreserveExtensionLegalFiles,
+} = require('../../../scripts/prune-openclaw-runtime.cjs') as {
   pruneRuntimeExtensions: (
     runtimeRoot: string,
     stats: { extensionDirsRemoved: number; bytesFreed: number },
     options: { repoRoot: string; label: string },
   ) => { kept: string[]; protected: string[]; removed: string[] };
+  shouldPreserveExtensionLegalFiles: (extensionId: string) => boolean;
 };
 
 const temporaryRoots: string[] = [];
@@ -48,6 +52,12 @@ afterEach(() => {
 });
 
 describe('OpenClaw runtime extension pruning', () => {
+  test('preserves legal metadata for extensions redistributed with native executables', () => {
+    expect(shouldPreserveExtensionLegalFiles('acpx')).toBe(true);
+    expect(shouldPreserveExtensionLegalFiles('mxc')).toBe(true);
+    expect(shouldPreserveExtensionLegalFiles('memory-core')).toBe(false);
+  });
+
   test('keeps reviewed and local extensions while removing reviewed optional extensions', () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const { extensionsRoot, repoRoot, runtimeRoot } = createFixture(['optional']);

@@ -45,6 +45,10 @@ const {
   verifyOpenClawPatchManifest,
 } = require('./verify-openclaw-runtime-patches.cjs');
 const { createMulticaAgentLauncher } = require('./create-multica-agent-launcher.cjs');
+const {
+  verifyMxcNativeBinaries,
+  verifyMxcSandboxPlugin,
+} = require('./patch-mxc-sandbox-plugin.cjs');
 
 function isWindowsTarget(context) {
   return context?.electronPlatformName === 'win32';
@@ -169,6 +173,19 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
     return;
   }
 
+  const runtimeTarget = String(readRuntimeBuildInfo(runtimeRoot)?.target || '');
+  const runtimePlatform = runtimeTarget.startsWith('win-')
+    ? 'win32'
+    : runtimeTarget.startsWith('mac-')
+      ? 'darwin'
+      : runtimeTarget.startsWith('linux-')
+        ? 'linux'
+        : process.platform;
+  plugins = plugins.filter(
+    plugin => !Array.isArray(plugin.platforms) || plugin.platforms.includes(runtimePlatform),
+  );
+  if (plugins.length === 0) return;
+
   const extensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
   const missing = [];
 
@@ -188,6 +205,11 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
     );
   }
 
+  if (plugins.some(plugin => plugin.id === 'mxc')) {
+    verifyMxcSandboxPlugin(path.join(extensionsDir, 'mxc'));
+    verifyMxcNativeBinaries(path.join(extensionsDir, 'mxc'), runtimeTarget);
+  }
+
   console.log(
     `[electron-builder-hooks] Verified ${plugins.length} preinstalled OpenClaw plugin(s).`,
   );
@@ -200,6 +222,11 @@ function verifyBundledLocalExtensions(runtimeRoot, buildHint) {
   const runtimeExtensionsRoot = path.join(runtimeRoot, 'dist', 'extensions');
   const extensionIds = readdirSync(repoExtensionsRoot, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
+    .filter(
+      entry =>
+        existsSync(path.join(repoExtensionsRoot, entry.name, 'package.json')) &&
+        existsSync(path.join(repoExtensionsRoot, entry.name, 'openclaw.plugin.json')),
+    )
     .map(entry => entry.name);
   for (const extensionId of extensionIds) {
     verifyRequiredPathSet(
@@ -268,6 +295,29 @@ function verifyAcpxArtifactEntryPaths(entryPaths, prefix, installTarget, buildHi
   if (missing.length > 0) {
     throw new Error(
       `[electron-builder-hooks] Packaged ACPX validation FAILED for ${buildHint}. Missing: ${missing.join(', ')}`,
+    );
+  }
+}
+
+function verifyMxcArtifactEntryPaths(entryPaths, prefix, installTarget, buildHint) {
+  if (installTarget.os !== 'win32') return;
+  const mxcPrefix = `${prefix}dist/extensions/mxc/`;
+  const arch = installTarget.cpu === 'arm64' ? 'arm64' : 'x64';
+  const requiredEntries = [
+    'dist/index.js',
+    'dist/mxc-spawn-launcher.mjs',
+    'package.json',
+    'openclaw.plugin.json',
+    `node_modules/@microsoft/mxc-sdk/bin/${arch}/wxc-exec.exe`,
+    `node_modules/@microsoft/mxc-sdk/bin/${arch}/wxc-host-prep.exe`,
+    'node_modules/@microsoft/mxc-sdk/dist/index.js',
+    'node_modules/@microsoft/mxc-sdk/LICENSE.md',
+    `node_modules/@microsoft/mxc-sdk/node_modules/node-pty/prebuilds/win32-${arch}/conpty.node`,
+  ].map(entry => `${mxcPrefix}${entry}`);
+  const missing = requiredEntries.filter(entry => !entryPaths.has(entry));
+  if (missing.length > 0) {
+    throw new Error(
+      `[electron-builder-hooks] Packaged MXC validation FAILED for ${buildHint}. Missing: ${missing.join(', ')}`,
     );
   }
 }
@@ -911,6 +961,14 @@ async function beforePack(context) {
       ),
       'Windows runtime tar',
     );
+    verifyMxcArtifactEntryPaths(
+      tarEntryPaths,
+      'cfmind/',
+      resolveRuntimeInstallTarget(
+        path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
+      ),
+      'Windows runtime tar',
+    );
     const hasMinGit =
       tarEntryPaths.has('mingit/bin/git.exe') || tarEntryPaths.has('mingit/cmd/git.exe');
     const hasPythonPipCommand = [
@@ -1527,6 +1585,14 @@ async function verifyPackagedOpenClawRuntime(context) {
         ),
         'packaged Windows archive',
       );
+      verifyMxcArtifactEntryPaths(
+        archiveEntryPaths,
+        'cfmind/',
+        resolveRuntimeInstallTarget(
+          path.join(__dirname, '..', 'vendor', 'openclaw-runtime', 'current'),
+        ),
+        'packaged Windows archive',
+      );
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
     }
@@ -1563,5 +1629,6 @@ module.exports = {
   verifyPackagedWindowsNativeModules,
   verifyPackagedOpenClawRuntime,
   verifyAcpxArtifactEntryPaths,
+  verifyMxcArtifactEntryPaths,
   verifyPackagedBrowserExtension,
 };

@@ -2,6 +2,7 @@ import type { BrowserMode } from '../../../shared/browser';
 import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
 import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
+import type { WindowsSandboxStatus } from '../../../shared/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
@@ -20,6 +21,7 @@ import {
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
   OpenClawConfigSync,
+  resolveOpenClawExecHost,
   verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
 
@@ -34,6 +36,8 @@ type OpenClawConfigSyncServiceDeps = {
   getBrowserMode?: () => BrowserMode;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
+  getWindowsSandboxStatus: () => Promise<WindowsSandboxStatus>;
+  getWindowsSandboxEnvironment: () => Record<string, string>;
 };
 
 type SyncOpenClawConfigOptions = {
@@ -436,6 +440,21 @@ export class OpenClawConfigSyncService {
     }
     const statusBeforeSync = engineManager.getStatus();
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
+    const expectedExecutionMode = this.deps.getCoworkStore().getConfig().executionMode;
+    if (expectedExecutionMode === 'sandbox') {
+      const sandboxStatus = await this.deps.getWindowsSandboxStatus();
+      if (!sandboxStatus.ready) {
+        return this.failClosedConfigApplication(
+          {
+            success: false,
+            changed: false,
+            configSynced: false,
+            status: statusBeforeSync,
+          },
+          sandboxStatus.error || 'The Windows sandbox backend is not ready.',
+        );
+      }
+    }
     let fallbackExecPolicyVerified = false;
     if (statusBeforeSync.phase === 'running') {
       try {
@@ -760,15 +779,18 @@ export class OpenClawConfigSyncService {
   }> {
     const snapshot = await this.deps.requestGateway<ConfigSnapshot>('config.get');
     const schedulerAgent = snapshot.config?.agents?.entries?.[ScheduledTaskAgentId];
+    const executionMode = this.deps.getCoworkStore().getConfig().executionMode || 'local';
+    const expectedExecHost = resolveOpenClawExecHost(executionMode);
+    const schedulerWorkspaceOnly = executionMode === 'sandbox';
     return {
       snapshot,
       verified:
-      snapshot.config?.tools?.exec?.host === 'gateway' &&
+      snapshot.config?.tools?.exec?.host === expectedExecHost &&
       snapshot.config.tools.exec.mode === OPENCLAW_FALLBACK_EXEC_MODE &&
       snapshot.config?.tools?.fs?.workspaceOnly === OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY &&
-      schedulerAgent?.tools?.exec?.host === 'gateway' &&
+      schedulerAgent?.tools?.exec?.host === expectedExecHost &&
       schedulerAgent.tools.exec.mode === 'full' &&
-      schedulerAgent.tools.fs?.workspaceOnly === false,
+      schedulerAgent.tools.fs?.workspaceOnly === schedulerWorkspaceOnly,
     };
   }
 
@@ -1142,6 +1164,7 @@ export class OpenClawConfigSyncService {
         getBrowserMode: this.deps.getBrowserMode,
         getLocalTtsConfig: this.deps.getLocalTtsConfig,
         getSpeechOutputState: this.deps.getSpeechOutputState,
+        getWindowsSandboxEnvironment: this.deps.getWindowsSandboxEnvironment,
       });
     }
     return this.configSync;

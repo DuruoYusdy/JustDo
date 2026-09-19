@@ -30,6 +30,28 @@ describe('openclawExtensionRegistry', () => {
       [OpenClawExtensionId.ACPX]: {
         enabled: true,
       },
+      [OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]: {
+        enabled: false,
+        config: {
+          containment: 'processcontainer',
+          network: 'none',
+        },
+      },
+    });
+  });
+
+  it('enables MXC only when Windows sandbox execution is selected', () => {
+    const entries = buildBundledExtensionEntries(() => true, 5, true);
+
+    expect(entries[OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]).toMatchObject({ enabled: true });
+  });
+
+  it('allows outbound sandbox networking only after explicit opt-in', () => {
+    const entries = buildBundledExtensionEntries(() => true, 5, true, true);
+
+    expect(entries[OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]).toMatchObject({
+      enabled: true,
+      config: { network: 'default' },
     });
   });
 });

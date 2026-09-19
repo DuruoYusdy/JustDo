@@ -19,6 +19,12 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {
+  patchMxcSandboxPlugin,
+  pruneMxcSandboxPluginForTarget,
+  verifyMxcNativeBinaries,
+  verifyMxcSandboxPlugin,
+} = require('./patch-mxc-sandbox-plugin.cjs');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,8 +59,7 @@ function runNpm(args, opts = {}) {
   if (result.status !== 0) {
     const stderr = (result.stderr || '').trim();
     throw new Error(
-      `npm ${args.join(' ')} exited with code ${result.status}` +
-      (stderr ? `\n${stderr}` : '')
+      `npm ${args.join(' ')} exited with code ${result.status}` + (stderr ? `\n${stderr}` : ''),
     );
   }
 
@@ -89,7 +94,7 @@ function findInstalledPackageDir(nodeModulesDir, npmSpec) {
   }
 
   // Fallback: scan node_modules for a package with an openclaw.plugin.json
-  const scanDirs = (dir) => {
+  const scanDirs = dir => {
     if (!fs.existsSync(dir)) return null;
     for (const entry of fs.readdirSync(dir)) {
       const entryPath = path.join(dir, entry);
@@ -120,32 +125,63 @@ if (process.env.OPENCLAW_SKIP_PLUGINS === '1') {
 
 // Read plugin declarations from package.json
 const pkg = require(path.join(rootDir, 'package.json'));
-const plugins = (pkg.openclaw && pkg.openclaw.plugins) || [];
+const declaredPlugins = (pkg.openclaw && pkg.openclaw.plugins) || [];
 
-if (!Array.isArray(plugins) || plugins.length === 0) {
+if (!Array.isArray(declaredPlugins) || declaredPlugins.length === 0) {
   log('No plugins declared in package.json, nothing to do.');
   process.exit(0);
 }
 
 // Validate plugin declarations
-for (const plugin of plugins) {
+for (const plugin of declaredPlugins) {
   if (!plugin.id || !plugin.npm || !plugin.version) {
     die(
       `Invalid plugin declaration: ${JSON.stringify(plugin)}. ` +
-      'Each plugin must have "id", "npm", and "version" fields.'
+        'Each plugin must have "id", "npm", and "version" fields.',
     );
+  }
+  if (
+    plugin.platforms !== undefined &&
+    (!Array.isArray(plugin.platforms) ||
+      plugin.platforms.some(platform => !['win32', 'darwin', 'linux'].includes(platform)))
+  ) {
+    die(`Invalid platforms for plugin ${plugin.id}: ${JSON.stringify(plugin.platforms)}.`);
   }
 }
 
 const forceInstall = process.env.OPENCLAW_FORCE_PLUGIN_INSTALL === '1';
 const pluginCacheBase = path.join(rootDir, 'vendor', 'openclaw-plugins');
-const runtimeExtensionsDir = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current', 'dist', 'extensions');
+const runtimeRoot = path.join(rootDir, 'vendor', 'openclaw-runtime', 'current');
+const runtimeExtensionsDir = path.join(runtimeRoot, 'dist', 'extensions');
+const runtimeBuildInfo = readJsonFile(path.join(runtimeRoot, 'runtime-build-info.json'));
+const runtimeTarget = String(runtimeBuildInfo?.target || '');
+const runtimePlatform = runtimeTarget.startsWith('win-')
+  ? 'win32'
+  : runtimeTarget.startsWith('mac-')
+    ? 'darwin'
+    : runtimeTarget.startsWith('linux-')
+      ? 'linux'
+      : process.platform;
+const plugins = declaredPlugins.filter(
+  plugin => !Array.isArray(plugin.platforms) || plugin.platforms.includes(runtimePlatform),
+);
+
+for (const plugin of declaredPlugins) {
+  if (!plugins.includes(plugin)) {
+    log(`Skipping ${plugin.id}: not supported on ${runtimePlatform}.`);
+  }
+}
+
+if (plugins.length === 0) {
+  log(`No plugins apply to runtime platform ${runtimePlatform}.`);
+  process.exit(0);
+}
 
 // Verify runtime extensions directory exists
 if (!fs.existsSync(runtimeExtensionsDir)) {
   die(
     `Runtime extensions directory does not exist: ${runtimeExtensionsDir}\n` +
-    'Build the OpenClaw runtime first (e.g. npm run openclaw:runtime:host).'
+      'Build the OpenClaw runtime first (e.g. npm run openclaw:runtime:host).',
   );
 }
 
@@ -193,7 +229,7 @@ for (const plugin of plugins) {
       fs.writeFileSync(
         path.join(tmpDir, 'package.json'),
         JSON.stringify(wrapperPkg, null, 2),
-        'utf-8'
+        'utf-8',
       );
 
       // Step 1: Install the plugin package (npm handles download + extraction)
@@ -202,18 +238,13 @@ for (const plugin of plugins) {
       if (registry) {
         installArgs.push(`--registry=${registry}`);
       }
-      runNpm(
-        installArgs,
-        { cwd: tmpDir, stdio: 'inherit' }
-      );
+      runNpm(installArgs, { cwd: tmpDir, stdio: 'inherit' });
 
       // Step 2: Locate the installed plugin in node_modules
       const nodeModulesDir = path.join(tmpDir, 'node_modules');
       const pluginSrcDir = findInstalledPackageDir(nodeModulesDir, npmSpec);
       if (!pluginSrcDir) {
-        throw new Error(
-          `Could not find installed plugin package ${npmSpec} in ${nodeModulesDir}`
-        );
+        throw new Error(`Could not find installed plugin package ${npmSpec} in ${nodeModulesDir}`);
       }
 
       log('  [2/2] Installing plugin dependencies...');
@@ -221,15 +252,14 @@ for (const plugin of plugins) {
       // Install the plugin's own production dependencies inside it
       // so it becomes self-contained
       const pluginPkg = readJsonFile(path.join(pluginSrcDir, 'package.json'));
-      const hasDeps = pluginPkg &&
-        pluginPkg.dependencies &&
-        Object.keys(pluginPkg.dependencies).length > 0;
+      const hasDeps =
+        pluginPkg && pluginPkg.dependencies && Object.keys(pluginPkg.dependencies).length > 0;
 
       if (hasDeps) {
-        runNpm(
-          ['install', '--omit=dev', '--no-audit', '--no-fund', '--legacy-peer-deps'],
-          { cwd: pluginSrcDir, stdio: 'inherit' }
-        );
+        runNpm(['install', '--omit=dev', '--no-audit', '--no-fund', '--legacy-peer-deps'], {
+          cwd: pluginSrcDir,
+          stdio: 'inherit',
+        });
       }
 
       // Replace cache dir with new content
@@ -250,9 +280,9 @@ for (const plugin of plugins) {
             installedAt: new Date().toISOString(),
           },
           null,
-          2
+          2,
         ) + '\n',
-        'utf-8'
+        'utf-8',
       );
 
       log(`Downloaded and cached ${id}@${version}.`);
@@ -282,17 +312,30 @@ for (const plugin of plugins) {
     die(`Plugin cache directory missing after install: ${cacheDir}`);
   }
 
+  if (id === 'mxc') {
+    patchMxcSandboxPlugin(cacheDir);
+    verifyMxcSandboxPlugin(cacheDir);
+    verifyMxcNativeBinaries(cacheDir);
+  }
+
   // Remove existing target and copy fresh
   if (fs.existsSync(targetDir)) {
     fs.rmSync(targetDir, { recursive: true, force: true });
   }
   copyDirRecursive(cacheDir, targetDir);
 
+  if (id === 'mxc') {
+    pruneMxcSandboxPluginForTarget(targetDir, runtimeTarget);
+    verifyMxcNativeBinaries(targetDir, runtimeTarget);
+  }
+
   // Remove the plugin-install-info.json from the target (it's cache metadata only)
   const targetInfoPath = path.join(targetDir, 'plugin-install-info.json');
   if (fs.existsSync(targetInfoPath)) {
     fs.unlinkSync(targetInfoPath);
   }
+
+  if (id === 'mxc') verifyMxcSandboxPlugin(targetDir);
 
   log(`Installed ${id} -> ${path.relative(rootDir, targetDir)}`);
 }

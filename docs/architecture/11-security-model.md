@@ -47,6 +47,11 @@ Renderer 的通用 fetch IPC 不具备 outbound-header 注入能力。模型 dis
 
 `mainWindowFactory` 当前设置：`nodeIntegration:false`、`contextIsolation:true`、`sandbox:true`、`webSecurity:true`、生产禁用 DevTools、禁 WebSQL、禁页面 dialogs、禁 drag-drop navigation。Preload 是唯一系统桥。
 
+OpenClaw 命令执行另有可选的 Windows 原生任务沙盒。它使用 MXC Windows
+ProcessContainer、显式文件系统根和默认阻断的网络 capability 限制命令进程，和 Chromium
+Renderer sandbox 是两条不同的安全边界；具体威胁模型和生命周期见
+`17-windows-native-sandbox.md`。
+
 新窗口通过 `setWindowOpenHandler` 拒绝内嵌创建并交给 `shell.openExternal`。这里仍要求调用方/handler限制允许协议；不能把任意 `file:`、自定义 scheme 或 credential URL 当安全外链。
 
 Main 在 Linux/Windows启动参数中加入 `no-sandbox` 以处理平台/管理员 GPU 降权问题，这与 BrowserWindow 的 sandbox preference 存在平台实际差异。威胁模型不能宣称 OS sandbox 在这些平台始终有效，因此 IPC 最小化和输入验证尤为关键。

@@ -170,6 +170,7 @@ interface SessionGroup {
 interface CoworkConfig {
   workingDirectory: string;
   executionMode: 'auto' | 'local' | 'sandbox';
+  sandboxNetworkEnabled: boolean;
   agentEngine: 'openclaw';
   permissionMode: PermissionMode;
   maxGoalContinuationTurns: number;
@@ -181,6 +182,7 @@ type CoworkConfigUpdate = Partial<
     CoworkConfig,
     | 'workingDirectory'
     | 'executionMode'
+    | 'sandboxNetworkEnabled'
     | 'agentEngine'
     | 'permissionMode'
     | 'maxGoalContinuationTurns'
@@ -936,6 +938,14 @@ interface IElectronAPI {
       error?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
+    getWindowsSandboxStatus: () => Promise<import('@shared/windowsSandbox').WindowsSandboxStatus>;
+    initializeWindowsSandbox: () => Promise<
+      import('@shared/windowsSandbox').WindowsSandboxOperationResult
+    >;
+    repairWindowsSandbox: () => Promise<
+      import('@shared/windowsSandbox').WindowsSandboxOperationResult
+    >;
+    openWindowsSandboxDiagnostics: () => Promise<{ success: boolean; error?: string }>;
     setDefaultModel: (options: {
       modelId: string;
       providerKey?: string;

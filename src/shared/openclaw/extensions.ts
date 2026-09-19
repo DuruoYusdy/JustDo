@@ -7,6 +7,7 @@ export const OpenClawExtensionId = {
   PLAN_MODE: 'plan-mode',
   EMBEDDED_BROWSER: 'embedded-browser',
   ACPX: 'acpx',
+  WINDOWS_NATIVE_SANDBOX: 'mxc',
 } as const;
 
 export const OpenClawToolName = {

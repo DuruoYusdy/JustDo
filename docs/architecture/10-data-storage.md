@@ -211,7 +211,7 @@ run_id PK、`archived_paths_json`、updated_at。它不是结果内容表，而�
 - 为 MCP 加 description；
 - 为 scheduled task receipt 加 `system_managed`，并幂等建立删除 tombstone 表；
 - 建立 main agent并继承旧 prompt；
-- `container` execution mode -> `local`；
+- `container` / `auto` execution mode -> `local`；
 - 清 orphan messages；
 - KV 空时导入旧 `config.json`。
 

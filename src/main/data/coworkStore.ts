@@ -66,6 +66,9 @@ const normalizeRecentWorkspacePath = (cwd: string): string => {
 // Types mirroring src/types/cowork.ts for main process use
 export type CoworkSessionStatus = 'idle' | 'running' | 'completed' | 'error';
 export type CoworkExecutionMode = 'auto' | 'local' | 'sandbox';
+
+const normalizeCoworkExecutionModeValue = (value: unknown): CoworkExecutionMode =>
+  value === 'sandbox' ? 'sandbox' : 'local';
 export type CoworkAgentEngine = 'openclaw';
 
 export interface Agent {
@@ -147,6 +150,7 @@ export interface CoworkSessionSummary {
 export interface CoworkConfig {
   workingDirectory: string;
   executionMode: CoworkExecutionMode;
+  sandboxNetworkEnabled: boolean;
   agentEngine: CoworkAgentEngine;
   permissionMode: PermissionMode;
   maxGoalContinuationTurns: number;
@@ -158,6 +162,7 @@ export type CoworkConfigUpdate = Partial<
     CoworkConfig,
     | 'workingDirectory'
     | 'executionMode'
+    | 'sandboxNetworkEnabled'
     | 'agentEngine'
     | 'permissionMode'
     | 'maxGoalContinuationTurns'
@@ -996,6 +1001,7 @@ export class CoworkStore {
     const configKeys = [
       'workingDirectory',
       'executionMode',
+      'sandboxNetworkEnabled',
       'agentEngine',
       'permissionMode',
       'maxGoalContinuationTurns',
@@ -1009,7 +1015,8 @@ export class CoworkStore {
 
     return {
       workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
-      executionMode: 'local' as CoworkExecutionMode,
+      executionMode: normalizeCoworkExecutionModeValue(cfg.get('executionMode')),
+      sandboxNetworkEnabled: cfg.get('sandboxNetworkEnabled') === 'true',
       agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
       permissionMode: resolvePermissionMode(cfg.get('permissionMode')),
       maxGoalContinuationTurns: normalizeMaxGoalContinuationTurns(
@@ -1053,6 +1060,20 @@ export class CoworkStore {
       `,
         )
         .run(config.executionMode, now);
+    }
+
+    if (config.sandboxNetworkEnabled !== undefined) {
+      this.db
+        .prepare(
+          `
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES ('sandboxNetworkEnabled', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `,
+        )
+        .run(String(config.sandboxNetworkEnabled), now);
     }
 
     if (config.agentEngine !== undefined) {

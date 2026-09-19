@@ -27,11 +27,13 @@ const BUILD_RECIPE_FILES = [
   'scripts/sync-openclaw-runtime-current.cjs',
   'scripts/bundle-openclaw-gateway.cjs',
   'scripts/ensure-openclaw-plugins.cjs',
+  'scripts/patch-mxc-sandbox-plugin.cjs',
   'scripts/sync-openclaw-runtime-resources.cjs',
   'scripts/precompile-openclaw-extensions.cjs',
   'scripts/prune-openclaw-runtime.cjs',
   'scripts/pack-openclaw-tar.cjs',
   'src/main/openclaw/runtime/openclawGatewayBundleLauncher.cjs',
+  'src/shared/mxcNativeBinaries.json',
   'resources/openclaw-extension-prune.json',
   'resources/builtin-skills.json',
 ];

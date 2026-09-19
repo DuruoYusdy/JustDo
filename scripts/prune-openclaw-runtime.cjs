@@ -221,6 +221,10 @@ function pruneExtensionDependencies(extensionDir, options = {}) {
   return stats;
 }
 
+function shouldPreserveExtensionLegalFiles(extensionId) {
+  return extensionId === 'acpx' || extensionId === 'mxc';
+}
+
 // ─── Extension pruning policy ───
 
 function readJson(filePath) {
@@ -459,7 +463,9 @@ function main() {
         if (!ext.isDirectory()) continue;
         const extNodeModules = path.join(extensionsDir, ext.name, 'node_modules');
         if (fs.existsSync(extNodeModules)) {
-          cleanDir(extNodeModules, stats, { preserveLegalFiles: ext.name === 'acpx' });
+          cleanDir(extNodeModules, stats, {
+            preserveLegalFiles: shouldPreserveExtensionLegalFiles(ext.name),
+          });
         }
       }
     } catch {
@@ -477,4 +483,5 @@ if (require.main === module) {
 module.exports = {
   pruneExtensionDependencies,
   pruneRuntimeExtensions,
+  shouldPreserveExtensionLegalFiles,
 };

@@ -3,7 +3,11 @@ import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 
 export type OpenClawExtensionDescriptor = {
   id: string;
-  buildEntry: (automationApprovalTimeoutMinutes: number) => Record<string, unknown>;
+  buildEntry: (
+    automationApprovalTimeoutMinutes: number,
+    windowsSandboxEnabled: boolean,
+    sandboxNetworkEnabled: boolean,
+  ) => Record<string, unknown>;
 };
 
 export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] = [
@@ -39,15 +43,34 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     // where the native Browser plugin is explicitly disabled.
     buildEntry: () => ({ enabled: false }),
   },
+  {
+    id: OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX,
+    buildEntry: (_approvalTimeoutMinutes, windowsSandboxEnabled, sandboxNetworkEnabled) => ({
+      enabled: windowsSandboxEnabled,
+      config: {
+        containment: 'processcontainer',
+        network: sandboxNetworkEnabled ? 'default' : 'none',
+      },
+    }),
+  },
 ] as const;
 
 export const buildBundledExtensionEntries = (
   isAvailable: (id: string) => boolean,
   automationApprovalTimeoutMinutes: number,
+  windowsSandboxEnabled = false,
+  sandboxNetworkEnabled = false,
 ): Record<string, Record<string, unknown>> => {
   return Object.fromEntries(
     bundledOpenClawExtensions
       .filter(extension => isAvailable(extension.id))
-      .map(extension => [extension.id, extension.buildEntry(automationApprovalTimeoutMinutes)]),
+      .map(extension => [
+        extension.id,
+        extension.buildEntry(
+          automationApprovalTimeoutMinutes,
+          windowsSandboxEnabled,
+          sandboxNetworkEnabled,
+        ),
+      ]),
   );
 };

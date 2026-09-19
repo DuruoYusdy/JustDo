@@ -28,6 +28,7 @@ import {
   buildManagedOpenClawConnectivityConfig,
   buildManagedOpenClawHeartbeatConfig,
   buildManagedOpenClawModelCatalogConfig,
+  buildManagedOpenClawSandboxConfig,
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
   buildManagedOpenClawTtsPluginEntries,
@@ -49,9 +50,28 @@ import {
   OpenClawConfigSync,
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
+  resolveOpenClawExecHost,
   sanitizeOpenClawV2026_9_2Config,
 } from './openclawConfigSync';
 
+describe('Windows native sandbox config', () => {
+  test('selects the registered backend and sandbox execution host', () => {
+    expect(buildManagedOpenClawSandboxConfig('sandbox')).toEqual({
+      mode: 'all',
+      backend: 'mxc',
+      scope: 'session',
+      workspaceAccess: 'rw',
+    });
+    expect(resolveOpenClawExecHost('sandbox')).toBe('sandbox');
+  });
+
+  test('does not select the Windows backend for local execution', () => {
+    expect(buildManagedOpenClawSandboxConfig('local')).toEqual({ mode: 'off' });
+    expect(resolveOpenClawExecHost('local')).toBe('gateway');
+    expect(buildManagedOpenClawSandboxConfig('auto')).toEqual({ mode: 'off' });
+    expect(resolveOpenClawExecHost('auto')).toBe('gateway');
+  });
+});
 const stripChatCompletionsSuffix = (rawBaseUrl: string): string => {
   const normalized = rawBaseUrl.trim().replace(/\/+$/, '');
   if (normalized.endsWith('/chat/completions')) {

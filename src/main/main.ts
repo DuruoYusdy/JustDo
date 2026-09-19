@@ -121,6 +121,7 @@ import {
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
+  registerWindowsSandboxHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
@@ -176,6 +177,7 @@ import {
   PluginInstallationService,
   PluginManager,
 } from './plugins';
+import { WindowsSandboxService } from './security/windowsSandboxService';
 import { LocalSpeechModelService } from './speech/localSpeechModelService';
 
 let outboundHeaderProxy: OutboundHeaderProxy | null = null;
@@ -417,6 +419,7 @@ let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let localSpeechModelService: LocalSpeechModelService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let customerRegistrationService: CustomerRegistrationService | null = null;
+let windowsSandboxService: WindowsSandboxService | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawDirectoryOperations: ManagedDirectoryOperationCoordinator | null = null;
@@ -627,6 +630,13 @@ const getCoworkStore = () => {
   return coworkStore;
 };
 
+const getWindowsSandboxService = (): WindowsSandboxService => {
+  if (!windowsSandboxService) {
+    windowsSandboxService = new WindowsSandboxService();
+  }
+  return windowsSandboxService;
+};
+
 const getGroupStore = () => {
   if (!groupStore) {
     const sqliteStore = getStore();
@@ -659,6 +669,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         );
         return { enabled: settings.outputEnabled, mode: settings.synthesisMode };
       },
+      getWindowsSandboxStatus: () => getWindowsSandboxService().getStatus(),
+      getWindowsSandboxEnvironment: () => getWindowsSandboxService().getGatewayEnvironment(),
     });
   }
   return openClawConfigSyncService;
@@ -1406,7 +1418,13 @@ if (multicaBridgeArgv) {
     ensureEngineRunning: ensureOpenClawRunningForCowork,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
+    getWindowsSandboxService,
     engineNotReadyCode: ENGINE_NOT_READY_CODE,
+  });
+
+  registerWindowsSandboxHandlers({
+    getCoworkStore,
+    getWindowsSandboxService,
   });
 
   registerDefaultModelHandlers({

@@ -37,6 +37,7 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
+import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/windowsSandbox';
 import { BUILTIN_CREDENTIAL_MARKER, getBuiltinModelProviderApiKey } from '../../cowork/builtinModelProviderConfig';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
@@ -1225,12 +1226,11 @@ export const mergeOpenClawSkillConfig = (
   return mergedSkills;
 };
 
-const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-main' | 'all' => {
+const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'all' => {
   switch (mode) {
     case 'sandbox':
       return 'all';
     case 'auto':
-      return 'non-main';
     case 'local':
     default:
       return 'off';
@@ -1239,6 +1239,23 @@ const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode): 'off' | 'non-
 
 export const OPENCLAW_FALLBACK_EXEC_MODE = PermissionMode.Ask;
 export const OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY = true;
+
+export const buildManagedOpenClawSandboxConfig = (mode: CoworkExecutionMode) => {
+  const sandboxMode = mapExecutionModeToSandboxMode(mode);
+  return {
+    mode: sandboxMode,
+    ...(sandboxMode === 'all'
+      ? {
+          backend: WINDOWS_SANDBOX_BACKEND_ID,
+          scope: 'session' as const,
+          workspaceAccess: 'rw' as const,
+        }
+      : {}),
+  };
+};
+
+export const resolveOpenClawExecHost = (mode: CoworkExecutionMode): 'gateway' | 'sandbox' =>
+  mapExecutionModeToSandboxMode(mode) === 'all' ? 'sandbox' : 'gateway';
 
 /** Default agent timeout used when no persisted runtime preference exists. */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS =
@@ -2017,6 +2034,8 @@ const buildManagedBundledExtensionEntries = (
   browserMode: BrowserModeValue,
   externalAgentSettings: ExternalAgentSettings,
   mcpServers: readonly McpServerRecord[],
+  windowsSandboxEnabled: boolean,
+  sandboxNetworkEnabled: boolean,
 ): Record<string, Record<string, unknown>> => {
   const embeddedBrowserEnabled = browserMode === BrowserMode.Embedded;
   return {
@@ -2024,6 +2043,8 @@ const buildManagedBundledExtensionEntries = (
     ...buildBundledExtensionEntries(
       isBundledPluginAvailable,
       agentRuntimeSettings.automation.approvalTimeoutMinutes,
+      windowsSandboxEnabled,
+      sandboxNetworkEnabled,
     ),
     ...(isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
       ? {
@@ -2063,6 +2084,7 @@ type OpenClawConfigSyncDeps = {
   getBrowserMode?: () => BrowserModeValue;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
+  getWindowsSandboxEnvironment?: () => Record<string, string>;
 };
 
 export class OpenClawConfigSync {
@@ -2076,6 +2098,7 @@ export class OpenClawConfigSync {
   private readonly getBrowserMode?: () => BrowserModeValue;
   private readonly getLocalTtsConfig: () => Record<string, unknown> | null;
   private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
+  private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -2091,6 +2114,7 @@ export class OpenClawConfigSync {
     this.getLocalTtsConfig = deps.getLocalTtsConfig ?? (() => null);
     this.getSpeechOutputState =
       deps.getSpeechOutputState ?? (() => ({ enabled: true, mode: 'online' }));
+    this.getWindowsSandboxEnvironment = deps.getWindowsSandboxEnvironment ?? (() => ({}));
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -2254,6 +2278,8 @@ export class OpenClawConfigSync {
         browserMode,
         externalAgentSettings,
         mcpServerRecords,
+        coworkConfig.executionMode === 'sandbox',
+        coworkConfig.sandboxNetworkEnabled,
       ),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
@@ -2327,9 +2353,7 @@ export class OpenClawConfigSync {
           model: {
             primary: primaryModel,
           },
-          sandbox: {
-            mode: sandboxMode,
-          },
+          sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
           heartbeat: buildManagedOpenClawHeartbeatConfig(),
           compaction: buildManagedOpenClawCompactionConfig(),
           workspace: resolvedWorkspaceDir,
@@ -2340,6 +2364,7 @@ export class OpenClawConfigSync {
           availableModelRefs,
           resolvedWorkspaceDir,
           externalAgentSettings,
+          coworkConfig.executionMode || 'local',
         ),
       },
       acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
@@ -2369,18 +2394,20 @@ export class OpenClawConfigSync {
         },
         exec: {
           ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
-          host: 'gateway',
+          host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
           mode: OPENCLAW_FALLBACK_EXEC_MODE,
         },
-        // OpenClaw applies an additional tool gate to sandboxed turns. Native
-        // MCP tools belong to bundle-mcp, so explicitly allow that owner when
-        // executionMode maps to `all` or `non-main`. This is harmless when the
-        // sandbox is off and keeps one stable generated config across modes.
-        sandbox: {
-          tools: {
-            alsoAllow: [OPENCLAW_MCP_TOOL_OWNER],
-          },
-        },
+        // Keep the legacy MCP owner allowance only for local execution. In
+        // sandbox mode, host-side MCP tools must not bypass the sandbox boundary.
+        ...(sandboxMode === 'all'
+          ? {}
+          : {
+              sandbox: {
+                tools: {
+                  alsoAllow: [OPENCLAW_MCP_TOOL_OWNER],
+                },
+              },
+            }),
         loopDetection: {
           enabled: true,
         },
@@ -2510,6 +2537,7 @@ export class OpenClawConfigSync {
 
     // Custom keys use file SecretRefs; built-in keys use encrypted exec SecretRefs.
     // No provider API key belongs in the Gateway launch environment.
+    Object.assign(env, this.getWindowsSandboxEnvironment());
 
     // IM channel secrets removed — channels disabled pending future adaptation
 
@@ -2533,6 +2561,7 @@ export class OpenClawConfigSync {
     availableModelRefs: ReadonlySet<string>,
     mainWorkspaceDir: string,
     externalAgentSettings: ExternalAgentSettings,
+    executionMode: CoworkConfig['executionMode'],
   ): { ownership: 'explicit'; entries: Record<string, Record<string, unknown>> } {
     const agents = (this.getAgents?.() ?? []).filter(agent => agent.id !== ScheduledTaskAgentId);
     const mainAgent = agents.find(agent => agent.id === 'main');
@@ -2567,8 +2596,11 @@ export class OpenClawConfigSync {
         },
         workspace: mainWorkspaceDir,
         tools: {
-          fs: { workspaceOnly: false },
-          exec: { host: 'gateway', mode: PermissionMode.Full },
+          fs: { workspaceOnly: executionMode === 'sandbox' },
+          exec: {
+            host: resolveOpenClawExecHost(executionMode),
+            mode: PermissionMode.Full,
+          },
         },
       },
     ];
@@ -2636,6 +2668,7 @@ export class OpenClawConfigSync {
    */
   private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
+    const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'local');
     const configuredWorkspaceDir = (coworkConfig.workingDirectory || '').trim();
     const resolvedWorkspaceDir = configuredWorkspaceDir
       ? path.resolve(configuredWorkspaceDir)
@@ -2672,6 +2705,8 @@ export class OpenClawConfigSync {
         browserMode,
         externalAgentSettings,
         mcpServerRecords,
+        coworkConfig.executionMode === 'sandbox',
+        coworkConfig.sandboxNetworkEnabled,
       ),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
@@ -2708,6 +2743,7 @@ export class OpenClawConfigSync {
           compaction: buildManagedOpenClawCompactionConfig(),
           subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
           workspace: resolvedWorkspaceDir,
+          sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
         },
         entries: {
           main: {
@@ -2718,8 +2754,11 @@ export class OpenClawConfigSync {
           [ScheduledTaskAgentId]: {
             workspace: resolvedWorkspaceDir,
             tools: {
-              fs: { workspaceOnly: false },
-              exec: { host: 'gateway', mode: PermissionMode.Full },
+              fs: { workspaceOnly: sandboxMode === 'all' },
+              exec: {
+                host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
+                mode: PermissionMode.Full,
+              },
             },
           },
           ...buildManagedExternalAgentEntries(resolvedWorkspaceDir, externalAgentSettings),
@@ -2741,7 +2780,7 @@ export class OpenClawConfigSync {
         },
         exec: {
           ...(isRecord(connectivityTools.exec) ? connectivityTools.exec : {}),
-          host: 'gateway',
+          host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
           mode: OPENCLAW_FALLBACK_EXEC_MODE,
         },
       },
@@ -2852,6 +2891,10 @@ export class OpenClawConfigSync {
                 existingDefaults.subagents,
                 buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
               ),
+              workspace: resolvedWorkspaceDir,
+              sandbox: buildManagedOpenClawSandboxConfig(
+                coworkConfig.executionMode || 'local',
+              ),
             };
             if (agentRuntimeSettings.agent.maxConcurrent === null) {
               delete mergedDefaults.maxConcurrent;
@@ -2919,7 +2962,7 @@ export class OpenClawConfigSync {
                 },
                 exec: {
                   ...existingExecTools,
-                  host: 'gateway',
+                  host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
                   mode: OPENCLAW_FALLBACK_EXEC_MODE,
                 },
               },

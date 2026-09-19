@@ -26,6 +26,7 @@ import { registerCoworkConfigHandlers, waitForCoworkConfigUpdates } from './conf
 const baseConfig: CoworkConfig = {
   workingDirectory: 'E:/workspace/project',
   executionMode: 'local',
+  sandboxNetworkEnabled: false,
   agentEngine: 'openclaw',
   permissionMode: 'full',
   maxGoalContinuationTurns: 25,
@@ -41,6 +42,7 @@ describe('cowork config IPC', () => {
   const ensureEngineRunning = vi.fn();
   const getEngineStatus = vi.fn();
   const requestGateway = vi.fn();
+  const getWindowsSandboxStatus = vi.fn();
   let currentConfig: CoworkConfig;
   let currentAgentRuntimeSettings: AgentRuntimeSettings;
   let currentExternalAgentSettings: ExternalAgentSettings;
@@ -58,6 +60,8 @@ describe('cowork config IPC', () => {
     getEngineStatus.mockReset();
     getEngineStatus.mockReturnValue({ phase: 'running' });
     requestGateway.mockReset();
+    getWindowsSandboxStatus.mockReset();
+    getWindowsSandboxStatus.mockResolvedValue({ ready: true });
     currentConfig = { ...baseConfig };
     currentAgentRuntimeSettings = createDefaultAgentRuntimeSettings();
     currentExternalAgentSettings = createDefaultExternalAgentSettings();
@@ -88,6 +92,7 @@ describe('cowork config IPC', () => {
       syncOpenClawConfig,
       ensureEngineRunning,
       requestGateway,
+      getWindowsSandboxService: () => ({ getStatus: getWindowsSandboxStatus }) as never,
       engineNotReadyCode: 'ENGINE_NOT_READY',
     });
   });
@@ -114,9 +119,7 @@ describe('cowork config IPC', () => {
   });
 
   it('normalizes and persists the retained display tab limit without reloading Gateway', async () => {
-    const result = await handlers
-      .get('cowork:config:set')
-      ?.({}, { maxRetainedDisplayTabs: 999 });
+    const result = await handlers.get('cowork:config:set')?.({}, { maxRetainedDisplayTabs: 999 });
 
     expect(result).toEqual({ success: true });
     expect(setConfig).toHaveBeenCalledWith(
@@ -171,6 +174,50 @@ describe('cowork config IPC', () => {
 
     expect(result).toEqual({ success: true });
     expect(syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'cowork-config-change' });
+  });
+
+  it('rejects sandbox mode while the native backend is not ready', async () => {
+    getWindowsSandboxStatus.mockResolvedValue({
+      ready: false,
+      code: 'broker_unavailable',
+      supported: true,
+      helperAvailable: true,
+      initialized: false,
+    });
+
+    const result = await handlers.get('cowork:config:set')?.({}, { executionMode: 'sandbox' });
+
+    expect(result).toMatchObject({ success: false, sandboxStatus: { code: 'broker_unavailable' } });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+  });
+
+  it('migrates the retired automatic mode to local execution', async () => {
+    const result = await handlers.get('cowork:config:set')?.({}, { executionMode: 'auto' });
+
+    expect(result).toEqual({ success: true });
+    expect(setConfig).toHaveBeenCalledWith(expect.objectContaining({ executionMode: 'local' }));
+  });
+
+  it('persists explicit sandbox network access and synchronizes OpenClaw', async () => {
+    const result = await handlers
+      .get('cowork:config:set')
+      ?.({}, { sandboxNetworkEnabled: true });
+
+    expect(result).toEqual({ success: true });
+    expect(setConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxNetworkEnabled: true }),
+    );
+    expect(syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'cowork-config-change' });
+  });
+
+  it('rejects an invalid sandbox network preference', async () => {
+    const result = await handlers
+      .get('cowork:config:set')
+      ?.({}, { sandboxNetworkEnabled: 'yes' });
+
+    expect(result).toEqual({ success: false, error: 'Invalid sandbox network setting.' });
+    expect(setConfig).not.toHaveBeenCalled();
   });
 
   it('returns the persisted Agent runtime settings', async () => {

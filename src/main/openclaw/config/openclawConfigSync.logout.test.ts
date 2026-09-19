@@ -156,6 +156,7 @@ const writeMinimalConfig = (
   agents: Array<{ id: string; enabled: boolean }> = [],
   runtimeSettings = createDefaultAgentRuntimeSettings(),
   localTtsConfig: Record<string, unknown> | null = null,
+  executionMode: 'local' | 'sandbox' = 'local',
 ): OpenClawConfigSyncResult => {
   const sync = new OpenClawConfigSync({
     engineManager: {
@@ -164,7 +165,7 @@ const writeMinimalConfig = (
     },
     getCoworkConfig: () => ({
       workingDirectory: '',
-      executionMode: 'local',
+      executionMode,
       agentEngine: 'openclaw',
       permissionMode,
     }),
@@ -201,6 +202,36 @@ describe('OpenClaw auth logout config sync', () => {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.agents.defaults.heartbeat).toEqual({ every: '0m' });
     expect(config.agents.entries.main.heartbeat).toEqual({ every: '0m' });
+  });
+
+  test('writes a fail-closed native sandbox minimal config before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-sandbox-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+
+    expect(
+      writeMinimalConfig(
+        configPath,
+        'startup',
+        'ask',
+        BrowserMode.Isolated,
+        [],
+        createDefaultAgentRuntimeSettings(),
+        null,
+        'sandbox',
+      ).ok,
+    ).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.sandbox).toEqual({
+      mode: 'all',
+      backend: 'mxc',
+      scope: 'session',
+      workspaceAccess: 'rw',
+    });
+    expect(config.tools.exec.host).toBe('sandbox');
+    expect(config.tools.fs.workspaceOnly).toBe(true);
+    expect(config.tools.sandbox).toBeUndefined();
   });
 
   test('writes the managed safeguard compaction policy before model setup', () => {
@@ -510,6 +541,7 @@ describe('OpenClaw auth logout config sync', () => {
       'runtime-services',
       'plan-mode',
       'embedded-browser',
+      'mxc',
     ]);
     expect(config.plugins.deny).toBeUndefined();
     expect(config.plugins.entries['ask-user-question']).toEqual({
@@ -606,6 +638,7 @@ describe('OpenClaw auth logout config sync', () => {
       'runtime-services',
       'plan-mode',
       'embedded-browser',
+      'mxc',
     ]);
     expect(config.plugins.deny).toBeUndefined();
   });
@@ -750,6 +783,7 @@ describe('OpenClaw auth logout config sync', () => {
       'runtime-services',
       'plan-mode',
       'embedded-browser',
+      'mxc',
     ]);
     expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.bundledDiscovery).toBeUndefined();

@@ -20,6 +20,19 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
 });
 
+test('preinstalls the official MXC sandbox only for Windows runtimes', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../..', 'package.json'), 'utf8'),
+  ) as { openclaw: { plugins: Array<Record<string, unknown>> } };
+
+  expect(packageJson.openclaw.plugins).toContainEqual({
+    id: 'mxc',
+    npm: '@openclaw/mxc-sandbox',
+    version: '2026.9.2',
+    platforms: ['win32'],
+  });
+});
+
 test('starts Electron as soon as the quiet readiness probes succeed', () => {
   const devRunner = fs.readFileSync(
     path.resolve(__dirname, '../../scripts/run-electron-dev.cjs'),

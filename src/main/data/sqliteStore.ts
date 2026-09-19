@@ -449,12 +449,12 @@ export class SqliteStore {
 
     try {
       this.db.exec(
-        `UPDATE cowork_sessions SET execution_mode = 'local' WHERE execution_mode = 'container';`,
+        `UPDATE cowork_sessions SET execution_mode = 'local' WHERE execution_mode IN ('container', 'auto');`,
       );
       this.db.exec(`
         UPDATE cowork_config
         SET value = 'local'
-        WHERE key = 'executionMode' AND value = 'container';
+        WHERE key = 'executionMode' AND value IN ('container', 'auto');
       `);
     } catch (error) {
       console.warn('Failed to migrate cowork execution mode:', error);

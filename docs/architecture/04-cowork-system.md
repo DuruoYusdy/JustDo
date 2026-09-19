@@ -54,7 +54,7 @@ Multica 自己的 session id 不能直接作为 OpenClaw key。`cowork_external_
 
 ## 4. Session 数据模型
 
-本地 session 包含：`id`、`title`、`status`、`pinned`、`cwd`、`executionMode`、`permissionMode`、`activeSkillIds`、`agentId`、`modelRef`、`groupId` 和时间戳。`permissionMode`/`cwd` 是产品的耐久期望投影；执行时权威是 OpenClaw session entry 的 `permissionMode`/`sessionRoot`。当前 engine 固定为 OpenClaw，历史 `container` execution mode 会迁移为 `local`。
+本地 session 包含：`id`、`title`、`status`、`pinned`、`cwd`、`executionMode`、`permissionMode`、`activeSkillIds`、`agentId`、`modelRef`、`groupId` 和时间戳。`permissionMode`/`cwd` 是产品的耐久期望投影；执行时权威是 OpenClaw session entry 的 `permissionMode`/`sessionRoot`。当前 engine 固定为 OpenClaw，历史 `container` 和 `auto` execution mode 会归一化为 `local`。Windows 上可显式选择 `sandbox`；其原生后端、安全边界和失败关闭流程见 `17-windows-native-sandbox.md`。
 
 状态字段是产品快照，不是判断运行中的唯一依据。实际 `running` 由 adapter memory、Gateway `sessions.list/describe`、root run 和 subagent 状态共同计算；启动时遗留的本地 running 会恢复为 idle。
 

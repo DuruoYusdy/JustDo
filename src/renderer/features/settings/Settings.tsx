@@ -12,6 +12,7 @@ import {
   PaintBrushIcon,
   PencilSquareIcon,
   PuzzlePieceIcon,
+  ShieldCheckIcon,
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
@@ -111,6 +112,7 @@ import ShortcutsSettings, {
 } from '@/features/settings/components/ShortcutsSettings';
 import UsageStatsTab from '@/features/settings/components/UsageStatsTab';
 import VoiceSettingsTab from '@/features/settings/components/VoiceSettingsTab';
+import WindowsSandboxSettingsTab from '@/features/settings/components/WindowsSandboxSettingsTab';
 import { hasConfirmedModelCapabilities } from '@/features/settings/modelCapabilityState';
 import {
   buildModelConnectionTestRequestBody,
@@ -142,6 +144,7 @@ type TabType =
   | 'model'
   | 'runtime'
   | 'integrations'
+  | 'security'
   | 'browser'
   | 'voice'
   | 'im'
@@ -2154,6 +2157,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <MicrophoneIcon className="h-5 w-5" />,
     },
     {
+      key: 'security',
+      label: i18nService.t('securitySettings'),
+      icon: <ShieldCheckIcon className="h-5 w-5" />,
+    },
+    {
       key: 'browser',
       label: i18nService.t('browserSettings'),
       icon: <GlobeAltIcon className="h-5 w-5" />,
@@ -2954,6 +2962,9 @@ const Settings: React.FC<SettingsProps> = ({
             onExternalAgentSettingsRetry={() => void loadExternalAgentSettings()}
           />
         );
+
+      case 'security':
+        return <WindowsSandboxSettingsTab />;
 
       case 'browser':
         return <BrowserSettingsTab initialPage={browserPage} />;

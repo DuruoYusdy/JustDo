@@ -183,6 +183,11 @@ import {
   type TerminalResizeRequest,
   type TerminalWriteRequest,
 } from '../shared/terminal';
+import {
+  WindowsSandboxIpc,
+  type WindowsSandboxOperationResult,
+  type WindowsSandboxStatus,
+} from '../shared/windowsSandbox';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {
@@ -636,6 +641,7 @@ contextBridge.exposeInMainWorld('electron', {
     setConfig: (config: {
       workingDirectory?: string;
       executionMode?: 'auto' | 'local' | 'sandbox';
+      sandboxNetworkEnabled?: boolean;
       agentEngine?: 'openclaw';
       permissionMode?: 'ask' | 'auto' | 'full';
       maxGoalContinuationTurns?: number;
@@ -644,6 +650,13 @@ contextBridge.exposeInMainWorld('electron', {
     getAgentRuntimeSettings: () => ipcRenderer.invoke(AgentRuntimeSettingsIpc.Get),
     setAgentRuntimeSettings: (settings: AgentRuntimeSettings) =>
       ipcRenderer.invoke(AgentRuntimeSettingsIpc.Set, settings),
+    getWindowsSandboxStatus: (): Promise<WindowsSandboxStatus> =>
+      ipcRenderer.invoke(WindowsSandboxIpc.GetStatus),
+    initializeWindowsSandbox: (): Promise<WindowsSandboxOperationResult> =>
+      ipcRenderer.invoke(WindowsSandboxIpc.Initialize),
+    repairWindowsSandbox: (): Promise<WindowsSandboxOperationResult> =>
+      ipcRenderer.invoke(WindowsSandboxIpc.Repair),
+    openWindowsSandboxDiagnostics: () => ipcRenderer.invoke(WindowsSandboxIpc.OpenDiagnostics),
     setDefaultModel: (options: {
       modelId: string;
       providerKey?: string;

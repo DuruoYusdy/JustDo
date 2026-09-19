@@ -305,6 +305,8 @@ describe('OpenClawConfigSyncService', () => {
     secretsChanged?: boolean;
     secretsReloadFails?: boolean;
     authLogoutFails?: boolean;
+    executionMode?: 'local' | 'sandbox';
+    sandboxReady?: boolean;
   } = {}) => {
     let phase = options.phase ?? 'running';
     let processGeneration = 1;
@@ -410,6 +412,8 @@ describe('OpenClawConfigSyncService', () => {
       }
       if (method === 'config.get') {
         const permissionMode = options.reportedPermissionMode ?? 'ask';
+        const executionMode = options.executionMode ?? 'local';
+        const execHost = executionMode === 'sandbox' ? 'sandbox' : 'gateway';
         return {
           config: {
             agents: {
@@ -417,17 +421,21 @@ describe('OpenClawConfigSyncService', () => {
                 'justdo-scheduler': {
                   tools: {
                     exec: {
-                      host: 'gateway',
+                      host: execHost,
                       mode: options.reportedSchedulerMode ?? 'full',
                     },
-                    fs: { workspaceOnly: (options.reportedSchedulerMode ?? 'full') !== 'full' },
+                    fs: {
+                      workspaceOnly:
+                        executionMode === 'sandbox' ||
+                        (options.reportedSchedulerMode ?? 'full') !== 'full',
+                    },
                   },
                 },
               },
             },
             tools: {
-              exec: { host: 'gateway', mode: permissionMode },
-              fs: { workspaceOnly: permissionMode !== 'full' },
+              exec: { host: execHost, mode: permissionMode },
+              fs: { workspaceOnly: true },
             },
           },
         };
@@ -436,7 +444,10 @@ describe('OpenClawConfigSyncService', () => {
     });
     const service = new OpenClawConfigSyncService({
       getCoworkStore: () => ({
-        getConfig: () => ({ permissionMode: options.permissionMode ?? 'ask' }),
+        getConfig: () => ({
+          permissionMode: options.permissionMode ?? 'ask',
+          executionMode: options.executionMode ?? 'local',
+        }),
       }),
       getOpenClawEngineManager: () => engineManager,
       getMcpStore: vi.fn(),
@@ -444,6 +455,14 @@ describe('OpenClawConfigSyncService', () => {
       disconnectGatewayClient,
       connectGatewayClient,
       requestGateway,
+      getWindowsSandboxStatus: vi.fn(async () => ({
+        code: options.sandboxReady === false ? 'broker_unavailable' : 'ready',
+        supported: true,
+        helperAvailable: true,
+        initialized: options.sandboxReady !== false,
+        ready: options.sandboxReady !== false,
+      })),
+      getWindowsSandboxEnvironment: vi.fn(() => ({})),
     } as never);
     const configSync = {
       sync: vi.fn(() =>
@@ -499,6 +518,18 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.configSync.sync).toHaveBeenCalledWith('test');
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it('stops a running Gateway instead of falling back when the sandbox is not ready', async () => {
+    const harness = createHarness({ executionMode: 'sandbox', sandboxReady: false });
+
+    await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
+      success: false,
+      configSynced: false,
+      error: expect.stringContaining('Gateway was stopped'),
+    });
+    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
   });
 
   it('never asks config sync to mutate the legacy session store', async () => {
@@ -926,6 +957,17 @@ describe('OpenClawConfigSyncService', () => {
       expect.objectContaining({ baseHash: 'approval-hash' }),
     );
     expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('verifies sandbox execution hosts instead of requiring the local Gateway host', async () => {
+    const harness = createHarness({ executionMode: 'sandbox', waitForReload: true });
+
+    await expect(harness.service.syncConfig({ reason: 'cowork-config-change' })).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+      hostPolicyVerified: true,
+    });
     expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 

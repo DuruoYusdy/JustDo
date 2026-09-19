@@ -19,6 +19,7 @@ import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
 } from '../../openclaw/runtime/openclawEngineManager';
+import type { WindowsSandboxService } from '../../security/windowsSandboxService';
 
 interface SyncResult {
   success: boolean;
@@ -37,6 +38,7 @@ interface Dependencies {
   }) => Promise<SyncResult>;
   ensureEngineRunning: () => Promise<OpenClawEngineStatus>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
+  getWindowsSandboxService: () => WindowsSandboxService;
   engineNotReadyCode: string;
 }
 
@@ -61,6 +63,7 @@ export const registerCoworkConfigHandlers = ({
   syncOpenClawConfig,
   ensureEngineRunning,
   requestGateway,
+  getWindowsSandboxService,
   engineNotReadyCode,
 }: Dependencies): void => {
   ipcMain.handle('cowork:config:get', async () => {
@@ -295,6 +298,7 @@ export const registerCoworkConfigHandlers = ({
       config: {
         workingDirectory?: string;
         executionMode?: 'auto' | 'local' | 'sandbox';
+        sandboxNetworkEnabled?: boolean;
         agentEngine?: CoworkAgentEngine;
         permissionMode?: PermissionMode;
         maxGoalContinuationTurns?: number;
@@ -315,9 +319,35 @@ export const registerCoworkConfigHandlers = ({
             return { success: false, error: 'Invalid permission mode.' };
           }
           const executionMode =
-            config.executionMode && String(config.executionMode) === 'container'
+            config.executionMode &&
+            (String(config.executionMode) === 'container' || config.executionMode === 'auto')
               ? 'local'
               : config.executionMode;
+          if (
+            executionMode !== undefined &&
+            executionMode !== 'local' &&
+            executionMode !== 'sandbox'
+          ) {
+            return { success: false, error: 'Invalid execution mode.' };
+          }
+          if (
+            config.sandboxNetworkEnabled !== undefined &&
+            typeof config.sandboxNetworkEnabled !== 'boolean'
+          ) {
+            return { success: false, error: 'Invalid sandbox network setting.' };
+          }
+          if (executionMode === 'sandbox') {
+            const sandboxStatus = await getWindowsSandboxService().getStatus();
+            if (!sandboxStatus.ready) {
+              return {
+                success: false,
+                error:
+                  sandboxStatus.error ||
+                  'The Windows sandbox must be installed and initialized before it can be enabled.',
+                sandboxStatus,
+              };
+            }
+          }
           const agentEngine = config.agentEngine === 'openclaw' ? 'openclaw' : undefined;
           const permissionMode = isPermissionMode(config.permissionMode)
             ? config.permissionMode
@@ -333,6 +363,7 @@ export const registerCoworkConfigHandlers = ({
           const normalized: Parameters<CoworkStore['setConfig']>[0] = {
             workingDirectory: config.workingDirectory,
             executionMode,
+            sandboxNetworkEnabled: config.sandboxNetworkEnabled,
             agentEngine,
             permissionMode,
             ...(maxGoalContinuationTurns === undefined ? {} : { maxGoalContinuationTurns }),
@@ -350,6 +381,8 @@ export const registerCoworkConfigHandlers = ({
             agentEngine === 'openclaw' && previous.agentEngine !== 'openclaw';
           const shouldSync =
             (executionMode !== undefined && executionMode !== previous.executionMode) ||
+            (normalized.sandboxNetworkEnabled !== undefined &&
+              normalized.sandboxNetworkEnabled !== previous.sandboxNetworkEnabled) ||
             (agentEngine !== undefined && agentEngine !== previous.agentEngine) ||
             (normalized.workingDirectory !== undefined &&
               normalized.workingDirectory !== previous.workingDirectory);
