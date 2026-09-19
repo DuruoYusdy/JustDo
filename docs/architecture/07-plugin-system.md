@@ -99,6 +99,10 @@ IPC 中重新校验；Renderer 不能凭 UI 分组或路径字符串猜测权限
 
 manifest 的 `disableOpenClawDefaults: true` 表示只使用 JustDo 声明的 bundled defaults；不要在文档或 UI 中硬编码数量。打包同步测试验证 manifest 与实际 resources。
 
+`docx`、`pptx` 与 `xlsx` 使用 MIT-0 的 instruction-only 内网版本。它们不假定 Pandoc、LibreOffice、MarkItDown、`pptxgenjs`、`python-pptx` 或 `python-docx` 已存在。`xlsx` 以 Windows Python runtime 随附的 `openpyxl` 为基线能力。
+
+`pdf` 保留完整的本地参考文档和辅助脚本，并以 Windows Python runtime 随附的 `pypdf` 为基线能力。其他 PDF 能力可按需安装 Python 包，但不依赖 LibreOffice、Poppler、qpdf、pdftk、Tesseract 或 ImageMagick 等外部系统程序。Skill 只能声明实际执行和验证过的能力。
+
 ## 5. Skill 系统
 
 与 Skill 路径相关的 Gateway 启动环境只显式固定 `OPENCLAW_STATE_DIR`、

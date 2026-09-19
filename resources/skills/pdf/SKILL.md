@@ -1,6 +1,6 @@
 ---
 name: pdf
-description: Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables from PDFs, combining or merging multiple PDFs into one, splitting PDFs apart, rotating pages, adding watermarks, creating new PDFs, filling PDF forms, encrypting/decrypting PDFs, extracting images, and OCR on scanned PDFs to make them searchable. If the user mentions a .pdf file or asks to produce one, use this skill.
+description: Use this skill whenever the user wants to read, extract, combine, split, rotate, watermark, create, fill, protect, or otherwise process local PDF files. If the user mentions a `.pdf` file or asks to produce one, use this skill.
 license: Proprietary. LICENSE.txt has complete terms
 ---
 
@@ -8,7 +8,9 @@ license: Proprietary. LICENSE.txt has complete terms
 
 ## Overview
 
-This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
+This guide covers essential PDF processing operations using Python libraries. For advanced features and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
+
+The bundled Python runtime provides `pypdf`. Install additional Python packages with `python -m pip install <package>` only when the current task needs them. Do not rely on system programs or services that cannot be installed as Python packages.
 
 ## Quick Start
 
@@ -186,65 +188,25 @@ squared = Paragraph("x<super>2</super> + y<super>2</super>", styles['Normal'])
 
 For canvas-drawn text (not Paragraph objects), manually adjust font the size and position rather than using Unicode subscripts/superscripts.
 
-## Command-Line Tools
-
-### pdftotext (poppler-utils)
-```bash
-# Extract text
-pdftotext input.pdf output.txt
-
-# Extract text preserving layout
-pdftotext -layout input.pdf output.txt
-
-# Extract specific pages
-pdftotext -f 1 -l 5 input.pdf output.txt  # Pages 1-5
-```
-
-### qpdf
-```bash
-# Merge PDFs
-qpdf --empty --pages file1.pdf file2.pdf -- merged.pdf
-
-# Split pages
-qpdf input.pdf --pages . 1-5 -- pages1-5.pdf
-qpdf input.pdf --pages . 6-10 -- pages6-10.pdf
-
-# Rotate pages
-qpdf input.pdf output.pdf --rotate=+90:1  # Rotate page 1 by 90 degrees
-
-# Remove password
-qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf
-```
-
-### pdftk (if available)
-```bash
-# Merge
-pdftk file1.pdf file2.pdf cat output merged.pdf
-
-# Split
-pdftk input.pdf burst
-
-# Rotate
-pdftk input.pdf rotate 1east output rotated.pdf
-```
-
 ## Common Tasks
 
 ### Extract Text from Scanned PDFs
 ```python
-# Requires: pip install pytesseract pdf2image
-import pytesseract
-from pdf2image import convert_from_path
+# Requires: python -m pip install pypdfium2 rapidocr-onnxruntime numpy
+import numpy as np
+import pypdfium2 as pdfium
+from rapidocr_onnxruntime import RapidOCR
 
-# Convert PDF to images
-images = convert_from_path('scanned.pdf')
+engine = RapidOCR()
+pdf = pdfium.PdfDocument("scanned.pdf")
+pages = []
+for i, page in enumerate(pdf):
+    image = page.render(scale=2).to_pil()
+    result, _ = engine(np.asarray(image))
+    page_text = "\n".join(item[1] for item in (result or []))
+    pages.append(f"Page {i + 1}:\n{page_text}")
 
-# OCR each page
-text = ""
-for i, image in enumerate(images):
-    text += f"Page {i+1}:\n"
-    text += pytesseract.image_to_string(image)
-    text += "\n\n"
+text = "\n\n".join(pages)
 
 print(text)
 ```
@@ -269,11 +231,14 @@ with open("watermarked.pdf", "wb") as output:
 ```
 
 ### Extract Images
-```bash
-# Using pdfimages (poppler-utils)
-pdfimages -j input.pdf output_prefix
+```python
+from pypdf import PdfReader
 
-# This extracts all images as output_prefix-000.jpg, output_prefix-001.jpg, etc.
+reader = PdfReader("input.pdf")
+for page_number, page in enumerate(reader.pages, start=1):
+    for image_number, image in enumerate(page.images, start=1):
+        with open(f"page-{page_number}-image-{image_number}-{image.name}", "wb") as output:
+            output.write(image.data)
 ```
 
 ### Password Protection
@@ -302,13 +267,11 @@ with open("encrypted.pdf", "wb") as output:
 | Extract text | pdfplumber | `page.extract_text()` |
 | Extract tables | pdfplumber | `page.extract_tables()` |
 | Create PDFs | reportlab | Canvas or Platypus |
-| Command line merge | qpdf | `qpdf --empty --pages ...` |
-| OCR scanned PDFs | pytesseract | Convert to image first |
-| Fill PDF forms | pdf-lib or pypdf (see FORMS.md) | See FORMS.md |
+| OCR scanned PDFs | pypdfium2 + rapidocr-onnxruntime | Render each page, then OCR |
+| Fill PDF forms | pypdf (see FORMS.md) | See FORMS.md |
 
 ## Next Steps
 
 - For advanced pypdfium2 usage, see REFERENCE.md
-- For JavaScript libraries (pdf-lib), see REFERENCE.md
 - If you need to fill out a PDF form, follow the instructions in FORMS.md
 - For troubleshooting guides, see REFERENCE.md

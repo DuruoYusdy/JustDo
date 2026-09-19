@@ -1,7 +1,10 @@
 **CRITICAL: You MUST complete these steps in order. Do not skip ahead to writing code.**
 
+Install the Python dependencies used by these scripts when needed:
+`python -m pip install pypdf pdfplumber pypdfium2 Pillow`
+
 If you need to fill out a PDF form, first check to see if the PDF has fillable form fields. Run this script from this file's directory:
- `python scripts/check_fillable_fields <file.pdf>`, and depending on the result go to either the "Fillable fields" or "Non-fillable fields" and follow those instructions.
+ `python scripts/check_fillable_fields.py <file.pdf>`, and depending on the result go to either the "Fillable fields" or "Non-fillable fields" and follow those instructions.
 
 # Fillable fields
 If the PDF has fillable form fields:
@@ -190,21 +193,19 @@ For each field, note approximate pixel coordinates (they don't need to be precis
 
 For each field, crop a region around the estimated position to refine coordinates precisely.
 
-**Create a zoomed crop using ImageMagick:**
-```bash
-magick <page_image> -crop <width>x<height>+<x>+<y> +repage <crop_output.png>
+**Create a zoomed crop using Pillow:**
+```python
+from PIL import Image
+
+with Image.open("page_image.png") as image:
+    image.crop((x, y, x + width, y + height)).save("crop_output.png")
 ```
 
 Where:
 - `<x>, <y>` = top-left corner of crop region (use your rough estimate minus padding)
 - `<width>, <height>` = size of crop region (field area plus ~50px padding on each side)
 
-**Example:** To refine a "Name" field estimated around (100, 150):
-```bash
-magick images_dir/page_1.png -crop 300x80+50+120 +repage crops/name_field.png
-```
-
-(Note: if the `magick` command isn't available, try `convert` with the same arguments).
+**Example:** To refine a "Name" field estimated around (100, 150), crop `(50, 120, 350, 200)` from `images_dir/page_1.png` and save it as `crops/name_field.png`.
 
 **Examine the cropped image** to determine precise coordinates:
 1. Identify the exact pixel where the entry area begins (after the label)

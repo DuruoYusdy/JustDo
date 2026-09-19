@@ -1,91 +1,56 @@
 ---
 name: docx
-description: "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files) or Word templates (.dotx files). Triggers include: any mention of 'Word doc', 'word document', '.docx', '.dotx', or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx or .dotx files, inserting or replacing images in documents, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a 'report', 'memo', 'letter', 'template', or similar deliverable as a Word or .docx file, use this skill. Do NOT use for PDFs, spreadsheets, Google Docs, or general coding tasks unrelated to document generation."
-license: Proprietary. LICENSE.txt has complete terms
+license: MIT-0
+description: 'Create, inspect, and edit local Microsoft Word `.docx` documents while preserving styles, numbering, sections, tables, fields, comments, and tracked changes. Use when Word document structure or round-trip compatibility matters.'
+metadata:
+  { 'openclaw': { 'emoji': '📘', 'requires': { 'bins': [] }, 'os': ['win32'] } }
 ---
 
-# DOCX creation, editing, and analysis
+## Runtime Boundary
 
-A `.docx` is a ZIP archive of XML files. Choose your approach by task:
+This is an offline Windows skill. Do not access ClawHub, public package registries, cloud document services, or external URLs. Do not run `pip install`, `npm install`, or download missing converters. Use only document libraries and local applications already available in the runtime. If no safe writer or renderer is available for the requested operation, explain the limitation instead of constructing an unreliable file.
 
-| Task | Approach |
-|---|---|
-| **Create** a new document | Write a `docx` (npm) script — see gotchas below |
-| **Edit** an existing document | `unzip` → edit `word/document.xml` → `zip` (docx-js cannot open existing files) |
-| **Read** content | `pandoc -t markdown file.docx` |
+This skill is guidance only and does not bundle a DOCX generation library, Pandoc, LibreOffice, or Poppler. Never claim that a document was rendered or visually verified unless an available local tool actually opened or rendered it.
 
-> Script paths below are relative to this skill's directory.
+## When to Use
 
-## Creating with docx-js — gotchas
+Use when the main artifact is a `.docx` document and styles, numbering, sections, headers, footers, tables, fields, comments, tracked changes, or layout preservation matter.
 
-`docx` is preinstalled — do not run `npm install` first; write the script and `require('docx')` directly. Only if that require fails: `npm install docx`. The model knows the API; these are the footguns:
+## Core Rules
 
-- **Page size defaults to A4.** For US Letter set `page: { size: { width: 12240, height: 15840 } }` (DXA; 1440 = 1″).
-- **Landscape:** pass portrait dimensions and `orientation: PageOrientation.LANDSCAPE` — docx-js swaps width/height internally.
-- **Tables need dual widths:** set `columnWidths` on the table AND `width` on every cell, both in `WidthType.DXA` (PERCENTAGE breaks in Google Docs). Column widths must sum to the table width.
-- **Table shading:** use `ShadingType.CLEAR`, never `SOLID` (renders black).
-- **Lists:** never insert `•` literally; use a `numbering` config with `LevelFormat.BULLET`.
-- **`ImageRun` requires `type:`** (`"png"`, `"jpg"`, …).
-- **`PageBreak` must be inside a `Paragraph`.**
-- **Never use `\n`** — use separate `Paragraph` elements.
-- **TOC:** headings must use built-in `HeadingLevel.*`; custom heading styles need `outlineLevel` set or they won't appear.
-- **Don't use a table as a horizontal rule** — use a paragraph bottom border instead.
-- **Dot-leader / right-aligned-on-same-line:** use `PositionalTab` (`alignment: PositionalTabAlignment.RIGHT`, `leader: PositionalTabLeader.DOT`) inside a `TextRun`, not literal `.` or space padding.
+### Treat DOCX as a structured package
 
-## Verify the output
+- A DOCX file is a ZIP package of related OOXML parts, not plain text.
+- Important content can live in `word/document.xml`, styles, numbering, headers, footers, comments, footnotes, relationships, and media parts.
+- Visible phrases may be split across several runs, bookmarks, fields, or revision wrappers. Do not assume a sentence is one XML text node.
+- Treat `.docm` as macro-bearing and never execute its macros. Legacy `.doc` requires an approved local converter before DOCX-specific processing.
 
-After writing a `.docx`, render it and look at it:
+### Preserve document structure
 
-```bash
-python scripts/office/soffice.py --headless --convert-to pdf output.docx
-pdftoppm -jpeg -r 100 output.pdf page
-ls page-*.jpg   # then Read the images
-```
+- Work on a new output path unless the user explicitly requests replacement.
+- Prefer named styles and extend the document's existing style system.
+- Preserve section properties, page size, margins, orientation, headers, footers, numbering definitions, relationships, bookmarks, fields, and table geometry unless the task changes them.
+- Use real numbering definitions for lists, not pasted bullet characters.
+- Make the smallest possible structural edit to existing documents; replacing a whole paragraph can destroy formatting, bookmarks, comments, or tracked-change context.
 
-`pdftoppm` zero-pads page numbers to the width of the page count (`page-01.jpg`…`page-12.jpg`).
+### Handle review data carefully
 
-## Editing existing documents
+- Tracked changes and comments may contain deleted or non-visible sensitive text.
+- Do not accept or reject revisions, delete comments, refresh fields, or remove metadata unless the user requests it.
+- Keep comment anchors, revision IDs, authors, timestamps, and relationship IDs internally consistent.
+- For legal or review-heavy documents, prefer narrow span-level edits over wholesale rewrites.
 
-Legacy `.doc` files must be converted first: `python scripts/office/soffice.py --headless --convert-to docx file.doc`.
+### Verify before delivery
 
-```bash
-unzip -q doc.docx -d unpacked/
-find unpacked -type l -delete   # strip symlink entries — docx from external parties is untrusted
-python scripts/merge_runs.py unpacked/   # coalesce fragmented runs so text is findable
-# edit unpacked/word/document.xml in place — do NOT reformat or pretty-print
-(cd unpacked && rm -f ../out.docx && zip -Xr ../out.docx .)
-python scripts/office/validate.py out.docx --original doc.docx   # XSD checks; --auto-repair fixes common issues
-# redlining? add --author "<the name you redlined under>" to check every edit is tracked
-```
+- Reopen or reparse the output and confirm that the package, relationships, expected paragraphs, tables, styles, and media remain present.
+- When a local Word renderer is available, inspect pagination, headers, footers, tables, wrapping, and page breaks.
+- Report whether verification was structural, visual, or both.
+- Call out stale fields, unrefreshed tables of contents, unresolved tracked changes, linked media, or compatibility risks.
 
-Word splits text across many `<w:r>` runs (revision ids, spell-check markers), so a phrase you can see in the document often doesn't exist as a contiguous string in the XML. `merge_runs.py` merges adjacent identically-formatted runs in `word/document.xml` without changing content or rendering; it also accepts a `.docx` directly (`python scripts/merge_runs.py doc.docx -o merged.docx`).
+## Common Traps
 
-**Tracked changes:** when redlining, validate with `--author "<the name you redlined under>"` (needs `--original`) — it reports any text you changed without a `<w:ins>`/`<w:del>` around it, which is easy to do by accident and invisible in the accepted view. Wrap runs in `<w:ins>`/`<w:del>` with `w:id`, `w:author`, `w:date` attributes. Inside `<w:del>`, the text element is `<w:delText>`, not `<w:t>`. A deleted paragraph mark (`<w:pPr><w:rPr><w:del w:id=".." w:author=".." w:date=".."/></w:rPr></w:pPr>`) means "merge this paragraph into the next" — so deleting a paragraph outright is that plus a `<w:del>` around every run. The `<w:del/>` must come before the rPr's other children; their order is schema-enforced.
-
-To produce a clean copy with all tracked changes accepted: `python scripts/accept_changes.py in.docx out.docx`.
-
-Accepting a deleted paragraph mark should join that paragraph to the one below it, so a paragraph whose runs are *all* deleted vanishes. Word does this; `accept_changes.py` and `pandoc --track-changes=accept` don't always. Both fail the same way — they strip the deleted text but leave the emptied paragraph behind, which reads as a stray empty bullet when it was auto-numbered:
-
-- `pandoc --track-changes=accept` never joins the paragraphs.
-- `accept_changes.py` (LibreOffice) joins them correctly, except when the deleted paragraph is followed by an empty spacer paragraph.
-
-An empty bullet in either view is an artifact of that view, not a defect in the document. Check paragraph deletions in the XML.
-
-## Comments
-
-Comments require six cross-linked files. Use the helper — directory mode when you'll also be editing `document.xml` (saves an unzip/rezip cycle), `.docx`-direct mode otherwise:
-
-```bash
-# Against an already-unpacked directory (preferred when also placing markers)
-python scripts/comment.py unpacked/ "Fees & expenses cap is too low"
-python scripts/comment.py unpacked/ "Agreed" --parent 0
-
-# Against a .docx directly
-python scripts/comment.py contract.docx "This cap is too low" -o annotated.docx
-```
-
-The script writes `comments.xml`, `commentsExtended.xml`, `commentsIds.xml`, `commentsExtensible.xml`, the relationships, and the content-type overrides. Comment IDs are auto-assigned. It then prints the `<w:commentRangeStart>`/`<w:commentRangeEnd>`/`<w:commentReference>` snippet to add to `word/document.xml` so the comment anchors to specific text — until you place those markers, the comment exists but is not visible.
-
-## Dependencies
-
-`docx` (npm, preinstalled — install only if `require('docx')` fails) · `pandoc` · LibreOffice (`soffice`) · `pdftoppm` (Poppler)
+- Copying content between documents can import conflicting styles and numbering definitions.
+- Header and footer images use part-specific relationships.
+- Empty paragraphs used for spacing make templates fragile.
+- Deleting visible text can leave an empty numbered paragraph behind.
+- A document that passes text extraction can still fail on pagination, tables, fields, or review metadata.
