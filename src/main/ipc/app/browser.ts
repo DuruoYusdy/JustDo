@@ -337,13 +337,28 @@ export const buildBrowserPairingCommandEnvironment = (
   OPENCLAW_NO_RESPAWN: '1',
 });
 
+const OPENCLAW_ELECTRON_CLI_BOOTSTRAP =
+  "process.argv[0]='node';import(require('node:url').pathToFileURL(process.argv[1]).href)";
+
+export const buildBrowserExtensionPairingCommandArgs = (
+  openclawEntry: string,
+): string[] => [
+  '-e',
+  OPENCLAW_ELECTRON_CLI_BOOTSTRAP,
+  openclawEntry,
+  'browser',
+  'extension',
+  'pair',
+  '--json',
+];
+
 export const copyBrowserExtensionPairing = async (
   buildCliEnvironment: () => Promise<OpenClawCliEnvironment>,
   runPairCommand: (cli: OpenClawCliEnvironment) => Promise<string> = async cli => {
     const executable = cli.env.JUSTDO_ELECTRON_PATH?.trim() || process.execPath;
     const { stdout } = await execFileAsync(
       executable,
-      [cli.openclawEntry, 'browser', 'extension', 'pair', '--json'],
+      buildBrowserExtensionPairingCommandArgs(cli.openclawEntry),
       {
         cwd: cli.runtimeRoot,
         env: buildBrowserPairingCommandEnvironment(cli),

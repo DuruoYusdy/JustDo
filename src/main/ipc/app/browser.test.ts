@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { BrowserMode } from '../../../shared/browser';
 import {
   applyBrowserModeChange,
+  buildBrowserExtensionPairingCommandArgs,
   buildBrowserPairingCommandEnvironment,
   copyBrowserExtensionPairing,
   findBundledBrowserExtensionPath,
@@ -245,6 +246,18 @@ describe('testBrowserConnection', () => {
 });
 
 describe('browser extension resources', () => {
+  test('bootstraps the OpenClaw CLI with Node-compatible argv under Electron', () => {
+    expect(buildBrowserExtensionPairingCommandArgs('openclaw.mjs')).toEqual([
+      '-e',
+      "process.argv[0]='node';import(require('node:url').pathToFileURL(process.argv[1]).href)",
+      'openclaw.mjs',
+      'browser',
+      'extension',
+      'pair',
+      '--json',
+    ]);
+  });
+
   test('prevents OpenClaw from respawning the pairing CLI under Electron', () => {
     const cli = {
       openclawEntry: 'gateway-launcher.cjs',
