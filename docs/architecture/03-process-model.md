@@ -25,6 +25,8 @@ WebChat-only channel 生命周期；关闭 Electron shell snapshot 还可避免 
 
 ## 2. IPC 形态
 
+开发模式下，未打包的 Main 跟随当前窗口的 loopback Vite 服务生命周期，每秒进行一次有超时的 TCP 探测，连续三次失败后执行正常退出清理。单实例开发 URL 交接会切换监测目标，并忽略旧目标尚未完成的探测结果。因此浏览器 native host 拉起或被新终端复用的窗口也会在开发服务停止后退出，不依赖父子进程关系或 Ctrl+C 信号转发。正常清理等待 10 秒，超时后独立调用 Gateway 停止流程（自身期限 5 秒），最多再等 6 秒后强制退出，避免会话清理阻塞 Gateway 终止；此兜底不影响安装版。短暂探测失败允许恢复，普通 HMR 不改变会话。探测仅确认端口可连接，无法区分同一端口被其他服务立即接管；Vite 完整重启若超过连续失败阈值，也会触发退出。
+
 ### 2.1 调用型
 
 Renderer 调用 preload 方法，preload 使用 `ipcRenderer.invoke`，Main 通过 `ipcMain.handle` 返回可序列化结果。适合 CRUD、查询、命令和显式生命周期操作。

@@ -53,6 +53,7 @@ import { CustomerRegistrationService } from './core/customerRegistrationService'
 import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
 import { loadDeveloperConfig } from './core/developerConfigFile';
 import { getDevServerUrlFromCommandLine } from './core/devServerHandoff';
+import { createDevSessionLifecycle } from './core/devSessionLifecycle';
 import { setLanguage } from './core/i18n';
 import { isNsisInstalledApp } from './core/installedApp';
 import { registerLocalFileProtocol } from './core/localFileProtocol';
@@ -1569,6 +1570,7 @@ if (multicaBridgeArgv) {
   };
 
   const runAppCleanup = async (): Promise<void> => {
+    devSessionLifecycle?.stop();
     console.log('[Main] App is quitting, starting cleanup...');
     customerRegistrationService?.stop();
     await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {
@@ -1613,7 +1615,21 @@ if (multicaBridgeArgv) {
     }
   };
 
-  const appShutdown = registerAppShutdown({ cleanup: runAppCleanup });
+  const appShutdown = registerAppShutdown({
+    cleanup: runAppCleanup,
+    cleanupTimeoutMs: isDev && !app.isPackaged ? 10_000 : undefined,
+    onCleanupTimeout: async () => {
+      await openClawEngineManager?.stopGateway();
+    },
+  });
+  const devSessionLifecycle =
+    isDev && !app.isPackaged
+      ? createDevSessionLifecycle(() => {
+          console.log('[Main] Development server stopped; quitting application.');
+          app.quit();
+        })
+      : null;
+  devSessionLifecycle?.follow(devServerUrl);
   app.on('second-instance', (_event, commandLine) => {
     if (commandLine.includes(INSTALLER_QUIT_SWITCH)) {
       console.log('[Main] Installer requested a graceful shutdown.');
@@ -1645,6 +1661,7 @@ if (multicaBridgeArgv) {
     if (handedOffDevServerUrl) {
       const existingWindow = mainWindow;
       devServerUrl = handedOffDevServerUrl;
+      devSessionLifecycle?.follow(handedOffDevServerUrl);
       console.log(`[Main] Switching existing development window to ${handedOffDevServerUrl}`);
       createWindow();
       if (existingWindow && mainWindow && !mainWindow.isDestroyed()) {

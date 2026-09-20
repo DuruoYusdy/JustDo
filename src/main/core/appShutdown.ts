@@ -2,6 +2,8 @@ import { app } from 'electron';
 
 type AppShutdownOptions = {
   cleanup: () => Promise<void>;
+  cleanupTimeoutMs?: number;
+  onCleanupTimeout?: () => Promise<void>;
 };
 
 export type AppShutdownController = {
@@ -9,7 +11,11 @@ export type AppShutdownController = {
   quitAndInstall: (installUpdate: () => void) => void;
 };
 
-export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdownController => {
+export const registerAppShutdown = ({
+  cleanup,
+  cleanupTimeoutMs,
+  onCleanupTimeout,
+}: AppShutdownOptions): AppShutdownController => {
   let cleanupFinished = false;
   let cleanupInProgress = false;
   let quitting = false;
@@ -20,12 +26,36 @@ export const registerAppShutdown = ({ cleanup }: AppShutdownOptions): AppShutdow
     cleanupInProgress = true;
     quitting = true;
     console.log(`[Main] ${context}, running cleanup before exit...`);
+    let timedOut = false;
 
-    void cleanup()
+    const timeout =
+      cleanupTimeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            console.error('[Main] Development cleanup timed out; stopping runtime before exit.');
+            // Gateway shutdown has its own 5s deadline. Still bound the fallback
+            // in case another cleanup implementation fails to settle.
+            const forceExit = setTimeout(() => app.exit(1), 6_000);
+            forceExit.unref();
+            void Promise.resolve()
+              .then(onCleanupTimeout)
+              .catch(error => console.error('[Main] Emergency runtime cleanup failed:', error))
+              .finally(() => {
+                clearTimeout(forceExit);
+                app.exit(1);
+              });
+          }, cleanupTimeoutMs);
+    timeout?.unref();
+
+    void Promise.resolve()
+      .then(cleanup)
       .catch(error => {
         console.error(`[Main] Cleanup error (${context}):`, error);
       })
       .finally(() => {
+        clearTimeout(timeout);
+        if (timedOut) return;
         cleanupFinished = true;
         cleanupInProgress = false;
         if (!afterCleanup) {
