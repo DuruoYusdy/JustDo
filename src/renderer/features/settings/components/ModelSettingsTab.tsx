@@ -1,3 +1,4 @@
+import { normalizeModelProviderHeaders } from '@shared/modelProviderHeaders';
 import React, { useRef, useState } from 'react';
 
 import { APP_NAME, EXPORT_PASSWORD } from '@/app/constants/app';
@@ -79,11 +80,26 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
       const exportedProviders = await Promise.all(
         Object.entries(languageSettings.providers)
           .filter(([key, config]) => !languageSettings.isProviderReadOnly(key, config))
-          .map(async ([key, config]) => ({
-            key,
-            config,
-            apiKey: await encryptWithPassword(config.apiKey, EXPORT_PASSWORD),
-          })),
+          .map(async ([key, config]) => {
+            const encryptedHeaders = Object.fromEntries(
+              await Promise.all(
+                Object.entries(config.headers ?? {}).map(async ([name, value]) => [
+                  name,
+                  await encryptWithPassword(value, EXPORT_PASSWORD),
+                ]),
+              ),
+            );
+            return {
+              key,
+              config: {
+                ...config,
+                ...(Object.keys(encryptedHeaders).length > 0
+                  ? { headers: encryptedHeaders }
+                  : { headers: undefined }),
+              },
+              apiKey: await encryptWithPassword(config.apiKey, EXPORT_PASSWORD),
+            };
+          }),
       );
       const onlineEntries = await Promise.all(
         TRANSFERRED_NON_LANGUAGE_MODEL_KINDS.map(async kind => {
@@ -136,13 +152,28 @@ const ModelSettingsTab: React.FC<ModelSettingsTabProps> = ({
     try {
       const parsed = parseModelProvidersImportPayload(JSON.parse(await file.text()));
       const providers = await Promise.all(
-        parsed.providers.map(async config => ({
-          ...config,
-          apiKey:
-            typeof config.apiKey === 'string'
-              ? config.apiKey
-              : await decryptWithPassword(config.apiKey, EXPORT_PASSWORD),
-        })),
+        parsed.providers.map(async config => {
+          const headers = normalizeModelProviderHeaders(
+            Object.fromEntries(
+              await Promise.all(
+                Object.entries(config.headers ?? {}).map(async ([name, value]) => [
+                  name,
+                  typeof value === 'string'
+                    ? value
+                    : await decryptWithPassword(value, EXPORT_PASSWORD),
+                ]),
+              ),
+            ),
+          );
+          return {
+            ...config,
+            apiKey:
+              typeof config.apiKey === 'string'
+                ? config.apiKey
+                : await decryptWithPassword(config.apiKey, EXPORT_PASSWORD),
+            ...(Object.keys(headers).length > 0 ? { headers } : { headers: undefined }),
+          };
+        }),
       );
       const onlineModelProviders = Object.fromEntries(
         await Promise.all(

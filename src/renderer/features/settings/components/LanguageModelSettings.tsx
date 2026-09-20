@@ -8,6 +8,7 @@ import {
   MagnifyingGlassIcon,
   PlusIcon,
   SignalIcon,
+  Squares2X2Icon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { normalizeOpenClawProviderId } from '@shared/providers';
@@ -31,6 +32,8 @@ import PencilIcon from '@/shared/components/icons/PencilIcon';
 import PlusCircleIcon from '@/shared/components/icons/PlusCircleIcon';
 import { CustomProviderIcon } from '@/shared/components/icons/providers';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
+
+import ProviderRequestHeadersModal from './ProviderRequestHeadersModal';
 
 type ProviderType = string;
 type ProvidersConfig = NonNullable<AppConfig['providers']>;
@@ -111,11 +114,14 @@ const LanguageModelSettings: React.FC<LanguageModelSettingsProps> = ({
   modelConnectionTestStatuses,
   displayNameError,
   setDisplayNameError,
+  setProviders,
   onRequestDeleteProvider,
 }) => {
   const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
+  const [isHeadersModalOpen, setIsHeadersModalOpen] = useState(false);
   useEffect(() => {
     setIsApiKeyVisible(false);
+    setIsHeadersModalOpen(false);
   }, [activeProvider]);
   const activeConfig: ProviderConfig = providers[activeProvider] ??
     Object.values(providers)[0] ?? {
@@ -314,6 +320,22 @@ const LanguageModelSettings: React.FC<LanguageModelSettingsProps> = ({
                 <span className="truncate text-[10px] text-muted">
                   {i18nService.t('providerCredentialsHint')}
                 </span>
+                {!isBuiltinModelsProvider(activeProvider) && (
+                  <button
+                    type="button"
+                    onClick={() => setIsHeadersModalOpen(true)}
+                    disabled={isModelActionBusy}
+                    className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border-input bg-background px-2.5 text-[11px] font-medium text-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Squares2X2Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                    {i18nService.t('providerHeadersButton')}
+                    {Object.keys(activeConfig.headers ?? {}).length > 0 && (
+                      <span className="rounded-full bg-primary-muted px-1.5 text-[9px] text-primary">
+                        {Object.keys(activeConfig.headers ?? {}).length}
+                      </span>
+                    )}
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
@@ -392,6 +414,22 @@ const LanguageModelSettings: React.FC<LanguageModelSettingsProps> = ({
               </div>
             </div>
           )}
+
+          <ProviderRequestHeadersModal
+            isOpen={isHeadersModalOpen && !isBuiltinModelsProvider(activeProvider)}
+            providerName={getProviderDisplayName(activeProvider, activeConfig)}
+            headers={activeConfig.headers}
+            onClose={() => setIsHeadersModalOpen(false)}
+            onSave={headers =>
+              setProviders(current => ({
+                ...current,
+                [activeProvider]: {
+                  ...current[activeProvider],
+                  ...(Object.keys(headers).length > 0 ? { headers } : { headers: undefined }),
+                },
+              }))
+            }
+          />
 
           <div className="flex min-h-[220px] flex-col rounded-xl border border-border bg-surface p-3">
             <div className="mb-3 flex items-center justify-between gap-3">

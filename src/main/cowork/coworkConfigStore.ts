@@ -2,12 +2,15 @@ import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
+import { normalizeModelProviderHeaders } from '../../shared/modelProviderHeaders';
+
 export type CoworkApiType = 'openai';
 
 export type CoworkApiConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  headers?: Record<string, string>;
   apiType?: CoworkApiType;
 };
 
@@ -51,10 +54,12 @@ export function saveCoworkApiConfig(config: CoworkApiConfig): void {
     throw new Error('Invalid config: apiKey, baseURL, and model are required');
   }
 
+  const headers = normalizeModelProviderHeaders(config.headers);
   const normalized: CoworkApiConfig = {
     apiKey: config.apiKey.trim(),
     baseURL: config.baseURL.trim(),
     model: config.model.trim(),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
     apiType: 'openai',
   };
 

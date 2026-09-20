@@ -68,6 +68,7 @@ import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
 import {
   MANAGED_PROVIDER_SECRET_SOURCE,
+  managedProviderHeaderSecretRef,
   managedProviderSecretRef,
   providerSecretIdentity,
   syncProviderSecretFile,
@@ -1703,6 +1704,7 @@ type OpenClawProviderSelection = {
     apiKey: unknown;
     auth: 'api-key';
     timeoutSeconds: number;
+    headers?: Record<string, unknown>;
     models: Array<{
       id: string;
       name: string;
@@ -1795,6 +1797,7 @@ export const buildProviderSelection = (options: {
   displayName?: string;
   contextLength?: number; // 用户配置的上下文窗口长度
   maxTokens?: number; // 用户配置的最大输出 token 数量
+  headers?: Record<string, string>;
 }): OpenClawProviderSelection => {
   const providerName = options.providerName ?? '';
   const descriptor = resolveDescriptor(providerName);
@@ -1831,6 +1834,8 @@ export const buildProviderSelection = (options: {
   const effectiveContextWindow =
     options.contextLength ?? descriptor.modelDefaults?.contextWindow ?? 200_000;
   const effectiveMaxTokens = options.maxTokens ?? descriptor.modelDefaults?.maxTokens ?? 32_000;
+  const customHeaderNames =
+    providerName === ProviderName.BuiltinModels ? [] : Object.keys(options.headers ?? {});
 
   return {
     providerId: effectiveProviderId,
@@ -1843,6 +1848,16 @@ export const buildProviderSelection = (options: {
       apiKey,
       auth: 'api-key' as const,
       timeoutSeconds: OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
+      ...(customHeaderNames.length > 0
+        ? {
+            headers: Object.fromEntries(
+              customHeaderNames.map(headerName => [
+                headerName,
+                managedProviderHeaderSecretRef(effectiveProviderId, headerName),
+              ]),
+            ),
+          }
+        : {}),
       models: [
         {
           id: sessionModelId,
@@ -2204,6 +2219,7 @@ export class OpenClawConfigSync {
         displayName: apiResolution.providerMetadata?.displayName,
         contextLength: apiResolution.providerMetadata?.contextLength,
         maxTokens: apiResolution.providerMetadata?.maxTokens,
+        headers: apiResolution.config.headers,
       });
       primaryModel = providerSelection.primaryModel;
 
@@ -2222,6 +2238,7 @@ export class OpenClawConfigSync {
             displayName: p.displayName,
             contextLength: m.contextLength,
             maxTokens: m.maxTokens,
+            headers: p.headers,
           });
           if (!allProvidersMap[sel.providerId]) {
             allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };

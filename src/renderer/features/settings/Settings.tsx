@@ -25,6 +25,7 @@ import {
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
 } from '@shared/localSpeechSettings';
+import { mergeModelProviderHeaders } from '@shared/modelProviderHeaders';
 import { NetworkFetchPurpose } from '@shared/network';
 import {
   type AgentRuntimeSettings,
@@ -210,8 +211,14 @@ const APPEARANCE_PREVIEW_CARD_CLASS_NAME =
   'flex flex-col items-center rounded-xl border-2 p-2 transition-colors cursor-pointer';
 const APPEARANCE_PREVIEW_CLASS_NAME = 'mb-1.5 h-auto w-full overflow-hidden rounded-md';
 const APPEARANCE_PREVIEW_LABEL_CLASS_NAME = 'w-full truncate text-center text-xs font-medium';
-const buildModelDiscoveryHeaders = (apiKey: string): Record<string, string> =>
-  apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {};
+const buildModelDiscoveryHeaders = (
+  apiKey: string,
+  customHeaders?: Record<string, string>,
+): Record<string, string> =>
+  mergeModelProviderHeaders(
+    apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {},
+    customHeaders,
+  );
 
 const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -363,6 +370,7 @@ const normalizeProvidersForSave = (providers: ProvidersConfig): ProvidersConfig 
         : providerKey,
       {
         ...providerConfig,
+        ...(isBuiltinModelsProvider(providerKey) ? { headers: undefined } : {}),
         displayName:
           isCustomProvider(providerKey) && !providerConfig.displayName?.trim()
             ? getCustomProviderDefaultName(providerKey)
@@ -1024,7 +1032,10 @@ const Settings: React.FC<SettingsProps> = ({
     setModelDiscoveryMessage(null);
     setIsDetectingModels(true);
     try {
-      const headers = buildModelDiscoveryHeaders(apiKey);
+      const headers = buildModelDiscoveryHeaders(
+        apiKey,
+        isBuiltinModelsProvider(provider) ? undefined : providerConfig.headers,
+      );
       const modelsResponse = await withTimeout(
         window.electron.api.fetch({
           url: buildProviderModelsUrl(baseUrl),
@@ -1964,9 +1975,12 @@ const Settings: React.FC<SettingsProps> = ({
           CONNECTIVITY_TEST_TOKEN_BUDGET,
           isBuiltinModelsProvider(testingProvider),
         );
-        const headers = buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
-          includeContentLength: false,
-        });
+        const headers = mergeModelProviderHeaders(
+          buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
+            includeContentLength: false,
+          }),
+          isBuiltinModelsProvider(testingProvider) ? undefined : providerConfig.headers,
+        );
         const requestId = `model-connection-test-${crypto.randomUUID()}`;
         connectionTestRef.current.requestId = requestId;
 

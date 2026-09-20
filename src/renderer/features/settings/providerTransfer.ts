@@ -1,3 +1,8 @@
+import {
+  MODEL_PROVIDER_HEADER_LIMITS,
+  validateModelProviderHeaderName,
+  validateModelProviderHeaderValue,
+} from '@shared/modelProviderHeaders';
 import { normalizeOpenClawProviderId } from '@shared/providers';
 
 import {
@@ -27,9 +32,10 @@ export const TRANSFERRED_NON_LANGUAGE_MODEL_KINDS: readonly NonLanguageModelKind
 
 export type SerializedProviderConfig = Omit<
   ProviderConfig,
-  'apiKey' | 'displayName' | 'identity' | 'readonly'
+  'apiKey' | 'headers' | 'displayName' | 'identity' | 'readonly'
 > & {
   apiKey: PasswordEncryptedPayload | string;
+  headers?: Record<string, PasswordEncryptedPayload | string>;
   displayName: string;
 };
 
@@ -68,6 +74,40 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const normalizeDisplayName = (name: string): string => name.trim().toLowerCase();
 
+const isPasswordEncryptedPayload = (value: unknown): value is PasswordEncryptedPayload =>
+  isRecord(value) &&
+  typeof value.encrypted === 'string' &&
+  typeof value.iv === 'string' &&
+  typeof value.salt === 'string';
+
+const parseSerializedHeaders = (
+  value: unknown,
+): Record<string, PasswordEncryptedPayload | string> | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error('Invalid provider headers');
+  const entries = Object.entries(value);
+  if (entries.length > MODEL_PROVIDER_HEADER_LIMITS.count) {
+    throw new Error('Invalid provider headers');
+  }
+  const headers: Array<[string, PasswordEncryptedPayload | string]> = [];
+  const seen = new Set<string>();
+  for (const [rawName, headerValue] of entries) {
+    const name = rawName.trim();
+    const identity = name.toLowerCase();
+    if (
+      validateModelProviderHeaderName(name) ||
+      seen.has(identity) ||
+      (typeof headerValue !== 'string' && !isPasswordEncryptedPayload(headerValue)) ||
+      (typeof headerValue === 'string' && validateModelProviderHeaderValue(headerValue))
+    ) {
+      throw new Error('Invalid provider headers');
+    }
+    seen.add(identity);
+    headers.push([name, headerValue]);
+  }
+  return headers.length > 0 ? Object.fromEntries(headers) : undefined;
+};
+
 const parseProviderConfig = (value: unknown): SerializedProviderConfig => {
   if (!isRecord(value)) throw new Error('Invalid provider configuration');
 
@@ -86,9 +126,11 @@ const parseProviderConfig = (value: unknown): SerializedProviderConfig => {
     throw new Error('Invalid provider configuration');
   }
 
-  const { identity: _identity, readonly: _readonly, ...config } = value;
+  const { identity: _identity, readonly: _readonly, headers: rawHeaders, ...config } = value;
+  const headers = parseSerializedHeaders(rawHeaders);
   return {
     ...(config as Omit<SerializedProviderConfig, 'displayName'>),
+    ...(headers ? { headers } : {}),
     displayName,
   };
 };
@@ -207,7 +249,13 @@ const parseOnlineModelCategories = (
 };
 
 export const createProvidersExportPayload = (
-  providers: Array<{ key: string; config: ProviderConfig; apiKey: PasswordEncryptedPayload }>,
+  providers: Array<{
+    key: string;
+    config: Omit<ProviderConfig, 'headers'> & {
+      headers?: Record<string, PasswordEncryptedPayload>;
+    };
+    apiKey: PasswordEncryptedPayload;
+  }>,
   onlineModelProviders: Partial<
     Record<NonLanguageModelKind, ExportedOnlineModelCategoryInput>
   > = {},

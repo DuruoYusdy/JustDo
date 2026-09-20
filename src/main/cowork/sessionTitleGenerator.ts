@@ -1,4 +1,5 @@
 import { buildOpenAIJsonRequestHeaders } from '../../shared/cowork/modelRequestHeaders';
+import { mergeModelProviderHeaders } from '../../shared/modelProviderHeaders';
 import { resolveBuiltinRequestApiKey } from './builtinModelProviderConfig';
 import {
   buildOpenAIChatCompletionsUrl,
@@ -31,6 +32,7 @@ export type SessionTitleApiConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  headers?: Record<string, string>;
 };
 
 export type SessionTitleFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -77,7 +79,7 @@ export class SessionTitleGenerator {
     const timeoutId = setTimeout(() => controller.abort(), effectiveTimeout);
 
     try {
-      const { apiKey, baseURL, model } = resolution.config;
+      const { apiKey, baseURL, model, headers: customHeaders } = resolution.config;
       const body = JSON.stringify({
         model,
         max_tokens: SESSION_TITLE_MAX_TOKENS,
@@ -99,7 +101,10 @@ export class SessionTitleGenerator {
           },
         ],
       });
-      const headers = buildOpenAIJsonRequestHeaders(body, resolveBuiltinRequestApiKey(apiKey, baseURL));
+      const headers = mergeModelProviderHeaders(
+        buildOpenAIJsonRequestHeaders(body, resolveBuiltinRequestApiKey(apiKey, baseURL)),
+        customHeaders,
+      );
 
       const response = await (this.callbacks.fetch ?? fetch)(
         buildOpenAIChatCompletionsUrl(baseURL),

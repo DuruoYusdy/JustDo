@@ -174,6 +174,7 @@ describe('OpenClaw provider config', () => {
       apiType: 'openai',
       providerName: 'custom_0',
       displayName: 'AcmeProxy',
+      headers: { 'X-Tenant': 'tenant-a' },
     });
 
     expect(selection.providerId).toBe('acmeproxy');
@@ -184,6 +185,13 @@ describe('OpenClaw provider config', () => {
       id: '/acmeproxy',
     });
     expect(selection.providerConfig.models).toHaveLength(1);
+    expect(selection.providerConfig.headers).toEqual({
+      'X-Tenant': {
+        source: 'file',
+        provider: 'justdo-model-providers',
+        id: expect.stringMatching(/^\/header:acmeproxy:/),
+      },
+    });
     expect(selection.providerConfig.models[0]?.compat).toEqual({
       supportsUsageInStreaming: true,
     });
@@ -200,6 +208,19 @@ describe('OpenClaw provider config', () => {
 
     expect(selection.providerConfig.timeoutSeconds).toBe(OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS);
     expect(selection.providerConfig.timeoutSeconds).toBeGreaterThan(120);
+  });
+
+  test('never projects custom provider headers onto the built-in provider', () => {
+    const selection = buildProviderSelection({
+      apiKey: 'ignored',
+      baseURL: 'https://builtin.example/v1',
+      modelId: 'builtin-model',
+      apiType: 'openai',
+      providerName: ProviderName.BuiltinModels,
+      headers: { 'X-Must-Not-Leak': 'value' },
+    });
+
+    expect(selection.providerConfig.headers).toBeUndefined();
   });
 });
 

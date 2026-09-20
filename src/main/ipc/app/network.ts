@@ -1,5 +1,9 @@
 import { ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
 
+import {
+  MODEL_PROVIDER_HEADER_LIMITS,
+  normalizeModelProviderHeaders,
+} from '../../../shared/modelProviderHeaders';
 import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network';
 import { t } from '../../core/i18n';
 import {
@@ -34,14 +38,7 @@ const cancelPendingFetch = (key: string): void => {
 };
 
 const MODEL_PROBE_MAX_BODY_BYTES = 16 * 1024;
-const MODEL_PROBE_MAX_HEADER_VALUE_BYTES = 8 * 1024;
-const MODEL_PROBE_ALLOWED_HEADERS = new Set([
-  'accept',
-  'authorization',
-  'content-type',
-  'user-agent',
-]);
-
+const MODEL_PROBE_GENERATED_HEADER_ALLOWANCE = 4;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -57,13 +54,13 @@ const validateModelProbe = (options: ApiFetchOptions): { body?: string } => {
     throw new Error('Invalid model probe request.');
   }
   const method = options.method.toUpperCase();
-  for (const [name, value] of Object.entries(options.headers)) {
-    if (
-      !MODEL_PROBE_ALLOWED_HEADERS.has(name.toLowerCase()) ||
-      Buffer.byteLength(value, 'utf8') > MODEL_PROBE_MAX_HEADER_VALUE_BYTES
-    ) {
-      throw new Error('Invalid model probe request headers.');
-    }
+  try {
+    normalizeModelProviderHeaders(
+      options.headers,
+      MODEL_PROVIDER_HEADER_LIMITS.count + MODEL_PROBE_GENERATED_HEADER_ALLOWANCE,
+    );
+  } catch {
+    throw new Error('Invalid model probe request headers.');
   }
   switch (options.purpose) {
     case NetworkFetchPurpose.ModelDiscovery: {

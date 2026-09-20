@@ -1,3 +1,4 @@
+import { normalizeModelProviderHeaders } from '../../shared/modelProviderHeaders';
 import {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
@@ -20,6 +21,7 @@ type ProviderConfig = {
   enabled: boolean;
   apiKey: string;
   baseUrl: string;
+  headers?: Record<string, string>;
   apiFormat?: 'openai';
   models?: ProviderModel[];
   embeddingModels?: ProviderModel[];
@@ -32,6 +34,15 @@ type AppConfig = {
     defaultModelProvider?: string;
   };
   providers?: Record<string, ProviderConfig>;
+};
+
+const resolveCustomProviderHeaders = (
+  providerName: string,
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined => {
+  if (providerName === 'builtin_models') return undefined;
+  const normalized = normalizeModelProviderHeaders(headers);
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
 export type ApiConfigResolution = {
@@ -191,12 +202,17 @@ export function resolveCurrentApiConfig(): ApiConfigResolution {
   const apiKey = matched.providerConfig.apiKey?.trim() || '';
   const effectiveApiKey =
     apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
+  const headers = resolveCustomProviderHeaders(
+    matched.providerName,
+    matched.providerConfig.headers,
+  );
 
   return {
     config: {
       apiKey: effectiveApiKey,
       baseURL: matched.baseURL,
       model: matched.modelId,
+      ...(headers ? { headers } : {}),
       apiType: 'openai',
     },
     providerMetadata: {
@@ -240,6 +256,10 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   const apiKey = matched.providerConfig.apiKey?.trim() || '';
   const effectiveApiKey =
     apiKey || (!providerRequiresApiKey(matched.providerName) ? 'sk-justdo-local' : '');
+  const headers = resolveCustomProviderHeaders(
+    matched.providerName,
+    matched.providerConfig.headers,
+  );
   const providerSignature = `${matched.providerName}:${matched.modelId}:${matched.providerConfig.apiFormat ?? 'unknown'}`;
   if (providerSignature !== lastLoggedProviderSignature) {
     lastLoggedProviderSignature = providerSignature;
@@ -253,6 +273,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       apiKey: effectiveApiKey,
       baseURL: matched.baseURL,
       model: matched.modelId,
+      ...(headers ? { headers } : {}),
       apiType: 'openai',
     },
     providerMetadata: {
@@ -266,8 +287,13 @@ export function resolveRawApiConfig(): ApiConfigResolution {
   };
 }
 
-export function resolveAllProviderSecrets(): Record<string, string> {
-  const result: Record<string, string> = {};
+export type ProviderManagedSecretValues = Record<
+  string,
+  { apiKey: string; headers: Record<string, string> }
+>;
+
+export function resolveAllProviderSecrets(): ProviderManagedSecretValues {
+  const result: ProviderManagedSecretValues = {};
   const sqliteStore = getStore();
   if (!sqliteStore) return result;
   const appConfig = sqliteStore.get<AppConfig>('app_config');
@@ -282,7 +308,13 @@ export function resolveAllProviderSecrets(): Record<string, string> {
           getEffectiveCustomProviderDisplayName(providerName, providerConfig.displayName),
         )
       : providerName;
-    result[providerId] = apiKey || 'sk-justdo-local';
+    result[providerId] = {
+      apiKey: apiKey || 'sk-justdo-local',
+      headers:
+        providerName === 'builtin_models'
+          ? {}
+          : normalizeModelProviderHeaders(providerConfig.headers),
+    };
   }
 
   return result;
@@ -292,6 +324,7 @@ export type ProviderRawConfig = {
   providerName: string;
   baseURL: string;
   apiKey: string;
+  headers?: Record<string, string>;
   apiType: 'openai';
   models: ProviderModel[];
   embeddingModels: ProviderModel[];
@@ -383,10 +416,12 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
     );
     if (models.length === 0 && embeddingModels.length === 0) continue;
 
+    const headers = resolveCustomProviderHeaders(providerName, providerConfig.headers);
     result.push({
       providerName,
       baseURL,
       apiKey: apiKey || 'sk-justdo-local',
+      ...(headers ? { headers } : {}),
       apiType: 'openai',
       models,
       embeddingModels,

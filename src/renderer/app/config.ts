@@ -57,6 +57,7 @@ export interface AppConfig {
       enabled: boolean;
       apiKey: string;
       baseUrl: string;
+      headers?: Record<string, string>;
       apiFormat?: 'openai';
       displayName?: string;
       /** Stable local identity used only to correlate provider renames. */

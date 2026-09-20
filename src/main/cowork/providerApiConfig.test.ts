@@ -134,7 +134,9 @@ describe('OpenClaw custom provider names', () => {
         }) as unknown as SqliteStore,
     );
 
-    expect(resolveAllProviderSecrets()).toEqual({ acmeproxy: 'secret-key' });
+    expect(resolveAllProviderSecrets()).toEqual({
+      acmeproxy: { apiKey: 'secret-key', headers: {} },
+    });
     expect(getProviderDisplayNameMap()).toEqual({ acmeproxy: 'AcmeProxy' });
   });
 });
@@ -215,5 +217,40 @@ describe('resolveRawApiConfig logging', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]?.models).toEqual([{ id: 'enabled-model' }]);
+  });
+
+  it('keeps custom headers on non-built-in providers only', () => {
+    const appConfig = {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom_0' },
+      providers: {
+        custom_0: {
+          enabled: true,
+          apiKey: 'secret-key',
+          baseUrl: 'https://example.test/v1',
+          headers: { 'X-Tenant': 'tenant-a' },
+          models: [{ id: 'custom-model' }],
+        },
+        builtin_models: {
+          enabled: true,
+          apiKey: '',
+          baseUrl: 'https://builtin.test/v1',
+          headers: { 'X-Must-Not-Leak': 'value' },
+          models: [{ id: 'builtin-model' }],
+        },
+      },
+    };
+    setStoreGetter(() => ({ get: () => appConfig }) as unknown as SqliteStore);
+
+    expect(resolveRawApiConfig().config?.headers).toEqual({ 'X-Tenant': 'tenant-a' });
+    const enabledProviders = resolveAllEnabledProviderConfigs();
+    expect(enabledProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ providerName: 'custom_0', headers: { 'X-Tenant': 'tenant-a' } }),
+        expect.objectContaining({ providerName: 'builtin_models' }),
+      ]),
+    );
+    expect(
+      enabledProviders.find(provider => provider.providerName === 'builtin_models'),
+    ).not.toHaveProperty('headers');
   });
 });

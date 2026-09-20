@@ -223,7 +223,11 @@ test('rejects arbitrary connection-test payloads before injecting outbound heade
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
-test('rejects bodies and custom Renderer headers on discovery probes', async () => {
+test('rejects discovery bodies but accepts validated custom provider headers', async () => {
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  mocks.fetch.mockResolvedValue(
+    new Response('{"data":[]}', { headers: { 'content-type': 'application/json' } }),
+  );
   registerNetworkHandlers();
   const handler = mocks.handle.mock.calls.find(
     ([channel]) => channel === 'api:fetch',
@@ -251,9 +255,71 @@ test('rejects bodies and custom Renderer headers on discovery probes', async () 
         purpose: NetworkFetchPurpose.ModelDiscovery,
       },
     ),
-  ).resolves.toMatchObject({ ok: false, statusText: 'Invalid model probe request headers.' });
-  expect(mocks.applyMainProcessOutboundHeaderPolicy).not.toHaveBeenCalled();
-  expect(mocks.fetch).not.toHaveBeenCalled();
+  ).resolves.toMatchObject({ ok: true });
+  expect(mocks.fetch).toHaveBeenCalledWith(
+    'https://api.deepseek.com/models',
+    expect.objectContaining({ headers: { 'X-Arbitrary': 'value' } }),
+  );
+});
+
+test.each(['Host', 'Content-Length', 'Transfer-Encoding'])(
+  'rejects unsafe custom provider header %s',
+  async headerName => {
+    registerNetworkHandlers();
+    const handler = mocks.handle.mock.calls.find(
+      ([channel]) => channel === 'api:fetch',
+    )![1] as ApiFetchHandler;
+
+    await expect(
+      handler(
+        {},
+        {
+          url: 'https://api.deepseek.com/models',
+          method: 'GET',
+          headers: { [headerName]: 'value' },
+          purpose: NetworkFetchPurpose.ModelDiscovery,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: false, statusText: 'Invalid model probe request headers.' });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  },
+);
+
+test('allows the custom header limit in addition to generated probe headers', async () => {
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  mocks.fetch.mockResolvedValue(
+    new Response('{"data":[]}', { headers: { 'content-type': 'application/json' } }),
+  );
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'api:fetch',
+  )![1] as ApiFetchHandler;
+  const customHeaders = Object.fromEntries(
+    Array.from({ length: 32 }, (_, index) => [`X-Custom-${index}`, 'value']),
+  );
+
+  await expect(
+    handler(
+      {},
+      {
+        url: 'https://api.deepseek.com/chat/completions',
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: 'Bearer test',
+          'Content-Type': 'application/json',
+          'User-Agent': 'test',
+          ...customHeaders,
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: 'Hi' }],
+          max_tokens: 1,
+        }),
+        purpose: NetworkFetchPurpose.ModelConnectionTest,
+      },
+    ),
+  ).resolves.toMatchObject({ ok: true });
 });
 
 test('aborts a pending API fetch when the renderer cancels its request ID', async () => {

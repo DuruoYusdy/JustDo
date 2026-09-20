@@ -38,10 +38,7 @@ import {
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
-import {
-  CoworkSessionForkIpc,
-  type ForkCoworkSessionInput,
-} from '../shared/cowork/sessionFork';
+import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
@@ -454,8 +451,13 @@ contextBridge.exposeInMainWorld('electron', {
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   checkApiConfig: (options?: { probeModel?: boolean }) =>
     ipcRenderer.invoke('check-api-config', options),
-  saveApiConfig: (config: { apiKey: string; baseURL: string; model: string; apiType?: 'openai' }) =>
-    ipcRenderer.invoke('save-api-config', config),
+  saveApiConfig: (config: {
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    headers?: Record<string, string>;
+    apiType?: 'openai';
+  }) => ipcRenderer.invoke('save-api-config', config),
   generateSessionTitle: (request: GenerateSessionTitleRequest) =>
     ipcRenderer.invoke(SessionTitleIpc.Generate, request),
   getRecentCwds: (limit?: number) => ipcRenderer.invoke('get-recent-cwds', limit),

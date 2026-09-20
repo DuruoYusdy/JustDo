@@ -203,6 +203,7 @@ interface CoworkApiConfig {
   apiKey: string;
   baseURL: string;
   model: string;
+  headers?: Record<string, string>;
   apiType?: 'openai';
 }
 

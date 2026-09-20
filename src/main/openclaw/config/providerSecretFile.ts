@@ -43,11 +43,28 @@ export const managedProviderSecretRef = (providerId: string): Record<string, str
   id: `/${providerId}`,
 });
 
+const providerHeaderSecretId = (providerId: string, headerName: string): string =>
+  `header:${providerId}:${Buffer.from(headerName.toLowerCase(), 'utf8').toString('hex')}`;
+
+export const managedProviderHeaderSecretRef = (
+  providerId: string,
+  headerName: string,
+): Record<string, string> => ({
+  source: 'file',
+  provider: MANAGED_PROVIDER_SECRET_SOURCE,
+  id: `/${providerHeaderSecretId(providerId, headerName)}`,
+});
+
+export type ManagedProviderSecretValues = Record<
+  string,
+  { apiKey: string; headers: Record<string, string> }
+>;
+
 /** Publish credentials before the config that references them; never put values in config. */
 export function syncProviderSecretFile(
   config: Record<string, unknown>,
   stateDir: string,
-  apiKeys: Record<string, string>,
+  secretValues: ManagedProviderSecretValues,
 ): { config: Record<string, unknown>; secretsChanged: boolean } {
   const next = structuredClone(config);
   const providers = isRecord(next.models) && isRecord(next.models.providers)
@@ -59,9 +76,25 @@ export function syncProviderSecretFile(
     const filePrefix = `${MANAGED_PROVIDER_SECRET_SOURCE}:/`;
     const id = identity.startsWith(filePrefix) ? identity.slice(filePrefix.length) : undefined;
     if (!id || id === BUILTIN_KEY) continue;
-    if (!apiKeys[id]) throw new Error('A managed model provider credential is unavailable.');
-    keys[id] = apiKeys[id];
+    const providerSecrets = secretValues[id];
+    if (!providerSecrets?.apiKey) {
+      throw new Error('A managed model provider credential is unavailable.');
+    }
+    keys[id] = providerSecrets.apiKey;
     provider.apiKey = managedProviderSecretRef(id);
+    if (!isRecord(provider.headers)) continue;
+    for (const [headerName, headerRef] of Object.entries(provider.headers)) {
+      const secretId = providerHeaderSecretId(id, headerName);
+      if (providerSecretIdentity(headerRef) !== `${MANAGED_PROVIDER_SECRET_SOURCE}:/${secretId}`) {
+        throw new Error('A managed model provider header reference is invalid.');
+      }
+      const value = providerSecrets.headers[headerName];
+      if (typeof value !== 'string' || !value.trim()) {
+        throw new Error('A managed model provider header value is unavailable.');
+      }
+      keys[secretId] = value;
+      provider.headers[headerName] = managedProviderHeaderSecretRef(id, headerName);
+    }
   }
 
   const filePath = path.join(stateDir, SECRET_FILE_NAME);

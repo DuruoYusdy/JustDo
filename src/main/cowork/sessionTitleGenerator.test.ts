@@ -47,6 +47,7 @@ test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () 
         apiKey: 'secret-key',
         baseURL: 'https://model.example/v1',
         model: 'current-model',
+        headers: { 'X-Tenant': 'tenant-a' },
       },
     }),
     fetch: fetchMock,
@@ -66,6 +67,7 @@ test('generateTitle sends the Gateway session ID as LiteLLM metadata', async () 
     'Content-Length': String(Buffer.byteLength(String(init?.body), 'utf8')),
     'User-Agent': 'OpenAI/JS 6.39.1',
     Authorization: 'Bearer secret-key',
+    'X-Tenant': 'tenant-a',
   });
   const requestBody = JSON.parse(String(init?.body));
   expect(requestBody).toMatchObject({

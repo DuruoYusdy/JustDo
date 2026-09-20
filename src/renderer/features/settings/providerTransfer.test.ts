@@ -28,7 +28,11 @@ describe('provider transfer format', () => {
     const payload = createProvidersExportPayload([
       {
         key: 'custom_7',
-        config: { ...providerConfig, displayName: 'AcmeProxy' },
+        config: {
+          ...providerConfig,
+          displayName: 'AcmeProxy',
+          headers: { 'X-Tenant': encryptedApiKey },
+        },
         apiKey: encryptedApiKey,
       },
     ]);
@@ -40,12 +44,44 @@ describe('provider transfer format', () => {
         {
           ...providerConfig,
           apiKey: encryptedApiKey,
+          headers: { 'X-Tenant': encryptedApiKey },
           displayName: 'AcmeProxy',
         },
       ],
       onlineModelProviders: {},
     });
     expect(JSON.stringify(payload)).not.toContain('custom_7');
+    expect(parseModelProvidersImportPayload(payload).providers[0]?.headers).toEqual({
+      'X-Tenant': encryptedApiKey,
+    });
+  });
+
+  test('rejects imported provider headers that exceed limits or contain invalid plaintext values', () => {
+    const payload = (headers: Record<string, string>) => ({
+      type: EXPORT_FORMAT_TYPE,
+      version: PROVIDERS_EXPORT_VERSION,
+      onlineModelProviders: {},
+      providers: [
+        {
+          ...providerConfig,
+          apiKey: encryptedApiKey,
+          displayName: 'AcmeProxy',
+          headers,
+        },
+      ],
+    });
+
+    expect(() =>
+      parseModelProvidersImportPayload(
+        payload(Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`X-${index}`, 'v']))),
+      ),
+    ).toThrow('Invalid provider headers');
+    expect(() =>
+      parseModelProvidersImportPayload(payload({ 'X-Tenant': 'line-one\r\nline-two' })),
+    ).toThrow('Invalid provider headers');
+    expect(() => parseModelProvidersImportPayload(payload({ 'X-Tenant': '' }))).toThrow(
+      'Invalid provider headers',
+    );
   });
 
   test('rejects duplicate display names ignoring case', () => {

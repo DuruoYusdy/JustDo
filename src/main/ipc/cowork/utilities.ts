@@ -4,13 +4,16 @@ import {
   type GenerateSessionTitleRequest,
   SessionTitleIpc,
 } from '../../../shared/cowork/sessionTitle';
-import { saveCoworkApiConfig } from '../../cowork/coworkConfigStore';
+import { type CoworkApiConfig, saveCoworkApiConfig } from '../../cowork/coworkConfigStore';
 import { probeCoworkModelReadiness } from '../../cowork/coworkModelReadiness';
 import { getCurrentApiConfig, resolveCurrentApiConfig } from '../../cowork/providerApiConfig';
 import type { CoworkGenerateTitleOptions } from '../../engine/types';
 
 interface TitleGenerator {
-  generateTitle?: (userInput: string | null, options?: CoworkGenerateTitleOptions) => Promise<string>;
+  generateTitle?: (
+    userInput: string | null,
+    options?: CoworkGenerateTitleOptions,
+  ) => Promise<string>;
 }
 
 interface CoworkUtilitiesHandlerOptions {
@@ -65,26 +68,15 @@ export const registerCoworkUtilityHandlers = ({
     return { hasConfig: config !== null, config, error };
   });
 
-  ipcMain.handle(
-    'save-api-config',
-    async (
-      _event,
-      config: {
-        apiKey: string;
-        baseURL: string;
-        model: string;
-        apiType?: 'openai';
-      },
-    ) => {
-      try {
-        saveCoworkApiConfig(config);
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to save API config',
-        };
-      }
-    },
-  );
+  ipcMain.handle('save-api-config', async (_event, config: CoworkApiConfig) => {
+    try {
+      saveCoworkApiConfig(config);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save API config',
+      };
+    }
+  });
 };

@@ -1,3 +1,4 @@
+import { mergeModelProviderHeaders } from '../../shared/modelProviderHeaders';
 import { resolveBuiltinRequestApiKey } from './builtinModelProviderConfig';
 import { buildOpenAIChatCompletionsUrl, extractApiErrorSnippet } from './coworkModelApi';
 import { resolveCurrentApiConfig } from './providerApiConfig';
@@ -8,6 +9,7 @@ type ModelReadinessApiConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  headers?: Record<string, string>;
 };
 
 function resolveModelReadinessApiConfig(): {
@@ -27,6 +29,7 @@ function resolveModelReadinessApiConfig(): {
       apiKey: resolution.config.apiKey,
       baseURL: resolution.config.baseURL,
       model: resolution.config.model,
+      headers: resolution.config.headers,
     },
   };
 }
@@ -47,12 +50,13 @@ export async function probeCoworkModelReadiness(
 
   try {
     const url = buildOpenAIChatCompletionsUrl(config.baseURL);
-    const headers: Record<string, string> = {
+    let headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (config.apiKey) {
       headers.Authorization = `Bearer ${resolveBuiltinRequestApiKey(config.apiKey, config.baseURL)}`;
     }
+    headers = mergeModelProviderHeaders(headers, config.headers);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -63,6 +67,7 @@ export async function probeCoworkModelReadiness(
         temperature: 0,
         messages: [{ role: 'user', content: 'Reply with "ok".' }],
       }),
+      redirect: 'error',
       signal: controller.signal,
     });
 

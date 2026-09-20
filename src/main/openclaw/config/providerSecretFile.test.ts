@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  managedProviderHeaderSecretRef,
   managedProviderSecretRef,
   providerSecretIdentity,
   syncProviderSecretFile,
@@ -27,7 +28,9 @@ describe('managed provider secret files', () => {
       models: { providers: { local: { apiKey: managedProviderSecretRef('acmeproxy') } } },
       secrets: { providers: { external: { source: 'env' } } },
     };
-    const result = syncProviderSecretFile(config, directory, { acmeproxy: 'fixture-key' });
+    const result = syncProviderSecretFile(config, directory, {
+      acmeproxy: { apiKey: 'fixture-key', headers: {} },
+    });
     expect(result.secretsChanged).toBe(true);
     expect(JSON.stringify(result.config)).not.toContain('fixture-key');
     expect(result.config).toMatchObject({
@@ -43,18 +46,34 @@ describe('managed provider secret files', () => {
   it('reports key rotation without changing the stable config and skips unchanged writes', () => {
     const directory = fixture();
     const config = { models: { providers: { acme: { apiKey: managedProviderSecretRef('acme') } } } };
-    const first = syncProviderSecretFile(config, directory, { acme: 'first' });
-    const rotated = syncProviderSecretFile(first.config, directory, { acme: 'second' });
+    const first = syncProviderSecretFile(config, directory, {
+      acme: { apiKey: 'first', headers: {} },
+    });
+    const rotated = syncProviderSecretFile(first.config, directory, {
+      acme: { apiKey: 'second', headers: {} },
+    });
     expect(rotated.config).toEqual(first.config);
     expect(rotated.secretsChanged).toBe(true);
-    expect(syncProviderSecretFile(rotated.config, directory, { acme: 'second' }).secretsChanged).toBe(false);
+    expect(
+      syncProviderSecretFile(rotated.config, directory, {
+        acme: { apiKey: 'second', headers: {} },
+      }).secretsChanged,
+    ).toBe(false);
   });
 
   it('removes credentials for removed providers and leaves built-in login separate', () => {
     const directory = fixture();
-    syncProviderSecretFile({ models: { providers: { acme: { apiKey: managedProviderSecretRef('acme') } } } }, directory, { acme: 'old' });
+    syncProviderSecretFile(
+      { models: { providers: { acme: { apiKey: managedProviderSecretRef('acme') } } } },
+      directory,
+      { acme: { apiKey: 'old', headers: {} } },
+    );
     const config = { models: { providers: { builtin: { apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}' } } } };
-    expect(syncProviderSecretFile(config, directory, { BUILTIN_MODELS: 'builtin' }).config).toEqual(config);
+    expect(
+      syncProviderSecretFile(config, directory, {
+        BUILTIN_MODELS: { apiKey: 'builtin', headers: {} },
+      }).config,
+    ).toEqual(config);
     expect(JSON.parse(fs.readFileSync(path.join(directory, 'model-provider-secrets.json'), 'utf8'))).toEqual({});
   });
 
@@ -67,5 +86,58 @@ describe('managed provider secret files', () => {
   it('fails without exposing missing credential values', () => {
     expect(() => syncProviderSecretFile({ models: { providers: { custom: { apiKey: managedProviderSecretRef('acme') } } } }, fixture(), {}))
       .toThrow('A managed model provider credential is unavailable.');
+  });
+
+  it('stores custom header values outside openclaw.json', () => {
+    const directory = fixture();
+    const config = {
+      models: {
+        providers: {
+          acme: {
+            apiKey: managedProviderSecretRef('acme'),
+            headers: { 'X-Tenant': managedProviderHeaderSecretRef('acme', 'X-Tenant') },
+          },
+        },
+      },
+    };
+    const result = syncProviderSecretFile(config, directory, {
+      acme: { apiKey: 'fixture-key', headers: { 'X-Tenant': 'fixture-tenant' } },
+    });
+    expect(JSON.stringify(result.config)).not.toContain('fixture-tenant');
+    expect(result.config).toMatchObject({
+      models: {
+        providers: {
+          acme: {
+            headers: {
+              'X-Tenant': {
+                source: 'file',
+                provider: 'justdo-model-providers',
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(JSON.parse(fs.readFileSync(path.join(directory, 'model-provider-secrets.json'), 'utf8'))))
+      .toContain('fixture-tenant');
+  });
+
+  it('rejects an empty managed provider header value', () => {
+    const config = {
+      models: {
+        providers: {
+          acme: {
+            apiKey: managedProviderSecretRef('acme'),
+            headers: { 'X-Tenant': managedProviderHeaderSecretRef('acme', 'X-Tenant') },
+          },
+        },
+      },
+    };
+
+    expect(() =>
+      syncProviderSecretFile(config, fixture(), {
+        acme: { apiKey: 'fixture-key', headers: { 'X-Tenant': '' } },
+      }),
+    ).toThrow('A managed model provider header value is unavailable.');
   });
 });

@@ -34,14 +34,16 @@ const renderTab = (
   options: {
     displayNameError?: string | null;
     providers?: NonNullable<AppConfig['providers']>;
+    activeProvider?: string;
   } = {},
 ) => {
   const handleProviderConfigChange = vi.fn();
   const setDisplayNameError = vi.fn();
+  const setProviders = vi.fn();
 
   render(
     <LanguageModelSettings
-      activeProvider="custom_0"
+      activeProvider={options.activeProvider ?? 'custom_0'}
       providers={options.providers ?? providers}
       isTesting={false}
       displayNameError={options.displayNameError ?? null}
@@ -66,13 +68,13 @@ const renderTab = (
       modelDiscoveryMessage={null}
       modelConnectionTestStatuses={{}}
       setDisplayNameError={setDisplayNameError}
-      setProviders={vi.fn()}
+      setProviders={setProviders}
       setError={vi.fn()}
       onRequestDeleteProvider={vi.fn()}
     />,
   );
 
-  return { handleProviderConfigChange, setDisplayNameError };
+  return { handleProviderConfigChange, setDisplayNameError, setProviders };
 };
 
 describe('LanguageModelSettings', () => {
@@ -159,5 +161,31 @@ describe('LanguageModelSettings', () => {
 
     expect(screen.getByText('Acme Chat')).toBeTruthy();
     expect(screen.queryByText('acme-chat-v1')).toBeNull();
+  });
+
+  test('configures custom headers from the credentials title bar', () => {
+    const { setProviders } = renderTab();
+
+    fireEvent.click(screen.getByRole('button', { name: 'providerHeadersButton' }));
+    fireEvent.click(screen.getByRole('button', { name: 'providerHeaderAdd' }));
+    fireEvent.change(screen.getByLabelText('providerHeaderName'), {
+      target: { value: 'X-Tenant' },
+    });
+    fireEvent.change(screen.getByLabelText('providerHeaderValue'), {
+      target: { value: 'tenant-a' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+
+    expect(setProviders).toHaveBeenCalledTimes(1);
+    const updater = setProviders.mock.calls[0]?.[0] as (
+      current: NonNullable<AppConfig['providers']>,
+    ) => NonNullable<AppConfig['providers']>;
+    expect(updater(providers).custom_0.headers).toEqual({ 'X-Tenant': 'tenant-a' });
+  });
+
+  test('does not expose custom headers for the built-in provider', () => {
+    renderTab({ activeProvider: 'builtin_models' });
+
+    expect(screen.queryByRole('button', { name: 'providerHeadersButton' })).toBeNull();
   });
 });
