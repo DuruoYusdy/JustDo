@@ -124,6 +124,14 @@ describe('Embedded browser extension', () => {
     expect(BrowserToolSchema.properties.into.pattern).toBe('^[a-z0-9][a-z0-9-]{0,63}$');
     expect(JSON.stringify(BrowserToolSchema)).not.toContain('"node"');
     expect(JSON.stringify(BrowserToolSchema)).not.toContain('snapshotId');
+    expect(BrowserToolSchema.properties.kind).toBeUndefined();
+    expect(BrowserToolSchema.properties.actions).toBeUndefined();
+    expect(BrowserToolSchema.properties.request.properties.kind).toBeDefined();
+    expect(BrowserToolSchema.properties.request.description).toContain('Required for action=act');
+    expect(BrowserToolSchema.properties.url.description).toContain('put url inside request');
+    expect(BrowserToolSchema.properties.timeoutMs.description).toContain(
+      'put timeoutMs inside request',
+    );
   });
 
   test('is only exposed to desktop sessions', () => {

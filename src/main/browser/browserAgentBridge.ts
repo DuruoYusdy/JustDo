@@ -98,14 +98,41 @@ type AgentBrowserCommand = {
   accept?: boolean;
   promptText?: string;
   request?: Record<string, unknown>;
-  kind?: string;
-  actions?: Array<Record<string, unknown>>;
-  stopOnError?: boolean;
-  ref?: string;
-  text?: string;
-  key?: string;
   [key: string]: unknown;
 };
+
+const LEGACY_FLATTENED_ACT_KEYS = [
+  'kind',
+  'actions',
+  'stopOnError',
+  'targetId',
+  'ref',
+  'doubleClick',
+  'button',
+  'modifiers',
+  'x',
+  'y',
+  'text',
+  'submit',
+  'slowly',
+  'key',
+  'delayMs',
+  'startRef',
+  'endRef',
+  'startSelector',
+  'endSelector',
+  'values',
+  'fields',
+  'width',
+  'height',
+  'timeMs',
+  'textGone',
+  'selector',
+  'url',
+  'loadState',
+  'fn',
+  'timeoutMs',
+] as const;
 
 type RegisteredTab = BrowserAgentTabRegistration & { ownerId: number };
 type BrowserSnapshot = {
@@ -1307,14 +1334,15 @@ export class BrowserAgentBridge {
     let activeGuestId: number | null = null;
     const operationController = new AbortController();
     const locksInteraction = AGENT_INTERACTION_ACTIONS.has(command.action);
-    const nestedRequest = asRecord(command.request);
-    const nestedKind = typeof nestedRequest?.kind === 'string' ? nestedRequest.kind : command.kind;
+    const nestedRequest =
+      command.action === 'act' ? this.readActRequest(command) : asRecord(command.request);
+    const nestedKind = typeof nestedRequest?.kind === 'string' ? nestedRequest.kind : undefined;
     const explicitTimeout =
-      typeof command.timeoutMs === 'number'
-        ? command.timeoutMs
-        : typeof nestedRequest?.timeoutMs === 'number'
+      command.action === 'act' && typeof nestedRequest?.timeoutMs === 'number'
           ? nestedRequest.timeoutMs
-          : undefined;
+          : typeof command.timeoutMs === 'number'
+            ? command.timeoutMs
+            : undefined;
     const usesLongTimeout =
       [
         'importprofile',
@@ -1940,6 +1968,16 @@ export class BrowserAgentBridge {
         `(() => {
           const element = ${ref.expression};
           if (!element?.isConnected) return false;
+          const autocompleteTokens = (element.getAttribute('autocomplete') || '')
+            .toLowerCase()
+            .split(/\\s+/)
+            .filter(Boolean);
+          if (
+            element.matches('input[type="password"], input[type="hidden"]') ||
+            autocompleteTokens.some(token =>
+              ['current-password', 'new-password', 'one-time-code'].includes(token),
+            )
+          ) return false;
           element.setAttribute('data-browser-agent-evaluate', ${JSON.stringify(marker)});
           return true;
         })()`,
@@ -2536,45 +2574,17 @@ export class BrowserAgentBridge {
   }
 
   private readActRequest(command: AgentBrowserCommand): Record<string, unknown> {
-    const nested = asRecord(command.request);
-    const request = nested ? { ...nested } : {};
-    const keys = [
-      'kind',
-      'actions',
-      'stopOnError',
-      'targetId',
-      'ref',
-      'doubleClick',
-      'button',
-      'modifiers',
-      'x',
-      'y',
-      'text',
-      'submit',
-      'slowly',
-      'key',
-      'delayMs',
-      'startRef',
-      'endRef',
-      'startSelector',
-      'endSelector',
-      'values',
-      'fields',
-      'width',
-      'height',
-      'timeMs',
-      'textGone',
-      'selector',
-      'url',
-      'loadState',
-      'fn',
-      'timeoutMs',
-    ];
-    for (const key of keys) {
-      if (!(key in request) && key in command) request[key] = command[key];
+    const flattenedKey = LEGACY_FLATTENED_ACT_KEYS.find(key => Object.hasOwn(command, key));
+    if (flattenedKey) {
+      throw new Error(
+        `action=act does not accept top-level ${flattenedKey}; put every act parameter inside request.`,
+      );
     }
-    if (typeof request.kind !== 'string') throw new Error('request required.');
-    return request;
+    const nested = asRecord(command.request);
+    if (!nested || typeof nested.kind !== 'string') {
+      throw new Error('action=act requires request.kind and nested act parameters.');
+    }
+    return { ...nested };
   }
 
   private async captureAriaSnapshot(
@@ -4039,6 +4049,7 @@ export class BrowserAgentBridge {
         y: number;
         disabled: boolean;
         editable: boolean;
+        receivesPointer: boolean;
       } | null>(
         tab,
         guest,
@@ -4049,9 +4060,15 @@ export class BrowserAgentBridge {
           element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
           const rect = element.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) return null;
-          let x = rect.left;
-          let y = rect.top;
+          let x = rect.left + rect.width / 2;
+          let y = rect.top + rect.height / 2;
           let currentDocument = element.ownerDocument;
+          let receivesPointer = true;
+          const hitRoot = element.getRootNode?.() ?? currentDocument;
+          if (typeof hitRoot.elementFromPoint === 'function') {
+            const hit = hitRoot.elementFromPoint(x, y);
+            if (!hit || (hit !== element && !element.contains(hit))) receivesPointer = false;
+          }
           while (currentDocument && currentDocument !== document) {
             const frameElement = currentDocument.defaultView?.frameElement;
             if (!(frameElement instanceof Element)) return null;
@@ -4059,6 +4076,10 @@ export class BrowserAgentBridge {
             x += frameRect.left + frameElement.clientLeft;
             y += frameRect.top + frameElement.clientTop;
             currentDocument = frameElement.ownerDocument;
+            if (typeof currentDocument.elementFromPoint === 'function') {
+              const hit = currentDocument.elementFromPoint(x, y);
+              if (!hit || (hit !== frameElement && !frameElement.contains(hit))) receivesPointer = false;
+            }
           }
           const tag = String(element.tagName || '').toLowerCase();
           const inputType = tag === 'input' ? String(element.type || '').toLowerCase() : '';
@@ -4067,10 +4088,11 @@ export class BrowserAgentBridge {
             tag === 'textarea' || element.isContentEditable;
           if (${JSON.stringify(kind)} === 'type') element.focus({ preventScroll: true });
           return {
-            x: x + rect.width / 2,
-            y: y + rect.height / 2,
+            x,
+            y,
             disabled: Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'),
             editable,
+            receivesPointer,
           };
         })()`,
       );
@@ -4086,6 +4108,9 @@ export class BrowserAgentBridge {
       }
       if (kind === 'click') {
         if (prepared.disabled) throw new Error('The selected element is disabled.');
+        if (prepared.receivesPointer === false) {
+          throw new Error('The selected element is obscured. Take a new snapshot.');
+        }
         await this.waitWhileActive(
           Math.max(0, Math.min(1_000, Number(request.delayMs) || 0)),
           assertActive,
@@ -4204,7 +4229,7 @@ export class BrowserAgentBridge {
           guest.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
         }
       }
-      if (!preserveSnapshot && (kind === 'click' || kind === 'type')) {
+      if (!preserveSnapshot && (kind === 'click' || request.submit === true)) {
         this.snapshots.delete(tab.webContentsId);
       }
       return { [kind === 'click' ? 'clicked' : 'typed']: target.label };
@@ -4241,9 +4266,7 @@ export class BrowserAgentBridge {
       } finally {
         if (!guest.isDestroyed()) guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
       }
-      if (!preserveSnapshot && guest.getURL() !== beforeUrl) {
-        this.snapshots.delete(tab.webContentsId);
-      }
+      if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
       return { pressed: key };
     }
     if (kind === 'drag') {
@@ -4352,7 +4375,7 @@ export class BrowserAgentBridge {
         target.frameSelector,
         `(() => {
           const element = ${target.expression};
-          if (element?.tagName?.toLowerCase() !== 'select') return false;
+          if (!element?.isConnected || element.tagName?.toLowerCase() !== 'select') return false;
           const values = new Set(${JSON.stringify(values)});
           for (const option of element.options) option.selected = values.has(option.value);
           element.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4361,7 +4384,6 @@ export class BrowserAgentBridge {
         })()`,
       );
       if (!selected) throw new Error('The selected element is not a select control.');
-      if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
       return { selected: values };
     }
     if (kind === 'fill') {
@@ -4418,7 +4440,18 @@ export class BrowserAgentBridge {
             }
             const value = String(field.value ?? '');
             if (tag === 'input') {
-              if (element.type === 'password' || element.type === 'hidden' || element.type === 'file') return false;
+              const autocompleteTokens = (element.getAttribute('autocomplete') || '')
+                .toLowerCase()
+                .split(/\\s+/)
+                .filter(Boolean);
+              if (
+                element.type === 'password' ||
+                element.type === 'hidden' ||
+                element.type === 'file' ||
+                autocompleteTokens.some(token =>
+                  ['current-password', 'new-password', 'one-time-code'].includes(token),
+                )
+              ) return false;
               const Input = element.ownerDocument.defaultView?.HTMLInputElement;
               Object.getOwnPropertyDescriptor(Input?.prototype ?? {}, 'value')?.set?.call(element, value);
             } else if (tag === 'textarea') {
@@ -4433,7 +4466,6 @@ export class BrowserAgentBridge {
         })()`,
       );
       if (!filled) throw new Error('A fill field is stale or not editable.');
-      if (!preserveSnapshot) this.snapshots.delete(tab.webContentsId);
       return { filled: normalized.map(field => field.ref) };
     }
     if (kind === 'resize') {

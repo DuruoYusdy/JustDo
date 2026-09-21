@@ -19,6 +19,8 @@ for Agent observation, but it never replaces the live page that the user sees an
    `suggestedTargetId` and pass it as `targetId` in later calls.
 4. Use `text` for bounded prose. Use `snapshot` before `act`; request `urls=true` when link text is
    ambiguous, and use `screenshot labels=true` when visual position matters.
+   Every `act` call uses exactly one nested `request` object. Never put `kind`, `ref`, `text`,
+   `targetId`, or another act parameter at the tool top level.
 5. Keep refs on the same `targetId`. After navigation, submission, modal changes, or a stale-ref
    error, take a fresh snapshot before the next ref-based action.
 6. `navigate` and navigation-producing batches return fresh page state inline. Reuse those refs
@@ -30,6 +32,9 @@ for Agent observation, but it never replaces the live page that the user sees an
 
 - Use `act` for click, coordinate click, type, press, hover, scrollIntoView, drag, select, fill,
   resize, wait, evaluate, close, and ordered batch actions.
+- Type into one field with `{"action":"act","request":{"kind":"type","targetId":"t1","ref":"e1","text":"hello"}}`.
+  When Enter submits the field, add `"submit":true` instead of clicking a second control.
+- A batch uses `{"action":"act","request":{"kind":"batch","targetId":"t1","actions":[...]}}`.
 - Use `screenshot` only for Agent observation. It never changes the user's live browser surface.
 - `pdf` and `download` write only inside the current task workspace.
 - `upload` accepts only regular files inside the current task workspace. Never upload a credential,

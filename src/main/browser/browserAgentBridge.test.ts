@@ -893,6 +893,7 @@ describe('BrowserAgentBridge', () => {
     expect(snapshotScript).not.toContain("|| element.getAttribute('role') === 'textbox'");
     const actionScript = executeJavaScriptInIsolatedWorld.mock.calls[1]?.[1]?.[0]?.code;
     expect(actionScript).toContain('element.focus');
+    expect(actionScript).toContain('elementFromPoint');
     expect(actionScript).not.toContain('querySelectorAll');
     const typeScript = executeJavaScriptInIsolatedWorld.mock.calls[2]?.[1]?.[0]?.code;
     expect(typeScript).toContain("new view.InputEvent('input'");
@@ -904,6 +905,13 @@ describe('BrowserAgentBridge', () => {
       bridge.executeCommand('justdo:session-1', {
         action: 'act',
         request: { kind: 'click', ref: 'e1' },
+      }),
+    ).resolves.toMatchObject({ details: { clicked: 'e1' } });
+
+    await expect(
+      bridge.executeCommand('justdo:session-1', {
+        action: 'act',
+        request: { kind: 'type', ref: 'e1', text: 'stale-after-click' },
       }),
     ).rejects.toThrow('stale');
 
@@ -1415,7 +1423,11 @@ describe('BrowserAgentBridge', () => {
             ],
           };
         }
-        if (code.includes("setAttribute('data-browser-agent-evaluate'")) return true;
+        if (code.includes("setAttribute('data-browser-agent-evaluate'")) {
+          expect(code).toContain('input[type="password"]');
+          expect(code).toContain('current-password');
+          return true;
+        }
         if (code.includes("removeAttribute('data-browser-agent-evaluate')")) return undefined;
         throw new Error('Unexpected browser script.');
       },
@@ -2031,6 +2043,28 @@ describe('BrowserAgentBridge', () => {
     });
     expect(firstSendInputEvent).not.toHaveBeenCalled();
     expect(secondSendInputEvent).toHaveBeenCalledTimes(2);
+  });
+
+  test('rejects legacy flattened act parameters', async () => {
+    bridge = new BrowserAgentBridge(vi.fn(), () => true);
+    bridge.registerIpc();
+
+    await expect(
+      bridge.executeCommand('justdo:session-1', {
+        action: 'act',
+        kind: 'type',
+        ref: 'e1',
+        text: 'hello',
+      }),
+    ).rejects.toThrow('action=act does not accept top-level kind');
+
+    await expect(
+      bridge.executeCommand('justdo:session-1', {
+        action: 'act',
+        timeoutMs: 1_000,
+        request: { kind: 'wait', timeMs: 10 },
+      }),
+    ).rejects.toThrow('action=act does not accept top-level timeoutMs');
   });
 
   test('keeps refs from one snapshot usable throughout a batch and reports one-based aborts', async () => {
