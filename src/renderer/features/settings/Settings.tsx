@@ -2156,6 +2156,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <PaintBrushIcon className="h-5 w-5" />,
     },
     {
+      key: 'security',
+      label: i18nService.t('securitySettings'),
+      icon: <ShieldCheckIcon className="h-5 w-5" />,
+    },
+    {
       key: 'model',
       label: i18nService.t('model'),
       icon: <CubeIcon className="h-5 w-5" />,
@@ -2169,11 +2174,6 @@ const Settings: React.FC<SettingsProps> = ({
       key: 'voice',
       label: i18nService.t('voiceSettings'),
       icon: <MicrophoneIcon className="h-5 w-5" />,
-    },
-    {
-      key: 'security',
-      label: i18nService.t('securitySettings'),
-      icon: <ShieldCheckIcon className="h-5 w-5" />,
     },
     {
       key: 'browser',

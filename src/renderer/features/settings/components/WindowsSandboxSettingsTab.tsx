@@ -2,7 +2,6 @@ import {
   ArrowPathIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import type { WindowsSandboxStatus } from '@shared/windowsSandbox';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -91,79 +90,31 @@ const WindowsSandboxSettingsTab: React.FC = () => {
     }
   };
 
-  const openDiagnostics = async () => {
-    setError(null);
-    try {
-      const result = await window.electron.cowork.openWindowsSandboxDiagnostics();
-      if (!result.success) throw new Error(result.error || i18nService.t('saveFailed'));
-    } catch (diagnosticsError) {
-      setError(
-        diagnosticsError instanceof Error ? diagnosticsError.message : String(diagnosticsError),
-      );
-    }
-  };
-
-  const statusIcon = status?.ready ? (
-    <CheckCircleIcon className="h-5 w-5 text-success" />
+  const statusIcon = !status ? (
+    <ArrowPathIcon className="h-4 w-4 animate-spin text-secondary" />
+  ) : status.ready ? (
+    <CheckCircleIcon className="h-4 w-4 text-success" />
   ) : (
-    <ExclamationTriangleIcon className="h-5 w-5 text-warning" />
+    <ExclamationTriangleIcon className="h-4 w-4 text-warning" />
   );
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-border bg-surface p-5 shadow-subtle">
-        <div className="flex items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-muted text-primary">
-            <ShieldCheckIcon className="h-6 w-6" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h4 className="text-base font-semibold text-foreground">
-              {i18nService.t('windowsSandboxTitle')}
-            </h4>
-            <p className="mt-1 text-sm leading-6 text-secondary">
-              {i18nService.t('windowsSandboxDescription')}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-raised px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            {statusIcon}
-            <span>{statusLabel(status)}</span>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void refresh()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
-              {i18nService.t('refresh')}
-            </button>
-            {status?.supported && status.helperAvailable && status.hostPreparationRecommended && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void initialize()}
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
-              >
-                {busy
-                  ? i18nService.t('windowsSandboxInitializing')
-                  : i18nService.t('windowsSandboxInitialize')}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
-      </section>
-
-      <section className="space-y-3">
-        <h4 className="text-sm font-medium text-foreground">
+    <div className="space-y-5">
+      <section>
+        <h4 className="text-base font-semibold text-foreground">
           {i18nService.t('windowsSandboxExecutionMode')}
         </h4>
-        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border p-4 hover:bg-surface-raised">
+        <p className="mt-1 text-sm leading-6 text-secondary">
+          {i18nService.t('windowsSandboxExecutionModeDescription')}
+        </p>
+
+        <label
+          className={`mt-4 flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${
+            executionMode === 'local'
+              ? 'border-primary bg-primary-muted/40'
+              : 'border-border hover:bg-surface-raised'
+          }`}
+        >
           <input
             type="radio"
             name="executionMode"
@@ -181,75 +132,94 @@ const WindowsSandboxSettingsTab: React.FC = () => {
             </span>
           </span>
         </label>
-        <label
-          className={`flex items-start gap-3 rounded-xl border border-border p-4 ${
-            status?.ready
-              ? 'cursor-pointer hover:bg-surface-raised'
-              : 'cursor-not-allowed opacity-60'
+        <div
+          className={`mt-3 rounded-xl border transition-colors ${
+            executionMode === 'sandbox' ? 'border-primary bg-primary-muted/40' : 'border-border'
           }`}
         >
-          <input
-            type="radio"
-            name="executionMode"
-            checked={executionMode === 'sandbox'}
-            disabled={busy || !status?.ready}
-            onChange={() => void updateMode('sandbox')}
-            className="mt-0.5 h-4 w-4 text-primary"
-          />
-          <span>
-            <span className="block text-sm font-medium text-foreground">
-              {i18nService.t('windowsSandboxMode')}
+          <label
+            className={`flex items-start gap-3 p-4 ${
+              status?.ready ? 'cursor-pointer' : 'cursor-not-allowed'
+            }`}
+          >
+            <input
+              type="radio"
+              name="executionMode"
+              checked={executionMode === 'sandbox'}
+              disabled={busy || !status?.ready}
+              onChange={() => void updateMode('sandbox')}
+              className="mt-0.5 h-4 w-4 text-primary"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-foreground">
+                {i18nService.t('windowsSandboxMode')}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-secondary">
+                {i18nService.t('windowsSandboxModeDescription')}
+              </span>
             </span>
-            <span className="mt-1 block text-xs leading-5 text-secondary">
-              {i18nService.t('windowsSandboxModeDescription')}
-            </span>
-          </span>
-        </label>
+          </label>
+
+          <div className="mx-4 flex flex-wrap items-center justify-between gap-3 border-t border-border py-3">
+            <div className="flex items-center gap-2 text-xs text-secondary">
+              {statusIcon}
+              <span>{statusLabel(status)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void refresh()}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-secondary transition-colors hover:bg-surface disabled:opacity-50"
+              >
+                <ArrowPathIcon className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
+                {i18nService.t('refresh')}
+              </button>
+              {status?.supported && status.helperAvailable && status.hostPreparationRecommended && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void initialize()}
+                  className="rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-primary-hover disabled:opacity-50"
+                >
+                  {busy
+                    ? i18nService.t('windowsSandboxInitializing')
+                    : i18nService.t('windowsSandboxInitialize')}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {executionMode === 'sandbox' && (
+            <div className="mx-4 border-t border-border py-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={sandboxNetworkEnabled}
+                  disabled={busy}
+                  onChange={event => void updateNetworkAccess(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border text-primary"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-foreground">
+                    {i18nService.t('windowsSandboxAllowNetwork')}
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-secondary">
+                    {i18nService.t('windowsSandboxAllowNetworkDescription')}
+                  </span>
+                </span>
+              </label>
+              {sandboxNetworkEnabled && (
+                <p className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
+                  {i18nService.t('windowsSandboxNetworkWarning')}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </section>
 
-      <section className="space-y-3">
-        <h4 className="text-sm font-medium text-foreground">
-          {i18nService.t('windowsSandboxNetworkAccess')}
-        </h4>
-        <label
-          className={`flex items-start gap-3 rounded-xl border border-border p-4 ${
-            executionMode === 'sandbox'
-              ? 'cursor-pointer hover:bg-surface-raised'
-              : 'cursor-not-allowed opacity-60'
-          }`}
-        >
-          <input
-            type="checkbox"
-            checked={sandboxNetworkEnabled}
-            disabled={busy || executionMode !== 'sandbox'}
-            onChange={event => void updateNetworkAccess(event.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-border text-primary"
-          />
-          <span>
-            <span className="block text-sm font-medium text-foreground">
-              {i18nService.t('windowsSandboxAllowNetwork')}
-            </span>
-            <span className="mt-1 block text-xs leading-5 text-secondary">
-              {i18nService.t('windowsSandboxAllowNetworkDescription')}
-            </span>
-          </span>
-        </label>
-        {sandboxNetworkEnabled && executionMode === 'sandbox' && (
-          <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
-            {i18nService.t('windowsSandboxNetworkWarning')}
-          </p>
-        )}
-      </section>
-
-      {status?.diagnosticsPath && (
-        <button
-          type="button"
-          onClick={() => void openDiagnostics()}
-          className="text-sm font-medium text-primary hover:text-primary-hover"
-        >
-          {i18nService.t('windowsSandboxOpenDiagnostics')}
-        </button>
-      )}
+      {error && <p className="text-sm text-danger">{error}</p>}
     </div>
   );
 };
