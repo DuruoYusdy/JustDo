@@ -1,8 +1,9 @@
-import React, { useEffect,useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
+import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import type { DraftAttachment } from '@/features/cowork/coworkSlice';
 import { i18nService } from '@/services/i18n';
-import { getFileTypeInfo,ImageFileIcon } from '@/shared/components/icons/fileTypes';
+import { getFileTypeInfo, ImageFileIcon } from '@/shared/components/icons/fileTypes';
 import FileTypeIcon from '@/shared/components/icons/fileTypes/FileTypeIcon';
 import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 
@@ -54,7 +55,9 @@ const ImageCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [attachment.dataUrl, attachment.path]);
 
   const showFallback = imgError || (!thumbUrl && !loading);
@@ -64,31 +67,46 @@ const ImageCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
       className="group relative h-16 w-16 flex-shrink-0 rounded-lg border border-border overflow-hidden bg-surface"
       title={attachment.path}
     >
-      {/* Thumbnail or fallback */}
-      {loading ? (
-        <div className="flex h-full w-full items-center justify-center">
-          <ImageFileIcon className="h-6 w-6 text-blue-400 animate-pulse" />
-        </div>
-      ) : showFallback ? (
-        <div className="flex h-full w-full items-center justify-center">
-          <ImageFileIcon className="h-6 w-6 text-blue-400" />
-        </div>
-      ) : (
-        <img
-          src={thumbUrl!}
-          alt={attachment.name}
-          className="h-full w-full object-cover"
-          onError={() => setImgError(true)}
-          draggable={false}
-        />
-      )}
+      <button
+        type="button"
+        className="relative h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 disabled:cursor-default"
+        disabled={loading || showFallback}
+        aria-label={`${i18nService.t('coworkImagePreviewTitle')}: ${attachment.name}`}
+        onClick={() => {
+          if (!thumbUrl) return;
+          window.dispatchEvent(
+            new CustomEvent(IMAGE_PREVIEW_EVENT, {
+              detail: { src: thumbUrl, alt: attachment.name },
+            }),
+          );
+        }}
+      >
+        {/* Thumbnail or fallback */}
+        {loading ? (
+          <div className="flex h-full w-full items-center justify-center">
+            <ImageFileIcon className="h-6 w-6 text-blue-400 animate-pulse" />
+          </div>
+        ) : showFallback ? (
+          <div className="flex h-full w-full items-center justify-center">
+            <ImageFileIcon className="h-6 w-6 text-blue-400" />
+          </div>
+        ) : (
+          <img
+            src={thumbUrl!}
+            alt={attachment.name}
+            className="h-full w-full object-cover"
+            onError={() => setImgError(true)}
+            draggable={false}
+          />
+        )}
 
-      {/* File name overlay at bottom */}
-      <div className="absolute inset-x-0 bottom-0 bg-black/50 px-1 py-0.5">
-        <span className="block truncate text-[10px] leading-tight text-white">
-          {attachment.name}
-        </span>
-      </div>
+        {/* File name overlay at bottom */}
+        <div className="absolute inset-x-0 bottom-0 bg-black/50 px-1 py-0.5">
+          <span className="block truncate text-[10px] leading-tight text-white">
+            {attachment.name}
+          </span>
+        </div>
+      </button>
 
       {/* Delete button — top-right, visible on hover */}
       <button
@@ -119,12 +137,8 @@ const FileCard: React.FC<AttachmentCardProps> = ({ attachment, onRemove }) => {
 
       {/* File name + type label */}
       <div className="flex min-w-0 flex-1 flex-col justify-center">
-        <span className="truncate text-xs font-medium text-foreground">
-          {attachment.name}
-        </span>
-        <span className="text-[10px] text-secondary">
-          {label}
-        </span>
+        <span className="truncate text-xs font-medium text-foreground">{attachment.name}</span>
+        <span className="text-[10px] text-secondary">{label}</span>
       </div>
 
       {/* Delete button — top-right, visible on hover */}

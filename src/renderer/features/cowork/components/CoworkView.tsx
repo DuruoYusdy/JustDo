@@ -8,6 +8,7 @@ import {
   CommandLineIcon,
   DocumentTextIcon,
   GlobeAltIcon,
+  PhotoIcon,
   QueueListIcon,
   StopCircleIcon,
   XCircleIcon,
@@ -84,13 +85,9 @@ import CoworkDisplayPanel, {
 import DisplayPanelLauncher from '@/features/cowork/components/preview/DisplayPanelLauncher';
 import { getAdjacentDisplayTabId } from '@/features/cowork/components/preview/displayTabSelection';
 import FilePreviewDrawer, {
-  type FilePreview,
   type FilePreviewDrawerHandle,
 } from '@/features/cowork/components/preview/FilePreviewDrawer';
-import {
-  type FilePreviewNavigationOptions,
-  isCurrentFilePreviewRequest,
-} from '@/features/cowork/components/preview/filePreviewNavigation';
+import { type FilePreviewNavigationOptions } from '@/features/cowork/components/preview/filePreviewNavigation';
 import NewDisplayTabMenu from '@/features/cowork/components/preview/NewDisplayTabMenu';
 import PlanApprovalDrawer from '@/features/cowork/components/preview/PlanApprovalDrawer';
 import {
@@ -100,6 +97,7 @@ import {
 } from '@/features/cowork/components/preview/planPreviewState';
 import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
+import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
 import {
   HOME_DISPLAY_SESSION_KEY,
   useSessionDisplayState,
@@ -1257,125 +1255,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [],
   );
 
-  useEffect(() => {
-    const handlePreviewFile = async (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          filePath?: string;
-          keepWorkspaceFilesOpen?: boolean;
-          workingDirectory?: string;
-        }>
-      ).detail;
-      if (!detail?.filePath) return;
-      const requestedTabId = fileDisplayTabId(detail.filePath);
-      const existingPreview = filePreviewsRef.current.find(
-        preview => fileDisplayTabId(preview.filePath) === requestedTabId,
-      );
-      const existingUnsupportedPreview = unsupportedFilePreviewsRef.current.find(
-        filePath => fileDisplayTabId(filePath) === requestedTabId,
-      );
-      if (existingPreview || existingUnsupportedPreview) {
-        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
-        setPreferredDisplayTabId(requestedTabId);
-        setIsDisplayPanelOpen(true);
-        return;
-      }
-      const sourceSessionId = currentSessionIdRef.current;
-      const activeRequestId = ++filePreviewRequestIdRef.current;
-      let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
-      try {
-        result = await window.electron.shell.readPreviewFile(
-          detail.filePath,
-          detail.workingDirectory,
-        );
-      } catch {
-        if (
-          isCurrentFilePreviewRequest(
-            activeRequestId,
-            filePreviewRequestIdRef.current,
-            sourceSessionId,
-            currentSessionIdRef.current,
-          )
-        ) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', {
-              detail: i18nService.t('coworkFilePreviewFailed'),
-            }),
-          );
-        }
-        return;
-      }
-      if (
-        !isCurrentFilePreviewRequest(
-          activeRequestId,
-          filePreviewRequestIdRef.current,
-          sourceSessionId,
-          currentSessionIdRef.current,
-        )
-      ) {
-        if (result.success) {
-          void window.electron.shell
-            .revokePreviewFileEdit(result.editToken)
-            .catch((): undefined => undefined);
-        }
-        return;
-      }
-      if (result.success) {
-        const resolvedTabId = fileDisplayTabId(result.filePath);
-        const duplicate = filePreviewsRef.current.find(
-          preview => fileDisplayTabId(preview.filePath) === resolvedTabId,
-        );
-        if (duplicate) {
-          void window.electron.shell
-            .revokePreviewFileEdit(result.editToken)
-            .catch((): undefined => undefined);
-          if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
-          setPreferredDisplayTabId(resolvedTabId);
-          setIsDisplayPanelOpen(true);
-          return;
-        }
-        const preview: FilePreview = {
-          content: result.content,
-          editToken: result.editToken,
-          filePath: result.filePath,
-          version: result.version,
-        };
-        setFilePreviews(current => [...current, preview]);
-        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
-        setPreferredDisplayTabId(resolvedTabId);
-        setIsDisplayPanelOpen(true);
-        return;
-      }
-      if (result.unsupportedType) {
-        setUnsupportedFilePreviews(current =>
-          current.some(filePath => fileDisplayTabId(filePath) === requestedTabId)
-            ? current
-            : [...current, detail.filePath!],
-        );
-        if (!detail.keepWorkspaceFilesOpen) setIsWorkspaceFilesOpen(false);
-        setPreferredDisplayTabId(requestedTabId);
-        setIsDisplayPanelOpen(true);
-        return;
-      }
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', {
-          detail: result.notFound
-            ? i18nService.t('coworkAttachmentNotFound').replace('{filepath}', detail.filePath)
-            : result.tooLarge
-              ? i18nService.t('coworkFilePreviewTooLarge')
-              : result.error || i18nService.t('coworkFilePreviewFailed'),
-        }),
-      );
-    };
-    window.addEventListener('cowork:preview-file', handlePreviewFile);
-    return () => window.removeEventListener('cowork:preview-file', handlePreviewFile);
-  }, [
+  useFilePreviewEvents({
+    currentSessionIdRef,
+    fileDisplayTabId,
+    filePreviewRequestIdRef,
+    filePreviewsRef,
+    unsupportedFilePreviewsRef,
     setFilePreviews,
     setIsDisplayPanelOpen,
     setIsWorkspaceFilesOpen,
     setPreferredDisplayTabId,
     setUnsupportedFilePreviews,
-  ]);
+  });
 
   useEffect(() => {
     const handlePreviewPlan = (event: Event) => {
@@ -2593,8 +2484,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       })),
       ...filePreviews.map(preview => ({
         id: fileDisplayTabId(preview.filePath),
-        label: preview.filePath.split(/[\\/]/).pop() || preview.filePath,
-        icon: <DocumentTextIcon className="h-4 w-4" />,
+        label:
+          preview.kind === 'image'
+            ? preview.label || i18nService.t('coworkImagePreviewTitle')
+            : preview.filePath.split(/[\\/]/).pop() || preview.filePath,
+        icon:
+          preview.kind === 'image' ? (
+            <PhotoIcon className="h-4 w-4" />
+          ) : (
+            <DocumentTextIcon className="h-4 w-4" />
+          ),
         onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
         onClose: () => closeFilePreview(preview.filePath),
       })),
@@ -3290,8 +3189,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     })),
     ...filePreviews.map(preview => ({
       id: fileDisplayTabId(preview.filePath),
-      label: preview.filePath.split(/[\\/]/).pop() || preview.filePath,
-      icon: <DocumentTextIcon className="h-4 w-4" />,
+      label:
+        preview.kind === 'image'
+          ? preview.label || i18nService.t('coworkImagePreviewTitle')
+          : preview.filePath.split(/[\\/]/).pop() || preview.filePath,
+      icon:
+        preview.kind === 'image' ? (
+          <PhotoIcon className="h-4 w-4" />
+        ) : (
+          <DocumentTextIcon className="h-4 w-4" />
+        ),
       onSelect: () => setPreferredDisplayTabId(fileDisplayTabId(preview.filePath)),
       onClose: () => closeFilePreview(preview.filePath),
     })),

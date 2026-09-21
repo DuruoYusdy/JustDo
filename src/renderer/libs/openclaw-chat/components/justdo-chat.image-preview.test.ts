@@ -12,31 +12,39 @@ afterEach(() => {
 });
 
 describe('justdo-chat image preview', () => {
-  test('opens a separate preview window when a message image is double-clicked', async () => {
-    const open = vi.fn().mockResolvedValue({ success: true });
-    Object.defineProperty(window, 'electron', {
-      configurable: true,
-      value: { imagePreview: { open } },
-    });
-    const chat = document.createElement('justdo-chat') as JustDoChatElement;
-    document.body.append(chat);
-    await chat.updateComplete;
+  test.each(['chat-bubble__image', 'markdown-inline-image'])(
+    'opens a sidebar tab when a %s is clicked',
+    async className => {
+      const open = vi.fn().mockResolvedValue({ success: true });
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: { imagePreview: { open } },
+      });
+      const chat = document.createElement('justdo-chat') as JustDoChatElement;
+      document.body.append(chat);
+      await chat.updateComplete;
+      const onPreview = vi.fn();
+      window.addEventListener('cowork:preview-image', onPreview);
 
-    const thumbnail = document.createElement('img');
-    thumbnail.className = 'chat-bubble__image';
-    thumbnail.src = 'data:image/png;base64,AA==';
-    thumbnail.alt = 'detail';
-    chat.shadowRoot?.append(thumbnail);
+      const thumbnail = document.createElement('img');
+      thumbnail.className = className;
+      thumbnail.src = 'data:image/png;base64,AA==';
+      thumbnail.alt = 'detail';
+      chat.shadowRoot?.append(thumbnail);
 
-    thumbnail.dispatchEvent(
-      new MouseEvent('dblclick', { bubbles: true, cancelable: true, composed: true }),
-    );
-    await Promise.resolve();
+      thumbnail.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }),
+      );
+      await Promise.resolve();
 
-    expect(open).toHaveBeenCalledWith({
-      src: 'data:image/png;base64,AA==',
-      alt: 'detail',
-    });
-    expect(chat.shadowRoot?.querySelector('.image-preview')).toBeNull();
-  });
+      expect(onPreview).toHaveBeenCalledTimes(1);
+      expect((onPreview.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        src: 'data:image/png;base64,AA==',
+        alt: 'detail',
+      });
+      expect(open).not.toHaveBeenCalled();
+      window.removeEventListener('cowork:preview-image', onPreview);
+      expect(chat.shadowRoot?.querySelector('.image-preview')).toBeNull();
+    },
+  );
 });

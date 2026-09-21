@@ -315,23 +315,22 @@ describe('last user message actions', () => {
   test('renders a fork control after completed assistant footer metadata', () => {
     const onFork = vi.fn();
     const rendered = stringifyTemplate(
-      renderMessageBlock({ ...createGroup('assistant'), durationMs: 3_500 }, {
-        assistantMessageFork: {
-          entryId: 'assistant-entry',
-          onFork,
+      renderMessageBlock(
+        { ...createGroup('assistant'), durationMs: 3_500 },
+        {
+          assistantMessageFork: {
+            entryId: 'assistant-entry',
+            onFork,
+          },
         },
-      }),
+      ),
     );
 
     expect(rendered).toContain('assistant-message-action--fork');
     expect(rendered).toContain(i18nService.t('coworkForkFromMessage'));
     expect(
-      rendered.indexOf(
-        i18nService.t('coworkRunWorkedDuration').replace('{duration}', '3s'),
-      ),
-    ).toBeLessThan(
-      rendered.indexOf('assistant-message-action--fork'),
-    );
+      rendered.indexOf(i18nService.t('coworkRunWorkedDuration').replace('{duration}', '3s')),
+    ).toBeLessThan(rendered.indexOf('assistant-message-action--fork'));
   });
 });
 
@@ -662,56 +661,59 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('delete');
   });
 
-  test('opens an absolute MEDIA document in the editable sidebar', async () => {
-    const openExternal = vi.fn();
-    const openPath = vi.fn().mockResolvedValue({ success: true });
-    const dispatchEvent = vi.fn();
-    vi.stubGlobal('window', {
-      electron: { shell: { openExternal, openPath } },
-      dispatchEvent,
-      setTimeout,
-    });
-    const rendered = renderMessageBlock({
-      kind: 'group',
-      key: 'assistant-media-document-group',
-      role: 'assistant',
-      messages: [
-        {
-          key: 'assistant-media-document-message',
-          message: {
-            role: 'assistant',
-            content: [
-              {
-                type: 'attachment',
-                attachment: {
-                  url: 'C:\\workspace\\project\\result.py',
-                  kind: 'document',
-                  label: 'result.py',
-                  mimeType: 'application/octet-stream',
+  test.each(['result.py', 'picture.png'])(
+    'opens the MEDIA file %s in the sidebar',
+    async fileName => {
+      const openExternal = vi.fn();
+      const openPath = vi.fn().mockResolvedValue({ success: true });
+      const dispatchEvent = vi.fn();
+      vi.stubGlobal('window', {
+        electron: { shell: { openExternal, openPath } },
+        dispatchEvent,
+        setTimeout,
+      });
+      const rendered = renderMessageBlock({
+        kind: 'group',
+        key: 'assistant-media-document-group',
+        role: 'assistant',
+        messages: [
+          {
+            key: 'assistant-media-document-message',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'attachment',
+                  attachment: {
+                    url: `C:\\workspace\\project\\${fileName}`,
+                    kind: 'document',
+                    label: fileName,
+                    mimeType: 'application/octet-stream',
+                  },
                 },
-              },
-            ],
+              ],
+            },
           },
-        },
-      ],
-      timestamp: 1,
-      isStreaming: false,
-    });
+        ],
+        timestamp: 1,
+        isStreaming: false,
+      });
 
-    const handlers = collectTemplateFunctions(rendered);
-    expect(handlers.length).toBeGreaterThanOrEqual(2);
-    handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
+      const handlers = collectTemplateFunctions(rendered);
+      expect(handlers.length).toBeGreaterThanOrEqual(2);
+      handlers[0]({ stopPropagation: vi.fn() } as unknown as Event);
 
-    await vi.waitFor(() => expect(dispatchEvent).toHaveBeenCalledOnce());
-    const previewEvent = dispatchEvent.mock.calls[0][0] as CustomEvent;
-    expect(previewEvent.type).toBe('cowork:preview-file');
-    expect(previewEvent.detail).toEqual({
-      filePath: 'C:\\workspace\\project\\result.py',
-      workingDirectory: undefined,
-    });
-    expect(openPath).not.toHaveBeenCalled();
-    expect(openExternal).not.toHaveBeenCalled();
-  });
+      await vi.waitFor(() => expect(dispatchEvent).toHaveBeenCalledOnce());
+      const previewEvent = dispatchEvent.mock.calls[0][0] as CustomEvent;
+      expect(previewEvent.type).toBe('cowork:preview-file');
+      expect(previewEvent.detail).toEqual({
+        filePath: `C:\\workspace\\project\\${fileName}`,
+        workingDirectory: undefined,
+      });
+      expect(openPath).not.toHaveBeenCalled();
+      expect(openExternal).not.toHaveBeenCalled();
+    },
+  );
 
   test('opens a MEDIA HTML document in the sidebar browser instead of the file preview', async () => {
     const openExternal = vi.fn();

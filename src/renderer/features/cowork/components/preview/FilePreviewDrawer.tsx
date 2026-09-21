@@ -37,12 +37,18 @@ import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdow
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
-export interface FilePreview {
+import type { ImageFilePreview } from './imageFilePreview';
+import ImageFilePreviewPanel from './ImageFilePreviewPanel';
+
+export interface TextFilePreview {
+  kind?: 'text';
   content: string;
   editToken: string;
   filePath: string;
   version: string;
 }
+
+export type FilePreview = TextFilePreview | ImageFilePreview;
 
 export interface FilePreviewDrawerHandle {
   requestTransition: () => Promise<boolean>;
@@ -54,6 +60,8 @@ interface FilePreviewDrawerProps {
   isObscured?: boolean;
   embedded?: boolean;
 }
+
+type TextPreviewProps = Omit<FilePreviewDrawerProps, 'preview'> & { preview: TextFilePreview };
 
 type PreviewMode = 'preview' | 'edit';
 type ConfirmationKind = 'unsaved' | 'invalid-json';
@@ -169,7 +177,7 @@ const showToast = (message: string): void => {
   window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
 };
 
-const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerProps>(
+const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
   ({ preview, onClose, isObscured = false, embedded = false }, ref) => {
     const extension = getPreviewableFileExtension(preview.filePath) ?? '.txt';
     const isMarkdown = extension === '.md' || extension === '.markdown';
@@ -827,6 +835,21 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
       </>
     );
   },
+);
+
+TextPreviewDrawer.displayName = 'TextPreviewDrawer';
+
+const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerProps>(
+  (props, ref) =>
+    props.preview.kind === 'image' ? (
+      <ImageFilePreviewPanel
+        preview={props.preview}
+        onClose={props.onClose}
+        isObscured={props.isObscured}
+      />
+    ) : (
+      <TextPreviewDrawer {...props} preview={props.preview} ref={ref} />
+    ),
 );
 
 FilePreviewDrawer.displayName = 'FilePreviewDrawer';

@@ -63,9 +63,7 @@ describe('useSessionDisplayState', () => {
     };
     const active = createSessionDisplayState(520);
 
-    const retained = enforceBackgroundTabLimit({ background, active }, 'active', 0, [
-      'background',
-    ]);
+    const retained = enforceBackgroundTabLimit({ background, active }, 'active', 0, ['background']);
 
     expect(retained.background.browserTabs).toEqual(background.browserTabs);
     expect(retained.background.terminalTabs).toEqual(background.terminalTabs);
@@ -160,6 +158,29 @@ describe('useSessionDisplayState', () => {
     expect(result.current.state.filePreviews).toEqual([preview]);
     expect(result.current.state.preferredDisplayTabId).toBe('file:C:/workspace-a/notes.md');
     expect(result.current.state.isDisplayPanelOpen).toBe(true);
+  });
+
+  it('restores image tabs and their selection after switching sessions', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+    const preview = {
+      kind: 'image' as const,
+      filePath: 'C:/workspace/a.png',
+      src: 'localfile:///C%3A/workspace/a.png',
+      label: 'a.png',
+    };
+    act(() => {
+      result.current.setters.setFilePreviews([preview]);
+      result.current.setters.setPreferredDisplayTabId('file:C:/workspace/a.png');
+      result.current.setters.setIsDisplayPanelOpen(true);
+    });
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.filePreviews).toEqual([]);
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.filePreviews).toEqual([preview]);
+    expect(result.current.state.preferredDisplayTabId).toBe('file:C:/workspace/a.png');
   });
 
   it('restores the resized display panel width after switching sessions', () => {

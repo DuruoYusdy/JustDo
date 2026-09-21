@@ -7,6 +7,7 @@ import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import { isImageFilePath } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   getTranscriptMedia,
   isTranscriptImage,
@@ -158,9 +159,9 @@ function renderUserMessageActions(
                 aria-label=${editLabel}
                 title=${editLabel}
                 @click=${(event: Event) => {
-                event.stopPropagation();
-                actions.onAction('edit', actions.entryId);
-              }}
+                  event.stopPropagation();
+                  actions.onAction('edit', actions.entryId);
+                }}
               >
                 ${EDIT_ICON}
               </button>
@@ -176,9 +177,9 @@ function renderUserMessageActions(
                 aria-label=${withdrawLabel}
                 title=${withdrawLabel}
                 @click=${(event: Event) => {
-                event.stopPropagation();
-                actions.onAction('withdraw', actions.entryId);
-              }}
+                  event.stopPropagation();
+                  actions.onAction('withdraw', actions.entryId);
+                }}
               >
                 ${WITHDRAW_ICON}
               </button>
@@ -424,7 +425,10 @@ async function openAttachment(
       );
       return;
     }
-    if (!/^https?:\/\//i.test(url) && getPreviewableFileExtension(localPath)) {
+    if (
+      !/^https?:\/\//i.test(url) &&
+      (getPreviewableFileExtension(localPath) || isImageFilePath(localPath))
+    ) {
       window.dispatchEvent(
         new CustomEvent('cowork:preview-file', {
           detail: { filePath: localPath, workingDirectory: options.workingDirectory },
@@ -1067,8 +1071,7 @@ function renderGroupFooter(
   opts?: MessageRenderOptions,
 ): TemplateResult | typeof nothing {
   const userMessageActions = group.role === 'user' ? opts?.userMessageActions : undefined;
-  const assistantMessageFork =
-    group.role === 'assistant' ? opts?.assistantMessageFork : undefined;
+  const assistantMessageFork = group.role === 'assistant' ? opts?.assistantMessageFork : undefined;
   const showMetadata = opts?.showFooter ?? true;
   if (!showMetadata && !userMessageActions && !assistantMessageFork) return nothing;
   const ts = group.timestamp;

@@ -1506,6 +1506,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkSaveImageFailed: '保存图片失败，请稍后重试',
     coworkImageOpenPreviewHint: '双击放大查看',
     coworkImagePreviewOpenFailed: '无法打开图片预览，请稍后重试',
+    coworkImagePreviewTitle: '图片预览',
+    coworkImagePreviewReset: '重置缩放和位置',
     // Context menu
     contextMenuCut: '剪切',
     contextMenuCopy: '复制',
@@ -4121,6 +4123,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     coworkSaveImageFailed: 'Failed to save the image. Please try again.',
     coworkImageOpenPreviewHint: 'Double-click to enlarge',
     coworkImagePreviewOpenFailed: 'Unable to open the image preview. Please try again.',
+    coworkImagePreviewTitle: 'Image preview',
+    coworkImagePreviewReset: 'Reset zoom and position',
     // Context menu
     contextMenuCut: 'Cut',
     contextMenuCopy: 'Copy',

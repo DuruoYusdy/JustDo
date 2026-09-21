@@ -16,6 +16,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import mermaid from 'mermaid';
 import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inline';
 
+import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   type EditDiffMode,
   renderTerminalTimelineMessage,
@@ -3475,7 +3476,6 @@ export class JustDoChatElement extends LitElement {
     super.connectedCallback();
     this.chatScrollController.connect(this);
     this.renderRoot?.addEventListener('click', this.handleMarkdownClick);
-    this.renderRoot?.addEventListener('dblclick', this.handleImageDoubleClick);
     this.renderRoot?.addEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.addEventListener('keydown', this.handleTimelineKeyDown);
     this.renderRoot?.addEventListener('toggle', this.handleEditDiffToggle, true);
@@ -3502,7 +3502,6 @@ export class JustDoChatElement extends LitElement {
     this.renderedOpenProcessSummaryKey = null;
     this.renderedCollapsedProcessSummaryKeys = new Set();
     this.renderRoot?.removeEventListener('click', this.handleMarkdownClick);
-    this.renderRoot?.removeEventListener('dblclick', this.handleImageDoubleClick);
     this.renderRoot?.removeEventListener('contextmenu', this.handleInlineImageContextMenu);
     this.renderRoot?.removeEventListener('keydown', this.handleTimelineKeyDown);
     this.renderRoot?.removeEventListener('toggle', this.handleEditDiffToggle, true);
@@ -3667,26 +3666,7 @@ export class JustDoChatElement extends LitElement {
       : new Set();
   }
 
-  private async openImagePreviewWindow(image: HTMLImageElement): Promise<void> {
-    const src = image.currentSrc || image.src;
-    if (!src) return;
-
-    try {
-      const result = await window.electron.imagePreview.open({ src, alt: image.alt });
-      if (result.success) return;
-      console.error('[JustDoChat] Failed to open image preview window', result.error);
-    } catch (error) {
-      console.error('[JustDoChat] Failed to open image preview window', error);
-    }
-
-    window.dispatchEvent(
-      new CustomEvent('app:showToast', {
-        detail: i18nService.t('coworkImagePreviewOpenFailed'),
-      }),
-    );
-  }
-
-  private readonly handleImageDoubleClick = (event: Event): void => {
+  private handleImageClick(event: Event): boolean {
     const image = event
       .composedPath()
       .find(
@@ -3695,14 +3675,20 @@ export class JustDoChatElement extends LitElement {
           (node.classList.contains('chat-bubble__image') ||
             node.classList.contains('markdown-inline-image')),
       ) as HTMLImageElement | undefined;
-    if (!image) return;
+    if (!image) return false;
 
     event.preventDefault();
     event.stopPropagation();
-    void this.openImagePreviewWindow(image);
-  };
+    const src = image.currentSrc || image.src;
+    if (src)
+      window.dispatchEvent(
+        new CustomEvent(IMAGE_PREVIEW_EVENT, { detail: { src, alt: image.alt } }),
+      );
+    return true;
+  }
 
   private readonly handleMarkdownClick = (event: Event): void => {
+    if (this.handleImageClick(event)) return;
     const element = event.composedPath().find(node => node instanceof HTMLElement) as
       HTMLElement | undefined;
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
