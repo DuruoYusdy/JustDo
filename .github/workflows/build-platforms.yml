@@ -105,7 +105,6 @@ jobs:
           name: windows-build
           path: |
             release/*.exe
-            release/*.exe.blockmap
             release/latest.yml
             release/release-history.json
           if-no-files-found: error

@@ -162,6 +162,7 @@ const AppUpdateSection: React.FC = () => {
   const isChecking = state.phase === 'checking';
   const canCheck =
     state.phase === 'idle' ||
+    state.phase === 'available' ||
     state.phase === 'up-to-date' ||
     (state.phase === 'error' && state.errorCode === 'CHECK_FAILED');
   const canDownload =

@@ -116,7 +116,7 @@ Windows runtime先打成 tar，再以 zstd level 10预压缩为 `build-tar/win-r
 - 打包排除 source maps、declarations、tests、README/change logs和 native source。
 - macOS hardened runtime + entitlements，afterSign notarize；DMG配置自身 `sign:false`。
 - Windows NSIS非 one-click，可选安装目录，卸载删除 app data，requested level `asInvoker`。
-- Windows auto-update发布 generic feed，builder当前 `verifyUpdateCodeSignature:false`。兼容更新协议继续使用 `latest.yml`，打包时另行生成 `release-history.json`；新版客户端仅在用户展开历史变更时按需读取后者，读取失败不影响检查、下载或安装。客户端默认每天本地时间 10:00 检查，用户可改为每周一 10:00或从不；错过计划时间会在下次启动后补查。检查阶段只读取版本元数据，发现新版本后必须由用户点击才开始下载，下载完成后再由用户确认重启安装。
+- Windows auto-update发布 generic feed，builder当前 `verifyUpdateCodeSignature:false`。兼容更新协议继续使用 `latest.yml`，打包时另行生成 `release-history.json`；新版客户端仅在用户展开历史变更时按需读取后者，读取失败不影响检查、下载或安装。客户端默认每天本地时间 10:00 检查，用户可改为每周一 10:00或从不；错过计划时间会在下次启动后补查。检查阶段只读取版本元数据，发现新版本后必须由用户点击才开始下载，下载完成后再由用户确认重启安装。差分下载已关闭，客户端始终下载完整 EXE，并依据 `latest.yml` 校验 SHA-512。
 - Linux runtime直接作为 `cfmind` extraResource；Windows使用 tar。
 
 ## 10. Product metadata
@@ -141,7 +141,7 @@ Windows runtime先打成 tar，再以 zstd level 10预压缩为 `build-tar/win-r
 
 ## 13. 依赖升级检查
 
-升级前确认 Node/Electron ABI、Vite plugin兼容、DOMPurify/Markdown安全、Mermaid/Monaco bundle、OpenClaw patch适用和 builder hook。升级后运行 lint/build/compile/test、pack smoke test和目标平台安装；涉及 runtime必须跑 patch verify/staging/freeze/prune，涉及 Windows必须验证 exe/blockmap/latest.yml。
+升级前确认 Node/Electron ABI、Vite plugin兼容、DOMPurify/Markdown安全、Mermaid/Monaco bundle、OpenClaw patch适用和 builder hook。升级后运行 lint/build/compile/test、pack smoke test和目标平台安装；涉及 runtime必须跑 patch verify/staging/freeze/prune，涉及 Windows必须验证 exe/latest.yml。
 
 ## 14. 构建产物地图
 
@@ -154,7 +154,7 @@ Windows runtime先打成 tar，再以 zstd level 10预压缩为 `build-tar/win-r
 | Windows `win-resources.tar.zst` + metadata | pack、校验并预压缩 runtime tar             | zstd stream + native tar hook | archive 内容、路径、回退和进度有专门集成测试          |
 | MinGit                                     | `setup-mingit.js`                          | Windows tool/runtime flows    | 固定 asset，缺失时 `--required` 应失败                |
 | Portable Python                            | `setup-python-runtime.js`                  | Python skills/tools           | hashed requirements 安装到 bundled site-packages      |
-| Installer/update files                     | electron-builder                           | OS installer/updater          | Windows 需 exe、blockmap、latest.yml 一致性验证       |
+| Installer/update files                     | electron-builder                           | OS installer/updater          | Windows 需 exe、latest.yml 与 SHA-512 一致性验证      |
 
 源码目录中存在一个文件并不表示它已进入最终包。新增 runtime asset 时必须同时检查 builder `files`/`extraResources`、平台条件、archive staging、prune allowlist 和安装后解析路径。
 
@@ -244,7 +244,7 @@ MinGit 是 Windows 打包资源，不应在运行时静默回退到任意用户 
 | Main/IPC/SQLite        | lint、build、compile、test                  | native ABI、Electron verify               |
 | OpenClaw patch/runtime | patch verify + feature test                 | staging/freeze/prune、各 platform runtime |
 | Browser extension      | prepare + extension tests                   | resources 是否打包、Chrome smoke          |
-| Windows packaging      | `dist:win` 或等价验证                       | MinGit/Python、exe/blockmap/latest.yml    |
+| Windows packaging      | `dist:win` 或等价验证                       | MinGit/Python、exe/latest.yml             |
 | Builder metadata       | product metadata validation + pack          | appId/protocol/install/update 路径        |
 
 Workflow 是实际 CI 权威。修改 script 名称、依赖顺序或 artifact path 时必须同步 `.github/workflows/` 和 `tests/build/package-scripts.test.ts`，不能只更新本文命令块。
@@ -258,7 +258,7 @@ Workflow 是实际 CI 权威。修改 script 名称、依赖顺序或 artifact p
 | Gateway 仅开发可用       | platform runtime 是否安装/打包、prune 是否误删、launcher path   |
 | Windows Python tool 缺包 | requirements hash、bundled-site-packages、portable sys.path     |
 | MCP 在 Windows 失败      | MinGit/runner、Windows MCP patch、命令参数 quoting              |
-| 更新下载后无法安装       | feed 元数据、exe/blockmap/latest.yml、优雅清理/installer switch |
+| 更新下载后无法安装       | feed 元数据、exe/latest.yml、SHA-512、优雅清理/installer switch |
 | macOS 分发被拒           | hardened runtime、entitlements、sign/notarize credentials       |
 
 ## 23. 升级 Definition of Done

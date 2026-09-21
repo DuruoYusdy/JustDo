@@ -102,7 +102,7 @@ npm run build
 npm test
 ```
 
-Runtime变更还运行 `npm run openclaw:patches:verify` 和staging/freeze/prune相关测试；Windows发布验证exe/blockmap/latest.yml。本文是状态索引，详细不变量以architecture和对应feature文档为准。
+Runtime变更还运行 `npm run openclaw:patches:verify` 和staging/freeze/prune相关测试；Windows发布验证exe/latest.yml及其SHA-512。本文是状态索引，详细不变量以architecture和对应feature文档为准。
 
 ## 8. 进程拓扑与状态权威
 

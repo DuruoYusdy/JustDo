@@ -100,9 +100,6 @@ async function verifyWindowsUpdateArtifacts(releaseDir, env = process.env) {
   if (hash !== fileInfo.sha512 || hash !== manifest.sha512) {
     throw new Error('Installer SHA-512 mismatch.');
   }
-  if (!existsSync(`${installerPath}.blockmap`)) {
-    throw new Error(`Missing differential update blockmap: ${installerPath}.blockmap`);
-  }
 
   const appUpdatePath = path.join(releaseDir, 'win-unpacked', 'resources', 'app-update.yml');
   if (!existsSync(appUpdatePath))

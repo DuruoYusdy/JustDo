@@ -173,6 +173,7 @@
     "runAfterFinish": true,
     "deleteAppDataOnUninstall": true,
     "include": "scripts/nsis-installer.nsh",
+    "differentialPackage": false,
     "preCompressedFileExtensions": [".zst"]
   },
   "asarUnpack": [

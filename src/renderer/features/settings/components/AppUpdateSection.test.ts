@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { AppUpdateState } from '@shared/appUpdate';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -72,6 +72,35 @@ describe('AppUpdateSection', () => {
     expect(appUpdateMocks.check).not.toHaveBeenCalled();
     fireEvent.click(checkButton);
     await waitFor(() => expect(appUpdateMocks.check).toHaveBeenCalledOnce());
+  });
+
+  test('allows an explicit recheck when an older update is already available', async () => {
+    let publishState: ((state: AppUpdateState) => void) | undefined;
+    appUpdateMocks.onStateChanged.mockImplementation((listener: (state: AppUpdateState) => void) => {
+      publishState = listener;
+      return vi.fn();
+    });
+    appUpdateMocks.getState.mockResolvedValue(updateState('available'));
+    appUpdateMocks.check.mockResolvedValue({
+      ...updateState('available'),
+      revision: 2,
+      availableVersion: 'v2026.9.21',
+    });
+    render(React.createElement(AppUpdateSection));
+
+    const checkButton = await screen.findByRole('button', { name: 'appUpdateCheck' });
+    expect(screen.getByRole('button', { name: 'appUpdateDownload' })).toBeTruthy();
+    fireEvent.click(checkButton);
+
+    await waitFor(() => expect(appUpdateMocks.check).toHaveBeenCalledOnce());
+    act(() => {
+      publishState?.({
+        ...updateState('available'),
+        revision: 2,
+        availableVersion: 'v2026.9.21',
+      });
+    });
+    expect(await screen.findByText(/v2026\.9\.21/)).toBeTruthy();
   });
 
   test('loads release history only after the user requests it', async () => {

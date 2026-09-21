@@ -210,6 +210,7 @@ export class AutoUpdateService {
     this.updater.autoInstallOnAppQuit = false;
     this.updater.allowDowngrade = false;
     this.updater.allowPrerelease = false;
+    this.updater.disableDifferentialDownload = true;
     this.updater.logger = log;
     this.bindUpdaterEvents();
   }
@@ -309,11 +310,7 @@ export class AutoUpdateService {
     if (this.checkPromise) {
       return this.checkPromise;
     }
-    if (
-      this.state.phase === 'available' ||
-      this.state.phase === 'downloading' ||
-      this.state.phase === 'downloaded'
-    ) {
+    if (this.state.phase === 'downloading' || this.state.phase === 'downloaded') {
       return Promise.resolve(this.getState());
     }
 

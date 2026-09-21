@@ -36,6 +36,7 @@ const builderConfig = JSON.parse(
   extraResources?: Array<{ from?: string; to?: string }>;
   nsis?: {
     allowElevation?: boolean;
+    differentialPackage?: boolean;
     packElevateHelper?: boolean;
     perMachine?: boolean;
     preCompressedFileExtensions?: string[];
@@ -473,6 +474,7 @@ describe('Windows installer process handling', () => {
       ]),
     );
     expect(builderConfig.electronLanguages).toEqual(['en-US', 'zh-CN']);
+    expect(builderConfig.nsis?.differentialPackage).toBe(false);
     expect(builderConfig.nsis?.preCompressedFileExtensions).toEqual(['.zst']);
     expect(builderHook).toContain('compressTarArchive(outputTar, outputArchive)');
     expect(builderHook).toContain('totalEntries: tarEntries.length');

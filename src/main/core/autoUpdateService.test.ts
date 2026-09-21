@@ -15,6 +15,7 @@ class FakeUpdater extends EventEmitter {
   autoInstallOnAppQuit = true;
   allowDowngrade = true;
   allowPrerelease = true;
+  disableDifferentialDownload = false;
   logger: unknown;
   checkForUpdates = vi.fn<() => Promise<UpdateCheckResult | null>>();
   downloadUpdate = vi.fn<() => Promise<string[]>>();
@@ -61,7 +62,7 @@ const makeService = (
 };
 
 describe('AutoUpdateService', () => {
-  test('disables automatic downloads and unsafe version changes', () => {
+  test('disables automatic and differential downloads and unsafe version changes', () => {
     const updater = new FakeUpdater();
     makeService(updater);
 
@@ -69,6 +70,7 @@ describe('AutoUpdateService', () => {
     expect(updater.autoInstallOnAppQuit).toBe(false);
     expect(updater.allowDowngrade).toBe(false);
     expect(updater.allowPrerelease).toBe(false);
+    expect(updater.disableDifferentialDownload).toBe(true);
   });
 
   test('downloads only after an explicit user action', async () => {
@@ -147,6 +149,38 @@ describe('AutoUpdateService', () => {
     expect(installAfterCleanup).toHaveBeenCalledOnce();
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
     expect(service.quitAndInstall().success).toBe(false);
+  });
+
+  test('checks the server again when an older available version is already shown', async () => {
+    const updater = new FakeUpdater();
+    updater.checkForUpdates.mockResolvedValue(null);
+    const { service } = makeService(updater);
+    updater.emit('update-available', { version: '2026.8.27' });
+
+    const checkPromise = service.checkForUpdates();
+    updater.emit('update-available', { version: '2026.9.21' });
+    await checkPromise;
+
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    expect(service.getState()).toMatchObject({
+      phase: 'available',
+      availableVersion: '2026.9.21',
+    });
+  });
+
+  test('clears a stale available update when the recheck fails', async () => {
+    const updater = new FakeUpdater();
+    updater.checkForUpdates.mockRejectedValue(new Error('offline'));
+    const { service } = makeService(updater);
+    updater.emit('update-available', { version: '2026.8.27' });
+
+    await service.checkForUpdates();
+
+    expect(service.getState()).toMatchObject({
+      phase: 'error',
+      errorCode: 'CHECK_FAILED',
+    });
+    expect(service.getState().availableVersion).toBeUndefined();
   });
 
   test('does not call the updater in unsupported environments', async () => {
