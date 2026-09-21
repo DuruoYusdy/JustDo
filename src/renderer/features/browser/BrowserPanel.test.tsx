@@ -5,6 +5,7 @@ import {
   BROWSER_GUEST_ZOOM_CHANNEL,
   type BrowserAgentInteractionState,
   type BrowserAnnotationDraft,
+  type BrowserLocalHtmlPreviewResult,
   type BrowserPanelTab,
 } from '@shared/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -70,6 +71,9 @@ const getClearDataSummary = vi.fn().mockResolvedValue({
   },
 });
 const clearBrowsingData = vi.fn().mockResolvedValue({ success: true });
+const createLocalHtmlPreview = vi.fn();
+const openExternal = vi.fn().mockResolvedValue({ success: true });
+const openLocalHtmlExternal = vi.fn().mockResolvedValue({ success: true });
 const registerAgentTab = vi.fn();
 const unregisterAgentTab = vi.fn();
 const setAgentActiveTab = vi.fn();
@@ -156,6 +160,9 @@ describe('BrowserPanel embedded webview', () => {
     importData.mockClear();
     getClearDataSummary.mockClear();
     clearBrowsingData.mockClear();
+    createLocalHtmlPreview.mockReset();
+    openExternal.mockClear();
+    openLocalHtmlExternal.mockClear();
     registerAgentTab.mockClear();
     unregisterAgentTab.mockClear();
     setAgentActiveTab.mockClear();
@@ -201,6 +208,7 @@ describe('BrowserPanel embedded webview', () => {
       configurable: true,
       value: {
         browser: {
+          createLocalHtmlPreview,
           registerAgentTab,
           unregisterAgentTab,
           setAgentActiveTab,
@@ -231,7 +239,8 @@ describe('BrowserPanel embedded webview', () => {
           clearBrowsingData,
         },
         shell: {
-          openExternal: vi.fn().mockResolvedValue({ success: true }),
+          openExternal,
+          openLocalHtmlExternal,
         },
       },
     });
@@ -536,6 +545,41 @@ describe('BrowserPanel embedded webview', () => {
     expect(screen.getAllByRole('button', { name: 'Reset zoom' })[0]?.textContent).toBe('100%');
   });
 
+  it('opens a local HTML tab in the system browser with its file URL', async () => {
+    let panelHandle: BrowserPanelHandle | null = null;
+    const onTabsChange = vi.fn();
+    render(
+      <BrowserPanelHarness
+        embedded
+        draftKey="open-external-local-test"
+        panelRef={instance => {
+          panelHandle = instance;
+        }}
+        onTabsChange={onTabsChange}
+      />,
+    );
+    const previewUrl = 'http://127.0.0.1:43128/token/report.html?mode=3d#camera';
+    const sourceFilePath = 'C:\\reports\\quarterly #100%.html';
+
+    act(() =>
+      panelHandle?.openTab(previewUrl, {
+        sourceFilePath,
+        sourcePreviewUrl: previewUrl,
+      }),
+    );
+    await waitFor(() => expect(onTabsChange).toHaveBeenCalled());
+    const latestTabs = onTabsChange.mock.calls[onTabsChange.mock.calls.length - 1]?.[0] as
+      BrowserPanelTab[] | undefined;
+    const targetId = latestTabs?.[latestTabs.length - 1]?.targetId;
+    expect(targetId).toBeTruthy();
+
+    act(() => panelHandle?.openTabContextMenu(targetId!, 40, 40));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in external browser' }));
+
+    await waitFor(() => expect(openLocalHtmlExternal).toHaveBeenCalledWith(previewUrl));
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
   it('zooms the live guest from a primary-modified mouse wheel event', () => {
     const { container } = render(<BrowserPanelHarness />);
     const webview = container.querySelector('webview')!;
@@ -577,6 +621,78 @@ describe('BrowserPanel embedded webview', () => {
     await waitFor(() =>
       expect(loadUrl).toHaveBeenCalledWith('https://www.baidu.com/s?wd=electron+browser+panel'),
     );
+  });
+
+  it('opens a file URL through the isolated local HTML preview', async () => {
+    createLocalHtmlPreview.mockResolvedValue({
+      success: true,
+      url: 'http://127.0.0.1:43128/token/index.html',
+      filePath: 'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d\\index.html',
+      rootPath: 'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d',
+      previewRootUrl: 'http://127.0.0.1:43128/token/',
+    });
+    render(<BrowserPanelHarness />);
+    const fileUrl = 'file:///C:/Users/lianghao/justdo/project/ai-assistant-3d/index.html';
+
+    fireEvent.change(screen.getByLabelText('Browser address'), {
+      target: { value: fileUrl },
+    });
+    fireEvent.submit(screen.getByLabelText('Browser address').closest('form')!);
+
+    await waitFor(() => expect(createLocalHtmlPreview).toHaveBeenCalledWith(fileUrl));
+    expect(loadUrl).toHaveBeenCalledWith('http://127.0.0.1:43128/token/index.html');
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
+      'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d\\index.html',
+    );
+  });
+
+  it('ignores a stale local file preview when a newer address submission finishes first', async () => {
+    let resolveFirst!: (result: BrowserLocalHtmlPreviewResult) => void;
+    let resolveSecond!: (result: BrowserLocalHtmlPreviewResult) => void;
+    createLocalHtmlPreview
+      .mockReturnValueOnce(
+        new Promise<BrowserLocalHtmlPreviewResult>(resolve => {
+          resolveFirst = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<BrowserLocalHtmlPreviewResult>(resolve => {
+          resolveSecond = resolve;
+        }),
+      );
+    render(<BrowserPanelHarness draftKey="local-preview-race-test" />);
+    const address = screen.getByLabelText('Browser address');
+    const form = address.closest('form')!;
+
+    fireEvent.change(address, { target: { value: 'file:///C:/reports/first.html' } });
+    fireEvent.submit(form);
+    fireEvent.change(address, { target: { value: 'file:///C:/reports/second.html' } });
+    fireEvent.submit(form);
+    await act(async () => {
+      resolveSecond({
+        success: true,
+        url: 'http://127.0.0.1:43128/second/second.html',
+        filePath: 'C:\\reports\\second.html',
+        rootPath: 'C:\\reports',
+        previewRootUrl: 'http://127.0.0.1:43128/second/',
+      });
+    });
+    await waitFor(() =>
+      expect(loadUrl).toHaveBeenCalledWith('http://127.0.0.1:43128/second/second.html'),
+    );
+
+    await act(async () => {
+      resolveFirst({
+        success: true,
+        url: 'http://127.0.0.1:43128/first/first.html',
+        filePath: 'C:\\reports\\first.html',
+        rootPath: 'C:\\reports',
+        previewRootUrl: 'http://127.0.0.1:43128/first/',
+      });
+    });
+
+    expect(loadUrl).not.toHaveBeenCalledWith('http://127.0.0.1:43128/first/first.html');
+    expect((address as HTMLInputElement).value).toBe('C:\\reports\\second.html');
   });
 
   it('retains the current URL when the panel is hidden and mounted again', async () => {
@@ -713,9 +829,7 @@ describe('BrowserPanel embedded webview', () => {
       url: 'about:blank',
       profile: 'embedded',
     };
-    const { container } = render(
-      <BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />,
-    );
+    const { container } = render(<BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />);
     const webview = container.querySelector('webview') as HTMLElement;
     webview.tabIndex = 0;
     webview.focus();
@@ -739,7 +853,9 @@ describe('BrowserPanel embedded webview', () => {
       operationId: 'operation-1',
     });
 
-    act(() => agentInteractionListener?.({ sessionId: 'session-1', targetId: 'agent-tab', busy: false }));
+    act(() =>
+      agentInteractionListener?.({ sessionId: 'session-1', targetId: 'agent-tab', busy: false }),
+    );
     expect(screen.queryByTestId('browser-agent-interaction-lock')).toBeNull();
   });
 
@@ -815,9 +931,7 @@ describe('BrowserPanel embedded webview', () => {
       busy: true,
       operationId: 'imported-operation',
     };
-    const { rerender } = render(
-      <BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />,
-    );
+    const { rerender } = render(<BrowserPanelHarness draftKey="session-1" initialTabs={[tab]} />);
     fireEvent.click(screen.getByLabelText('Draw annotation'));
     await waitFor(() =>
       expect(setUserInteractionState).toHaveBeenCalledWith(
@@ -837,7 +951,9 @@ describe('BrowserPanel embedded webview', () => {
     expect(acknowledgeAgentInteraction).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByLabelText('Stop drawing'));
-    await waitFor(() => expect(screen.getByTestId('browser-agent-interaction-lock')).not.toBeNull());
+    await waitFor(() =>
+      expect(screen.getByTestId('browser-agent-interaction-lock')).not.toBeNull(),
+    );
     expect(acknowledgeAgentInteraction).toHaveBeenCalledWith({
       sessionId: 'session-1',
       targetId: BROWSER_AGENT_PANEL_TARGET_ID,
@@ -923,9 +1039,7 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(screen.getByLabelText('Add annotation and comment to chat'));
 
     await waitFor(() => expect(onAddAnnotation).toHaveBeenCalledOnce());
-    expect(onAddAnnotation.mock.calls[0]?.[0].modelContext).toContain(
-      '"profile":"1-work"',
-    );
+    expect(onAddAnnotation.mock.calls[0]?.[0].modelContext).toContain('"profile":"1-work"');
   });
 
   it('ignores popup events emitted by a webview owned by another retained panel', async () => {
@@ -1505,8 +1619,7 @@ describe('BrowserPanel embedded webview', () => {
     act(() => panelHandle?.openTab('https://example.com/session-tab'));
     await waitFor(() => {
       const tabs = homeTabsChange.mock.calls[homeTabsChange.mock.calls.length - 1]?.[0] as
-        | BrowserPanelTab[]
-        | undefined;
+        BrowserPanelTab[] | undefined;
       expect(tabs).toHaveLength(1);
     });
     homeView.unmount();
@@ -1525,16 +1638,11 @@ describe('BrowserPanel embedded webview', () => {
     promoteBrowserPanelTabs(homeKey, sessionKey);
     const promotedTabsChange = vi.fn();
     render(
-      <BrowserPanelHarness
-        draftKey={sessionKey}
-        embedded
-        onTabsChange={promotedTabsChange}
-      />,
+      <BrowserPanelHarness draftKey={sessionKey} embedded onTabsChange={promotedTabsChange} />,
     );
     await waitFor(() => {
       const tabs = promotedTabsChange.mock.calls[promotedTabsChange.mock.calls.length - 1]?.[0] as
-        | BrowserPanelTab[]
-        | undefined;
+        BrowserPanelTab[] | undefined;
       expect(tabs?.[0]?.url).toBe('https://example.com/session-tab');
     });
   });

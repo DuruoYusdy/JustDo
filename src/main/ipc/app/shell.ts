@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, Menu, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 
 import {
   type FilePreviewEditAuthorizationRequest,
@@ -15,6 +16,10 @@ import {
   MAX_PREVIEW_FILE_BYTES,
   type WorkspaceDirectoryListResult,
 } from '../../../shared/filePreview';
+import {
+  isLocalHtmlPreviewUrl,
+  resolveLocalHtmlPreviewFilePath,
+} from '../../browser/localHtmlPreviewServer';
 import { t } from '../../core/i18n';
 
 const AttachmentMenuAction = {
@@ -732,9 +737,40 @@ export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}
     },
   );
 
-  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+  ipcMain.handle('shell:openExternal', async (event, url: string) => {
+    if (
+      event.sender.getType() !== 'window' ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof url !== 'string' ||
+      !/^https?:\/\//iu.test(url)
+    ) {
+      return { success: false, error: 'Access denied' };
+    }
     try {
       await shell.openExternal(url);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle('shell:openLocalHtmlExternal', async (event, previewUrl: string) => {
+    if (
+      event.sender.getType() !== 'window' ||
+      event.senderFrame !== event.sender.mainFrame ||
+      typeof previewUrl !== 'string' ||
+      !isLocalHtmlPreviewUrl(previewUrl)
+    ) {
+      return { success: false, error: 'Access denied' };
+    }
+    try {
+      const filePath = await resolveLocalHtmlPreviewFilePath(previewUrl);
+      if (!filePath) return { success: false, error: 'Local HTML preview is unavailable' };
+      const logicalUrl = new URL(previewUrl);
+      const fileUrl = pathToFileURL(filePath);
+      fileUrl.search = logicalUrl.search;
+      fileUrl.hash = logicalUrl.hash;
+      await shell.openExternal(fileUrl.toString());
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };

@@ -858,6 +858,8 @@ contextBridge.exposeInMainWorld('electron', {
     showItemInFolder: (filePath: string, workingDirectory?: string) =>
       ipcRenderer.invoke('shell:showItemInFolder', filePath, workingDirectory),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+    openLocalHtmlExternal: (previewUrl: string) =>
+      ipcRenderer.invoke('shell:openLocalHtmlExternal', previewUrl),
   },
   imagePreview: {
     open: (request: ImagePreviewOpenRequest): Promise<ImagePreviewOpenResult> =>

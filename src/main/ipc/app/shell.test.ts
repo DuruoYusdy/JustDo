@@ -3,11 +3,16 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-const { ipcHandle } = vi.hoisted(() => ({ ipcHandle: vi.fn() }));
+import { createLocalHtmlPreview } from '../../browser/localHtmlPreviewServer';
+
+const { ipcHandle, openExternal } = vi.hoisted(() => ({
+  ipcHandle: vi.fn(),
+  openExternal: vi.fn(),
+}));
 
 vi.mock('electron', () => ({
   ipcMain: { handle: ipcHandle },
-  shell: { openPath: vi.fn(), showItemInFolder: vi.fn(), openExternal: vi.fn() },
+  shell: { openPath: vi.fn(), showItemInFolder: vi.fn(), openExternal },
 }));
 
 import {
@@ -27,6 +32,8 @@ const temporaryDirectories: string[] = [];
 
 beforeEach(() => {
   ipcHandle.mockClear();
+  openExternal.mockReset();
+  openExternal.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -184,6 +191,62 @@ test('rejects system app chooser requests from non-window senders', async () => 
   await expect(
     Promise.resolve(handler({ sender: { getType: () => 'webview' } }, 'C:\\archive.zip')),
   ).resolves.toEqual({ success: false, error: 'Access denied' });
+});
+
+test('rejects unsafe external URL schemes and non-main-frame callers', async () => {
+  registerShellHandlers();
+  const registration = ipcHandle.mock.calls.find(([channel]) => channel === 'shell:openExternal');
+  expect(registration).toBeDefined();
+  const handler = registration?.[1] as (...args: unknown[]) => Promise<unknown>;
+  const mainFrame = {};
+  const trustedEvent = {
+    sender: { getType: () => 'window', mainFrame },
+    senderFrame: mainFrame,
+  };
+
+  await expect(handler(trustedEvent, 'file:///C:/Windows/System32/calc.exe')).resolves.toEqual({
+    success: false,
+    error: 'Access denied',
+  });
+  await expect(handler(trustedEvent, 'custom:payload')).resolves.toEqual({
+    success: false,
+    error: 'Access denied',
+  });
+  await expect(
+    handler(
+      { sender: { getType: () => 'window', mainFrame }, senderFrame: {} },
+      'https://example.com/',
+    ),
+  ).resolves.toEqual({ success: false, error: 'Access denied' });
+  expect(openExternal).not.toHaveBeenCalled();
+});
+
+test('opens only a registered local HTML preview with its query and fragment', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-html-external-'));
+  temporaryDirectories.push(directory);
+  const filePath = path.join(directory, 'quarterly #100%.html');
+  fs.writeFileSync(filePath, '<p>Report</p>');
+  const preview = await createLocalHtmlPreview(filePath);
+  expect(preview.success).toBe(true);
+  if (!preview.success) return;
+  registerShellHandlers();
+  const registration = ipcHandle.mock.calls.find(
+    ([channel]) => channel === 'shell:openLocalHtmlExternal',
+  );
+  expect(registration).toBeDefined();
+  const handler = registration?.[1] as (...args: unknown[]) => Promise<unknown>;
+  const mainFrame = {};
+
+  await expect(
+    handler(
+      { sender: { getType: () => 'window', mainFrame }, senderFrame: mainFrame },
+      `${preview.url}?mode=3d#camera`,
+    ),
+  ).resolves.toEqual({ success: true });
+  const openedUrl = new URL(openExternal.mock.calls[0]?.[0] as string);
+  expect(decodeURIComponent(openedUrl.pathname)).toContain('quarterly #100%.html');
+  expect(openedUrl.search).toBe('?mode=3d');
+  expect(openedUrl.hash).toBe('#camera');
 });
 
 test('keeps a missing relative attachment path unchanged', () => {

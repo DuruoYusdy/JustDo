@@ -1,12 +1,16 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { afterEach, describe, expect, test } from 'vitest';
 
 import {
   createLocalHtmlPreview,
+  isAllowedLocalHtmlPreviewResource,
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
+  isWindowsNetworkOrDevicePath,
+  resolveLocalHtmlPreviewFilePath,
 } from './localHtmlPreviewServer';
 
 const temporaryDirectories: string[] = [];
@@ -44,8 +48,19 @@ describe('local HTML preview server', () => {
     expect(htmlResponse.headers.get('referrer-policy')).toBe('same-origin');
     expect(htmlResponse.headers.get('content-security-policy')).toContain("connect-src 'self'");
     expect(htmlResponse.headers.get('content-security-policy')).toContain(
-      "script-src 'self' 'unsafe-inline'",
+      "script-src 'self' 'unsafe-inline' blob:",
     );
+    expect(htmlResponse.headers.get('content-security-policy')).toContain(
+      "worker-src 'self' blob:",
+    );
+    const previewOrigin = new URL(result.url).origin;
+    expect(
+      isAllowedLocalHtmlPreviewResource(result.url, `blob:${previewOrigin}/embedded-module`),
+    ).toBe(true);
+    expect(isAllowedLocalHtmlPreviewResource(result.url, 'data:image/png;base64,AA==')).toBe(true);
+    expect(
+      isAllowedLocalHtmlPreviewResource(result.url, 'blob:https://example.com/embedded-module'),
+    ).toBe(false);
     expect(await htmlResponse.text()).toContain('style.css');
     const cssResponse = await fetch(new URL('style.css', result.url));
     expect(cssResponse.headers.get('content-type')).toBe('text/css; charset=utf-8');
@@ -100,6 +115,56 @@ describe('local HTML preview server', () => {
       errorCode: 'invalid_type',
     });
   });
+
+  test('accepts a file URL for an HTML entry point', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-html-preview-'));
+    temporaryDirectories.push(directory);
+    const filePath = path.join(directory, 'report with spaces.html');
+    fs.writeFileSync(filePath, '<p>Report</p>');
+
+    const result = await createLocalHtmlPreview(pathToFileURL(filePath).toString());
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.filePath).toBe(fs.realpathSync(filePath));
+    await expect(resolveLocalHtmlPreviewFilePath(result.url)).resolves.toBe(result.filePath);
+  });
+
+  test('rejects remote-host file URLs before accessing the filesystem', async () => {
+    await expect(
+      createLocalHtmlPreview('file://attacker.example/share/report.html'),
+    ).resolves.toEqual({
+      success: false,
+      errorCode: 'invalid_source',
+    });
+  });
+
+  test('recognizes Windows network and device paths before filesystem access', () => {
+    expect(isWindowsNetworkOrDevicePath('\\\\attacker.example\\share\\report.html', 'win32')).toBe(
+      true,
+    );
+    expect(isWindowsNetworkOrDevicePath('//attacker.example/share/report.html', 'win32')).toBe(
+      true,
+    );
+    expect(
+      isWindowsNetworkOrDevicePath('\\\\?\\UNC\\attacker.example\\share\\report.html', 'win32'),
+    ).toBe(true);
+    expect(isWindowsNetworkOrDevicePath('\\\\.\\C:\\report.html', 'win32')).toBe(true);
+    expect(isWindowsNetworkOrDevicePath('C:\\reports\\report.html', 'win32')).toBe(false);
+    expect(isWindowsNetworkOrDevicePath('//srv/report.html', 'linux')).toBe(false);
+  });
+
+  test.runIf(process.platform === 'win32')(
+    'rejects raw Windows network paths before accessing the filesystem',
+    async () => {
+      await expect(
+        createLocalHtmlPreview('\\\\attacker.example\\share\\report.html'),
+      ).resolves.toEqual({
+        success: false,
+        errorCode: 'invalid_source',
+      });
+    },
+  );
 
   test('does not expose dotfiles beside the selected document', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-html-preview-'));

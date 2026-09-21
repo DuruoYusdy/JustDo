@@ -228,6 +228,8 @@ const resolveAddressInput = (raw: string): string | null =>
     normalizeBrowserSearchEngine(configService.getConfig().browserSearchEngine),
   );
 
+const isLocalFileAddress = (raw: string): boolean => /^file:/iu.test(raw.trim());
+
 const normalizeFaviconUrl = (raw: string): string | null => {
   if (raw.length > 512 * 1024) return null;
   if (/^data:image\//i.test(raw)) return raw;
@@ -337,7 +339,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [loadingTargets, setLoadingTargets] = useState<Set<string>>(() => new Set());
   const [agentBusyTargets, setAgentBusyTargets] = useState<Set<string>>(() => new Set());
   const pendingAgentInteractionAcksRef = useRef(
-    new Map<string, { sessionId: string; targetId: string; profile?: string; operationId: string }>(),
+    new Map<
+      string,
+      { sessionId: string; targetId: string; profile?: string; operationId: string }
+    >(),
   );
   const acknowledgedExternalInteractionsRef = useRef(new Set<string>());
   const [loadErrors, setLoadErrors] = useState<Map<string, string>>(() => new Map());
@@ -390,9 +395,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const webviewsRef = useRef(new Map<string, LiveWebview>());
   const installedGuestsRef = useRef(new WeakSet<LiveWebview>());
-  const guestElementRefs = useRef(
-    new Map<string, (element: HTMLElement | null) => void>(),
-  );
+  const guestElementRefs = useRef(new Map<string, (element: HTMLElement | null) => void>());
   const currentDraftKeyRef = useRef(draftKey);
   currentDraftKeyRef.current = draftKey;
   const registeredDraftKeyRef = useRef(draftKey);
@@ -414,6 +417,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const annotationNoticeTargetRef = useRef<string | null>(null);
   const annotationNoticeTextRef = useRef<string | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
+  const addressSubmissionSequenceRef = useRef(0);
 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
@@ -519,7 +523,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       tabsRef.current = retainedTabs;
       return retainedTabs;
     });
-    setLoadingTargets(current => new Set([...current].filter(targetId => retainedIds.has(targetId))));
+    setLoadingTargets(
+      current => new Set([...current].filter(targetId => retainedIds.has(targetId))),
+    );
     setReadyTargets(current => new Set([...current].filter(targetId => retainedIds.has(targetId))));
     setLoadErrors(
       current => new Map([...current].filter(([targetId]) => retainedIds.has(targetId))),
@@ -537,15 +543,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     agentInteractionStates.filter(state => state.busy).map(state => state.targetId),
   );
   const userInteractionLocked = Boolean(
-    isOpen &&
-      activeTabTargetId &&
-      (mode !== 'interact' || isCommentComposerOpen || isCapturing),
+    isOpen && activeTabTargetId && (mode !== 'interact' || isCommentComposerOpen || isCapturing),
   );
   const agentInteractionLocked = Boolean(
     !userInteractionLocked &&
-      (externalAgentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
-        agentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
-        (activeTabTargetId && agentBusyTargets.has(activeTabTargetId))),
+    (externalAgentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
+      agentBusyTargets.has(BROWSER_AGENT_PANEL_TARGET_ID) ||
+      (activeTabTargetId && agentBusyTargets.has(activeTabTargetId))),
   );
   useLayoutEffect(() => {
     if (userInteractionLocked) return;
@@ -668,14 +672,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     [],
   );
 
-  const updateTab = useCallback((targetId: string, values: Partial<BrowserPanelTab>) => {
-    const nextTabs = tabsRef.current.map(tab =>
-      tab.targetId === targetId ? { ...tab, ...values } : tab,
-    );
-    tabsRef.current = nextTabs;
-    setRetainedBrowserPanelTabs(draftKey, nextTabs);
-    setTabs(nextTabs);
-  }, [draftKey]);
+  const updateTab = useCallback(
+    (targetId: string, values: Partial<BrowserPanelTab>) => {
+      const nextTabs = tabsRef.current.map(tab =>
+        tab.targetId === targetId ? { ...tab, ...values } : tab,
+      );
+      tabsRef.current = nextTabs;
+      setRetainedBrowserPanelTabs(draftKey, nextTabs);
+      setTabs(nextTabs);
+    },
+    [draftKey],
+  );
 
   const openTab = useCallback(
     (rawUrl = 'about:blank', options?: BrowserOpenTabOptions) => {
@@ -1299,23 +1306,54 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   };
 
   const submitUrl = async () => {
-    const activeTab = tabsRef.current.find(tab => tab.targetId === activeTargetRef.current);
-    const url =
-      activeTab && urlDraft.trim() === getBrowserTabAddress(activeTab)
-        ? activeTab.url
-        : resolveAddressInput(urlDraft);
+    const submissionSequence = ++addressSubmissionSequenceRef.current;
+    const targetId = activeTargetRef.current;
+    const activeTab = tabsRef.current.find(tab => tab.targetId === targetId);
+    const address = urlDraft.trim();
+    let source: BrowserLocalHtmlSource | undefined;
+    let url: string | null;
+    if (activeTab && address === getBrowserTabAddress(activeTab)) {
+      url = activeTab.url;
+    } else if (isLocalFileAddress(address)) {
+      try {
+        const preview = await window.electron.browser.createLocalHtmlPreview(address);
+        if (submissionSequence !== addressSubmissionSequenceRef.current) return;
+        if (!preview.success) {
+          setError(
+            preview.errorCode === 'not_found'
+              ? i18nService.t('coworkAttachmentNotFound').replace('{filepath}', address)
+              : preview.errorCode === 'invalid_type' || preview.errorCode === 'invalid_source'
+                ? i18nService.t('coworkLocalHtmlPreviewInvalid')
+                : i18nService.t('coworkFilePreviewFailed'),
+          );
+          return;
+        }
+        url = preview.url;
+        source = {
+          sourceFilePath: preview.filePath,
+          sourcePreviewUrl: preview.url,
+          sourceRootPath: preview.rootPath,
+          sourcePreviewRootUrl: preview.previewRootUrl,
+        };
+      } catch {
+        if (submissionSequence !== addressSubmissionSequenceRef.current) return;
+        setError(i18nService.t('coworkFilePreviewFailed'));
+        return;
+      }
+    } else {
+      url = resolveAddressInput(address);
+    }
     if (!url) {
       setError(i18nService.t('browserPanelInvalidUrl'));
       return;
     }
     if (activeTab && isAtSourcePreview(activeTab) && url !== activeTab.url) {
-      openTab(url, { profile: activeTab.profile });
+      openTab(url, { ...source, profile: activeTab.profile });
       return;
     }
-    const targetId = activeTargetRef.current;
     const webview = targetId ? webviewsRef.current.get(targetId) : null;
     if (!webview || !targetId) return;
-    clearAnnotations();
+    if (activeTargetRef.current === targetId) clearAnnotations();
     addressDirtyRef.current = false;
     setError(null);
     setLoadErrors(current => {
@@ -1324,7 +1362,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return next;
     });
     setLoadingTargets(current => new Set(current).add(targetId));
-    updateTab(targetId, { url });
+    updateTab(targetId, { url, ...source });
+    if (source && activeTargetRef.current === targetId) setUrlDraft(source.sourceFilePath);
     try {
       await webview.loadURL(url);
     } catch (loadError) {
@@ -1516,8 +1555,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       return;
     }
     if (action === 'open-external') {
-      if (!/^https?:\/\//i.test(url)) return;
-      const result = await window.electron.shell.openExternal(url);
+      const localFilePath = getLocalPreviewFilePath({ ...tab, url });
+      if (!localFilePath && !/^https?:\/\//i.test(url)) return;
+      const result = localFilePath
+        ? await window.electron.shell.openLocalHtmlExternal(url)
+        : await window.electron.shell.openExternal(url);
       if (!result.success) setError(result.error || i18nService.t('browserPanelLoadFailed'));
       return;
     }

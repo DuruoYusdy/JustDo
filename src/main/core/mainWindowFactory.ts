@@ -40,6 +40,7 @@ import {
   resolveBrowserDownloadDirectory,
 } from '../browser/browserDownloadPath';
 import {
+  isAllowedLocalHtmlPreviewResource,
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
 } from '../browser/localHtmlPreviewServer';
@@ -265,10 +266,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     webPreferences.disableDialogs = false;
     webPreferences.navigateOnDragDrop = false;
 
-    if (
-      !browserProfileFromPartition(params.partition) ||
-      !isAllowedBrowserPanelUrl(params.src)
-    ) {
+    if (!browserProfileFromPartition(params.partition) || !isAllowedBrowserPanelUrl(params.src)) {
       event.preventDefault();
       return;
     }
@@ -383,45 +381,46 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
   const installBrowserRequestGuard = (browserSession: Electron.Session) =>
     browserSession.webRequest.onBeforeRequest((details, callback) => {
-    const localPreviewScopeUrl = localPreviewScopesByGuestId.get(details.webContentsId);
-    const blockPreviewRequest = Boolean(
-      localPreviewScopeUrl && !isSameLocalHtmlPreviewScope(localPreviewScopeUrl, details.url),
-    );
-    const isMainFrame = details.resourceType === 'mainFrame';
-    const blockGuestMainFrame = isMainFrame && !isAllowedBrowserPanelUrl(details.url);
-    if (blockPreviewRequest || blockGuestMainFrame) {
-      callback({ cancel: true });
-      return;
-    }
-    let requestUrl: URL;
-    try {
-      requestUrl = new URL(details.url);
-    } catch {
-      callback(isMainFrame ? { cancel: true } : {});
-      return;
-    }
-    if (!['http:', 'https:', 'ws:', 'wss:'].includes(requestUrl.protocol)) {
-      callback({});
-      return;
-    }
-    const hostname = requestUrl.hostname;
-    if (!hostname || isBlockedBrowserMetadataHost(hostname)) {
-      callback({ cancel: true });
-      return;
-    }
-    // Resolve through this exact partition so Chromium's subsequent connection
-    // shares the same host-resolver cache entry instead of racing a separate
-    // default-session lookup.
-    void browserSession
-      .resolveHost(hostname)
-      .then(result => {
-        const addresses = result.endpoints.map(endpoint => endpoint.address);
-        const allowRequest =
-          addresses.length > 0 &&
-          addresses.every(address => !isBlockedBrowserMetadataHost(address));
-        callback(allowRequest ? {} : { cancel: true });
-      })
-      .catch(() => callback({ cancel: true }));
+      const localPreviewScopeUrl = localPreviewScopesByGuestId.get(details.webContentsId);
+      const blockPreviewRequest = Boolean(
+        localPreviewScopeUrl &&
+        !isAllowedLocalHtmlPreviewResource(localPreviewScopeUrl, details.url),
+      );
+      const isMainFrame = details.resourceType === 'mainFrame';
+      const blockGuestMainFrame = isMainFrame && !isAllowedBrowserPanelUrl(details.url);
+      if (blockPreviewRequest || blockGuestMainFrame) {
+        callback({ cancel: true });
+        return;
+      }
+      let requestUrl: URL;
+      try {
+        requestUrl = new URL(details.url);
+      } catch {
+        callback(isMainFrame ? { cancel: true } : {});
+        return;
+      }
+      if (!['http:', 'https:', 'ws:', 'wss:'].includes(requestUrl.protocol)) {
+        callback({});
+        return;
+      }
+      const hostname = requestUrl.hostname;
+      if (!hostname || isBlockedBrowserMetadataHost(hostname)) {
+        callback({ cancel: true });
+        return;
+      }
+      // Resolve through this exact partition so Chromium's subsequent connection
+      // shares the same host-resolver cache entry instead of racing a separate
+      // default-session lookup.
+      void browserSession
+        .resolveHost(hostname)
+        .then(result => {
+          const addresses = result.endpoints.map(endpoint => endpoint.address);
+          const allowRequest =
+            addresses.length > 0 &&
+            addresses.every(address => !isBlockedBrowserMetadataHost(address));
+          callback(allowRequest ? {} : { cancel: true });
+        })
+        .catch(() => callback({ cancel: true }));
     });
   browserPanelSessions.forEach(installBrowserRequestGuard);
   const pendingDownloads = new Set<Electron.DownloadItem>();
@@ -514,13 +513,15 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       return;
     }
     const askWhereToSave = agentClaim ? false : settings.askWhereToSave;
-    const automaticSavePath = agentClaim?.savePath ?? (askWhereToSave
-      ? undefined
-      : resolveAvailableBrowserDownloadPath(
-          downloadDirectory,
-          item.getFilename(),
-          candidate => reservedDownloadPaths.has(candidate) || fs.existsSync(candidate),
-        ));
+    const automaticSavePath =
+      agentClaim?.savePath ??
+      (askWhereToSave
+        ? undefined
+        : resolveAvailableBrowserDownloadPath(
+            downloadDirectory,
+            item.getFilename(),
+            candidate => reservedDownloadPaths.has(candidate) || fs.existsSync(candidate),
+          ));
     downloadIds.set(item, id);
     downloadDefaultDirectories.set(item, downloadDirectory);
     if (automaticSavePath) reservedDownloadPaths.add(automaticSavePath);

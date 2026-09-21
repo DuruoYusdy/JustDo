@@ -444,7 +444,9 @@ interface IElectronAPI {
     onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => () => void;
     onAgentFocusTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;
     onAgentCloseTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;
-    onAgentInteractionState: (callback: (event: BrowserAgentInteractionState) => void) => () => void;
+    onAgentInteractionState: (
+      callback: (event: BrowserAgentInteractionState) => void,
+    ) => () => void;
     listImportSources: () => Promise<BrowserImportSourcesResult>;
     importData: (request: BrowserImportRequest) => Promise<BrowserImportResult>;
     listHistory: (query?: string) => Promise<BrowserHistoryListResult>;
@@ -1155,6 +1157,7 @@ interface IElectronAPI {
       workingDirectory?: string,
     ) => Promise<{ success: boolean; error?: string; notFound?: boolean }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+    openLocalHtmlExternal: (previewUrl: string) => Promise<{ success: boolean; error?: string }>;
   };
   imagePreview: {
     open: (

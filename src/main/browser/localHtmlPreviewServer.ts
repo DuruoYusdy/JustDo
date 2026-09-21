@@ -3,6 +3,7 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { pipeline } from 'stream/promises';
+import { fileURLToPath } from 'url';
 
 import type { BrowserLocalHtmlPreviewResult } from '../../shared/browser';
 
@@ -101,6 +102,51 @@ export const isSameLocalHtmlPreviewScope = (sourceUrl: string, targetUrl: string
   return sourceToken !== null && sourceToken === targetToken;
 };
 
+export const isAllowedLocalHtmlPreviewResource = (
+  sourceUrl: string,
+  targetUrl: string,
+): boolean => {
+  if (isSameLocalHtmlPreviewScope(sourceUrl, targetUrl)) return true;
+  try {
+    const target = new URL(targetUrl);
+    if (target.protocol === 'data:') return true;
+    return target.protocol === 'blob:' && target.origin === new URL(sourceUrl).origin;
+  } catch {
+    return false;
+  }
+};
+
+export const isWindowsNetworkOrDevicePath = (
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean => platform === 'win32' && /^[\\/]{2}/u.test(filePath);
+
+export const resolveLocalHtmlPreviewFilePath = async (rawUrl: string): Promise<string | null> => {
+  try {
+    const token = previewTokenFromUrl(rawUrl);
+    const preview = token ? previews.get(token) : undefined;
+    if (!token || !preview) return null;
+    const url = new URL(rawUrl);
+    const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    if (segments.shift() !== token) return null;
+    const relativePath = segments.length > 0 ? segments.join(path.sep) : preview.entryName;
+    if (
+      relativePath.split(/[\\/]/u).some(segment => segment.startsWith('.')) ||
+      !HTML_EXTENSIONS.has(path.extname(relativePath).toLowerCase())
+    ) {
+      return null;
+    }
+    const candidatePath = path.resolve(preview.rootPath, relativePath);
+    if (!isWithinRoot(preview.rootPath, candidatePath)) return null;
+    const realPath = await fs.promises.realpath(candidatePath);
+    if (!isWithinRoot(preview.rootPath, realPath)) return null;
+    const stats = await fs.promises.lstat(realPath);
+    return stats.isFile() && !stats.isSymbolicLink() ? realPath : null;
+  } catch {
+    return null;
+  }
+};
+
 const isWithinRoot = (rootPath: string, candidatePath: string): boolean => {
   const relative = path.relative(rootPath, candidatePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -170,7 +216,7 @@ const handleRequest = async (
       'Cache-Control': 'no-store',
       'Content-Type': CONTENT_TYPES[extension] ?? 'application/octet-stream',
       'Content-Security-Policy':
-        "default-src 'self' data: blob:; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' data:; worker-src 'self'; form-action 'none'; frame-src 'self' data: blob:; object-src 'none'; base-uri 'self'",
+        "default-src 'self' data: blob:; connect-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline' data:; worker-src 'self' blob:; form-action 'none'; frame-src 'self' data: blob:; object-src 'none'; base-uri 'self'",
       'Referrer-Policy': 'same-origin',
       'X-Content-Type-Options': 'nosniff',
     });
@@ -213,7 +259,21 @@ export const createLocalHtmlPreview = async (
   workingDirectory?: string,
 ): Promise<BrowserLocalHtmlPreviewResult> => {
   try {
-    const resolvedPath = path.resolve(workingDirectory?.trim() || process.cwd(), filePath);
+    const trimmedPath = filePath.trim();
+    if (isWindowsNetworkOrDevicePath(trimmedPath)) {
+      return { success: false, errorCode: 'invalid_source' };
+    }
+    let resolvedPath: string;
+    if (/^file:/iu.test(trimmedPath)) {
+      const fileUrl = new URL(trimmedPath);
+      if (fileUrl.hostname) return { success: false, errorCode: 'invalid_source' };
+      resolvedPath = fileURLToPath(fileUrl);
+    } else {
+      resolvedPath = path.resolve(workingDirectory?.trim() || process.cwd(), trimmedPath);
+    }
+    if (isWindowsNetworkOrDevicePath(resolvedPath)) {
+      return { success: false, errorCode: 'invalid_source' };
+    }
     if (!HTML_EXTENSIONS.has(path.extname(resolvedPath).toLowerCase())) {
       return { success: false, errorCode: 'invalid_type' };
     }
