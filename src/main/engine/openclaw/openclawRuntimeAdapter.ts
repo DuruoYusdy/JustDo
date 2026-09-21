@@ -3918,6 +3918,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private async handleGatewayReady(generation: number): Promise<void> {
     await this.subscribeGatewaySessions();
+    if (generation === this.gatewayClientGeneration) this.emit('gatewayReady');
     await this.recoverActiveGoals(generation, {
       stopGoalsCreatedBeforeMs: this.initialGatewayGoalRecoveryPending
         ? this.appStartedAtMs

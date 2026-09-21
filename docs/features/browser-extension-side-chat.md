@@ -30,7 +30,9 @@ OpenClaw 自带扩展定位为浏览器自动化基础设施，没有 prompt box
 会话 Agent 获取运行时可选项；当前会话、主 Agent 和其他已启用 Agent 的已存模型只作为 Gateway
 启动或重连期间的兜底，不能再把“已分配给 Agent 的模型”误当成完整模型目录。
 消息正文使用扩展内置的 `markdown-it` 离线 bundle 渲染；原始 HTML 被禁用，安全链接在外部标签页打开，
-不从 CDN 加载脚本。连续 Thinking/Tool 默认压缩成 `Thinking × M · Tool × N`，展开后每个 Tool
+不从 CDN 加载脚本。连续 Thinking/Tool 按 `Thinking × M · Tool × N` 分组；历史记录默认折叠，
+实时 Thinking 自动展开，Thinking 结束后自动收起。用户手动展开或收起优先，后续同组更新保留选择。
+右上角刷新与配对设置统一使用 32px 点击区域、19px SVG 图标，窄侧栏仍同时显示。展开后每个 Tool
 仍独立折叠；Tool 折叠行与桌面端保持“状态点 + 工具名 + 单行 Input 摘要”的结构，摘要压缩空白并在
 160 字符处截断，完整 Input、Output 或 Error 只在展开后显示。
 
@@ -87,6 +89,63 @@ ChatGPT 扩展可先发送轻量 tab 状态，再由 Agent 调用 `getTabContext
 
 ## 4. 当前兼容面与后续
 
-当前 app-server 支持 `initialize`/`initialized` 握手、`thread/list`、`thread/read`、`thread/start`、`thread/unsubscribe`、`composer/options`、`turn/start`、`turn/interrupt`，以及 `thread/started`、`thread/updated`、`turn/started`、`turn/completed` 通知。Main 目前从 Gateway 权威状态合成通知；扩展本身不再轮询。
+当前 app-server 支持 `initialize`/`initialized` 握手、`thread/list`、`thread/read`、`thread/start`、`thread/unsubscribe`、`composer/options`、`turn/start`、`turn/interrupt`，以及 `thread/started`、`thread/updated`、`thread/stream`、`turn/started`、`turn/completed` 通知。Main 直接转发 Gateway 实时生成事件，历史轮询只负责快照校准和运行结束判定；扩展本身不轮询。
 
-后续工作包括完整的增量 content/tool/approval 事件、右键菜单、tab mentions、YouTube transcript、Edge/Brave/Vivaldi 验证，以及 Chrome Web Store 的签名、升级和发布流程。打包验收必须覆盖 Native Messaging 注册、应用未启动时的拉起、并发 ensure、断线重连与卸载清理。开发验收还应覆盖动态 Vite 端口写入、工具栏直达对话和设置按钮进入配对页。
+### 流式输出
+
+过去的 500ms 是 Main 查询历史的间隔，不是模型输出推送间隔。尚未持久化的 Thinking、Tool 和正文无法通过历史查询读取，因此可能直到整段生成结束才出现。现在 `thread/read`、`thread/start` 和 `turn/start` 会在历史读取或执行之前建立实时订阅；Main 监听 Runtime 的 `gatewayEvent`，按精确 session key（允许 managed key 的规范别名）过滤，不把子会话事件当作父会话事件。
+
+```mermaid
+sequenceDiagram
+  participant E as Extension
+  participant M as Main app-server
+  participant G as OpenClaw Gateway
+  E->>M: thread/read / thread/start
+  M->>G: sessions.messages.subscribe
+  M->>G: history snapshot
+  E->>M: turn/start
+  G-->>M: agent / session.tool / chat
+  M-->>E: thread/stream
+  Note over E: 与桌面共享 reducer，合并刷新间隔 40ms
+  M->>G: history + runtime status（兜底）
+  M-->>E: thread/updated
+  M-->>E: turn/completed
+  E->>M: thread/read（最终校准）
+```
+
+`thread/stream` 是 JustDo 的 app-server 扩展通知，使用现有 JSON-RPC envelope，**不是声明与 Codex 原生流式通知字段完全兼容**。示例：
+
+```json
+{
+  "method": "thread/stream",
+  "params": {
+    "threadId": "local-session-id",
+    "kind": "agent",
+    "event": {
+      "runId": "gateway-run-id",
+      "sessionKey": "agent:main:justdo:local-session-id",
+      "sessionId": null,
+      "lifecycleGeneration": null,
+      "agentId": "main",
+      "spawnedBy": null,
+      "agentSeq": 12,
+      "frameSeq": 70,
+      "deliveryEvent": "agent",
+      "stream": "assistant",
+      "timestamp": 1750000000000,
+      "data": { "text": "正在增长的累计正文" }
+    }
+  }
+}
+```
+
+- `kind: agent` 携带共享 `NormalizedAgentEvent`；`deliveryEvent` 为 `agent` 或 `session.tool`。正文、Thinking、Tool、preamble 使用桌面同一套 reducer，保留快照/增量区别、每轮 sequence 去重、工具状态和 terminal observation 回滚语义。
+- `kind: chat` 携带共享 `NormalizedChatEvent`：`runId`、`sessionKey`、`sessionId`、`lifecycleGeneration`、`frameSeq`、`state`、可选 `message`/`deltaText`/`errorMessage` 与 `replace`。Agent 正文已接管时忽略同轮 `chat.delta`，避免双通道重复追加。单次尝试的 `chat.error` 不决定整个产品运行失败，仍由权威 `turn/completed` 显示最终错误。
+- 同一 thread 的多个面板共享一份 Gateway 订阅；取消订阅或断开最后一个面板后释放。Gateway 连接重新就绪时恢复订阅。app-server 停止时清理所有监听器；重连后通过 `thread/read` 重建订阅并校准历史。
+- Main 不维护新的 transcript cache。扩展只维护最多 8 个会话的临时 UI 投影；持久历史仍由 OpenClaw 管理。运行中旧快照不能回退 live tail；结束后完整历史接管，停止时未落盘的部分文字暂时保留，直到权威历史包含它。
+- 历史与实时消息按 Tool 调用身份及工具之间的文字段对齐；中途接入时保留已知工具参数和终态，不因相同文字前缀删除早先工具或正文。控制回复、心跳及通用失败占位按客户端规则过滤，截断的 final 只结束状态、不覆盖完整流式正文。
+- 同会话的并发刷新不能相互取消订阅；完成状态由下一次成功的权威历史读取接管，失败刷新保留实时显示。最终快照允许重定位历史压缩后的 turn，避免旧 ordinal 阻止校准；乐观发送到持久化使用稳定显示身份，保留展开状态。
+- Markdown 按最多每 40ms 一批更新；不变的消息 DOM 复用。保留用户滚动位置、Thinking/Tool 分组和工具详情的展开状态。正文显示速度受上游真实事件节奏影响，不用逐字动画伪装流式输出。
+- 生成的 `modules/sidepanel-stream.js` 来自 `npm run browser-extension:build-stream`，打包浏览器可用的桌面 reducer，不加载 Node/Electron、不从 CDN 拉取代码。修改 reducer 后需重新生成，并运行流式投影、WebSocket 链路和 DOM 回归测试。OpenClaw pairing/relay 基线不参与这些改动。
+
+后续工作包括扩展内的 approval 交互、右键菜单、tab mentions、YouTube transcript、Edge/Brave/Vivaldi 验证，以及 Chrome Web Store 的签名、升级和发布流程；正文、Thinking 与 Tool 的实时输出已实现。打包验收必须覆盖 Native Messaging 注册、应用未启动时的拉起、并发 ensure、断线重连与卸载清理。开发验收还应覆盖动态 Vite 端口写入、工具栏直达对话和设置按钮进入配对页。

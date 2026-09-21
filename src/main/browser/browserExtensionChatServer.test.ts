@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 
+import { BrowserExtensionStream } from '../../renderer/libs/openclaw-chat/model/browser-extension-stream';
+import type { BrowserExtensionStreamEvent } from '../../shared/browserExtensionStream';
 import {
   BROWSER_EXTENSION_ID,
   type BrowserExtensionChatApi,
@@ -11,6 +13,7 @@ const token = 'a'.repeat(64);
 let server: BrowserExtensionChatServer | null = null;
 
 const createApi = (): BrowserExtensionChatApi => ({
+  subscribeThreadEvents: vi.fn(async () => () => {}),
   listSessions: vi.fn(() => [
     {
       createdAt: 1_000,
@@ -74,6 +77,139 @@ afterEach(async () => {
 });
 
 describe('BrowserExtensionChatServer', () => {
+  it('delivers and projects text before the send acknowledgement or persisted assistant reply', async () => {
+    const api = createApi();
+    let emit: (event: BrowserExtensionStreamEvent) => void = () => {
+      throw new Error('Not subscribed');
+    };
+    const dispose = vi.fn();
+    vi.mocked(api.subscribeThreadEvents).mockImplementation(async (_id, listener) => {
+      emit = listener;
+      return dispose;
+    });
+    vi.mocked(api.getMessages).mockResolvedValue([{ role: 'user', text: 'Question' }]);
+    vi.mocked(api.getThreadRuntimeStatus).mockResolvedValue({ known: true, running: true });
+    vi.mocked(api.sendMessage).mockImplementation(async () => {
+      emit({
+        kind: 'agent',
+        event: {
+          sessionKey: 'agent:main:justdo:one',
+          sessionId: null,
+          runId: 'run-1',
+          agentSeq: 1,
+          frameSeq: 1,
+          lifecycleGeneration: null,
+          agentId: 'main',
+          spawnedBy: null,
+          deliveryEvent: 'agent',
+          stream: 'assistant',
+          timestamp: 1,
+          data: { text: 'First words' },
+        },
+      });
+      return { sessionId: 'one', runId: 'run-1' };
+    });
+    server = new BrowserExtensionChatServer(api, token, '1.0.0');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    await request(socket, 'init', 'initialize');
+    socket.send(JSON.stringify({ method: 'initialized' }));
+    const view = new BrowserExtensionStream('one');
+    view.start('Question');
+    const received: string[] = [];
+    socket.on('message', data => {
+      const value = JSON.parse(data.toString());
+      received.push(value.method ?? value.id);
+      if (value.method === 'thread/stream') view.accept(value.params);
+      if (value.method === 'thread/updated') view.setHistory(value.params.thread);
+    });
+    await request(socket, 'send', 'turn/start', { threadId: 'one', message: 'Question' });
+    expect(received.indexOf('thread/stream')).toBeLessThan(received.indexOf('send'));
+    expect(view.project().turns[0].items).toMatchObject([
+      { type: 'userMessage' },
+      { type: 'agentMessage', text: 'First words' },
+    ]);
+    expect(await api.getMessages('one')).toEqual([{ role: 'user', text: 'Question' }]);
+    await request(socket, 'unsubscribe', 'thread/unsubscribe', { threadId: 'one' });
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+  });
+
+  it('shares a stream between panels and releases it after the last panel leaves', async () => {
+    const api = createApi();
+    const dispose = vi.fn();
+    vi.mocked(api.subscribeThreadEvents).mockResolvedValue(dispose);
+    server = new BrowserExtensionChatServer(api, token, '1.0.0');
+    await server.start();
+    const a = await connect(server.getCapability().localAppServerUrl);
+    const b = await connect(server.getCapability().localAppServerUrl);
+    for (const socket of [a, b]) {
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      await request(socket, 'read', 'thread/read', { threadId: 'one', includeTurns: true });
+    }
+    expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1);
+    await request(a, 'leave', 'thread/unsubscribe', { threadId: 'one' });
+    expect(dispose).not.toHaveBeenCalled();
+    b.close();
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+  });
+  it('releases a pending subscription after its panel disconnects', async () => {
+    const api = createApi();
+    const dispose = vi.fn();
+    let resolveSubscription!: (dispose: () => void) => void;
+    vi.mocked(api.subscribeThreadEvents).mockReturnValue(
+      new Promise(resolve => {
+        resolveSubscription = resolve;
+      }),
+    );
+    server = new BrowserExtensionChatServer(api, token, '1.0.0');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    await request(socket, 'init', 'initialize');
+    socket.send(JSON.stringify({ method: 'initialized' }));
+    socket.send(JSON.stringify({ id: 'read', method: 'thread/read', params: { threadId: 'one' } }));
+    await vi.waitFor(() => expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1));
+    const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
+    socket.close();
+    await closed;
+    resolveSubscription(dispose);
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+    expect(api.getMessages).not.toHaveBeenCalled();
+  });
+
+  it('keeps a pending subscription for a replacement panel after the first disconnects', async () => {
+    const api = createApi();
+    const dispose = vi.fn();
+    let resolveSubscription!: (dispose: () => void) => void;
+    vi.mocked(api.subscribeThreadEvents).mockReturnValue(
+      new Promise(resolve => {
+        resolveSubscription = resolve;
+      }),
+    );
+    server = new BrowserExtensionChatServer(api, token, '1.0.0');
+    await server.start();
+    const url = server.getCapability().localAppServerUrl;
+    const a = await connect(url);
+    await request(a, 'init', 'initialize');
+    a.send(JSON.stringify({ method: 'initialized' }));
+    a.send(JSON.stringify({ id: 'read', method: 'thread/read', params: { threadId: 'one' } }));
+    await vi.waitFor(() => expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1));
+    const closed = new Promise<void>(resolve => a.once('close', () => resolve()));
+    a.close();
+    await closed;
+    const b = await connect(url);
+    await request(b, 'init', 'initialize');
+    b.send(JSON.stringify({ method: 'initialized' }));
+    const read = request(b, 'read', 'thread/read', { threadId: 'one', includeTurns: true });
+    await vi.waitFor(() => expect(api.listSessions).toHaveBeenCalledTimes(2));
+    resolveSubscription(dispose);
+    await expect(read).resolves.toMatchObject({ result: { thread: { id: 'one' } } });
+    expect(api.subscribeThreadEvents).toHaveBeenCalledTimes(1);
+    expect(dispose).not.toHaveBeenCalled();
+    await request(b, 'leave', 'thread/unsubscribe', { threadId: 'one' });
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+  });
+
   it('requires the fixed extension origin and capability URL', async () => {
     server = new BrowserExtensionChatServer(createApi(), token, '1.0.0');
     await server.start();

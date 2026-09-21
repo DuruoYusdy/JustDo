@@ -94,8 +94,9 @@ header {
   border: 0;
 }
 .icon {
-  width: 31px;
-  height: 31px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border-radius: 9px;
   color: #a8a8a8;
   background: transparent;
@@ -109,23 +110,7 @@ header {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-#settings {
-  width: 34px;
-  height: 34px;
-  border: 1px solid #4a4a4a;
-  color: #f4f4f4;
-  background: #2b2b2b;
-}
-#settings svg {
-  width: 20px;
-  height: 20px;
-  stroke-width: 2;
-}
-#settings:hover {
-  border-color: #686868;
-  background: #3a3a3a;
-}
-#settings:focus-visible {
+.icon:focus-visible {
   outline: 2px solid #8ab4f8;
   outline-offset: 2px;
 }
@@ -596,10 +581,7 @@ footer {
 }
 @media (max-width: 390px) {
   header {
-    grid-template-columns: 62px minmax(0, 1fr) 62px;
-  }
-  #refresh {
-    display: none;
+    grid-template-columns: 66px minmax(0, 1fr) 66px;
   }
   .model-control select {
     width: 100%;

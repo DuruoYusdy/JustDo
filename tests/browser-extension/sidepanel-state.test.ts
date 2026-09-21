@@ -84,8 +84,15 @@ describe('browser extension side panel state', () => {
         role: 'process',
         key: 'turn-process-0',
         title: 'Thinking × 1 · Tool × 1',
+        running: false,
         items: [
-          { id: undefined, type: 'thinking', text: 'Check the file.', title: 'Thinking' },
+          {
+            id: undefined,
+            type: 'thinking',
+            text: 'Check the file.',
+            title: 'Thinking',
+            status: undefined,
+          },
           {
             id: undefined,
             type: 'tool',
@@ -135,7 +142,7 @@ describe('browser extension side panel state', () => {
       ]),
     );
 
-    expect(first[0].key).toBe('thinking-1');
-    expect(updated[0].key).toBe('thinking-1');
+    expect(first[0].key).toBe('turn-1-process-0');
+    expect(updated[0].key).toBe('turn-1-process-0');
   });
 });

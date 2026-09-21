@@ -3,6 +3,10 @@ import { createServer, type Server } from 'node:http';
 
 import { WebSocket, WebSocketServer } from 'ws';
 
+import {
+  BROWSER_EXTENSION_STREAM_METHOD,
+  type BrowserExtensionStreamEvent,
+} from '../../shared/browserExtensionStream';
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import type { PermissionMode } from '../../shared/openclaw/approvals';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
@@ -59,6 +63,10 @@ export interface BrowserExtensionTurnResult {
 }
 
 export interface BrowserExtensionChatApi {
+  subscribeThreadEvents: (
+    sessionId: string,
+    listener: (event: BrowserExtensionStreamEvent) => void,
+  ) => Promise<() => void>;
   listSessions: () => Promise<BrowserExtensionThread[]> | BrowserExtensionThread[];
   getMessages: (
     sessionId: string,
@@ -285,6 +293,7 @@ export class BrowserExtensionChatServer {
   private readonly initializeRequestedConnections = new WeakSet<WebSocket>();
   private readonly notificationOptOut = new WeakMap<WebSocket, Set<string>>();
   private readonly subscriptions = new WeakMap<WebSocket, Set<string>>();
+  private readonly streamSubscriptions = new Map<string, Promise<() => void>>();
   private readonly pollStates = new Map<
     string,
     {
@@ -347,6 +356,11 @@ export class BrowserExtensionChatServer {
       });
     });
     webSocketServer.on('connection', connection => {
+      connection.on('close', () => {
+        const threads = this.subscriptions.get(connection);
+        this.subscriptions.delete(connection);
+        for (const threadId of threads ?? []) this.releaseStream(threadId);
+      });
       connection.on('error', () => {
         // Invalid frames and abrupt local disconnects must not become uncaught Main errors.
       });
@@ -374,6 +388,14 @@ export class BrowserExtensionChatServer {
   }
 
   async stop(options: { preserveActiveTurns?: boolean } = {}): Promise<void> {
+    const webSocketServer = this.webSocketServer;
+    const server = this.server;
+    this.webSocketServer = null;
+    this.server = null;
+    this.boundPort = null;
+    webSocketServer?.clients.forEach(client => client.terminate());
+    const streams = [...this.streamSubscriptions.values()];
+    this.streamSubscriptions.clear();
     for (const state of this.pollStates.values()) {
       if (state.timer) clearTimeout(state.timer);
       state.timer = null;
@@ -382,12 +404,14 @@ export class BrowserExtensionChatServer {
     if (!options.preserveActiveTurns) {
       this.pollStates.clear();
     }
-    const webSocketServer = this.webSocketServer;
-    const server = this.server;
-    this.webSocketServer = null;
-    this.server = null;
-    this.boundPort = null;
-    webSocketServer?.clients.forEach(client => client.terminate());
+    await Promise.all(
+      streams.map(stream =>
+        stream.then(
+          dispose => dispose(),
+          (): void => {},
+        ),
+      ),
+    );
     await new Promise<void>(resolve => webSocketServer?.close(() => resolve()) ?? resolve());
     await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve());
   }
@@ -412,6 +436,55 @@ export class BrowserExtensionChatServer {
         this.send(connection, { method, params });
       }
     });
+  }
+
+  private async subscribeStream(connection: WebSocket, threadId: string): Promise<void> {
+    if (!this.webSocketServer || connection.readyState !== WebSocket.OPEN)
+      throw new Error('Connection closed.');
+    const subscriptions = this.subscriptions.get(connection) ?? new Set<string>();
+    subscriptions.add(threadId);
+    this.subscriptions.set(connection, subscriptions);
+    let stream = this.streamSubscriptions.get(threadId);
+    if (!stream) {
+      stream = this.api.subscribeThreadEvents(threadId, event => {
+        this.broadcast(BROWSER_EXTENSION_STREAM_METHOD, { threadId, ...event }, threadId);
+      });
+      this.streamSubscriptions.set(threadId, stream);
+    }
+    try {
+      await stream;
+    } catch (error) {
+      if (this.streamSubscriptions.get(threadId) === stream)
+        this.streamSubscriptions.delete(threadId);
+      subscriptions.delete(threadId);
+      throw error;
+    }
+    if (connection.readyState !== WebSocket.OPEN) {
+      subscriptions.delete(threadId);
+      this.releaseStream(threadId);
+      throw new Error('Connection closed.');
+    }
+  }
+
+  private releaseStream(threadId: string): void {
+    const stream = this.streamSubscriptions.get(threadId);
+    if (!stream) return;
+    void stream.then(
+      dispose => {
+        if (this.streamSubscriptions.get(threadId) !== stream) return;
+        if (
+          [...(this.webSocketServer?.clients ?? [])].some(
+            connection =>
+              connection.readyState === WebSocket.OPEN &&
+              this.subscriptions.get(connection)?.has(threadId),
+          )
+        )
+          return;
+        this.streamSubscriptions.delete(threadId);
+        dispose();
+      },
+      () => {},
+    );
   }
 
   private async handleMessage(connection: WebSocket, raw: string): Promise<void> {
@@ -521,22 +594,18 @@ export class BrowserExtensionChatServer {
         if (!threadId) throw new Error('threadId is required.');
         const thread = (await this.api.listSessions()).find(candidate => candidate.id === threadId);
         if (!thread) throw new Error('Thread not found.');
+        await this.subscribeStream(connection, threadId);
         const messages =
           params.includeTurns === true
             ? await this.api.getMessages(threadId, { forceFullSnapshot: true })
             : undefined;
-        const subscriptions = this.subscriptions.get(connection) ?? new Set<string>();
-        subscriptions.add(threadId);
-        this.subscriptions.set(connection, subscriptions);
         return { thread: toAppServerThread(thread, messages) };
       }
       case 'thread/start': {
         const title = typeof params.title === 'string' ? params.title : undefined;
         const thread = await this.api.startThread(title);
         const appServerThread = toAppServerThread(thread);
-        const subscriptions = this.subscriptions.get(connection) ?? new Set<string>();
-        subscriptions.add(thread.id);
-        this.subscriptions.set(connection, subscriptions);
+        await this.subscribeStream(connection, thread.id);
         this.broadcast('thread/started', { thread: appServerThread }, thread.id);
         return { instructionSources: [], thread: appServerThread };
       }
@@ -548,10 +617,11 @@ export class BrowserExtensionChatServer {
         const threadId = typeof params.threadId === 'string' ? params.threadId : '';
         const subscriptions = this.subscriptions.get(connection);
         const removed = threadId ? subscriptions?.delete(threadId) === true : false;
+        if (threadId) this.releaseStream(threadId);
         return { status: removed ? 'unsubscribed' : 'notSubscribed' };
       }
       case 'turn/start': {
-        const threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
+        let threadId = typeof params.threadId === 'string' ? params.threadId : undefined;
         const message = extractTurnText(params);
         const pageContext = isRecord(params.pageContext)
           ? (params.pageContext as BrowserExtensionPageContext)
@@ -571,6 +641,8 @@ export class BrowserExtensionChatServer {
         const permissionMode = params.permissionMode as PermissionMode | undefined;
         const modelRef = typeof params.modelRef === 'string' ? params.modelRef : undefined;
         if (!message.trim()) throw new Error('Turn input is required.');
+        if (!threadId) threadId = (await this.api.startThread(message.slice(0, 50))).id;
+        await this.subscribeStream(connection, threadId);
         const baselineMessages = threadId ? await this.api.getMessages(threadId) : [];
         const turn = await this.api.sendMessage({
           attachments,

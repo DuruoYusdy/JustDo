@@ -50,6 +50,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/conversation-client.js',
   'modules/sidepanel-markdown.js',
   'modules/sidepanel-state.js',
+  'modules/sidepanel-stream.js',
   'sidepanel.css',
   'sidepanel.html',
   'sidepanel.js',

@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
+import type { BrowserExtensionStreamEvent } from '../../shared/browserExtensionStream';
 import { parseCoworkAttachments } from '../../shared/cowork/attachments';
+import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
 import { isPermissionMode, resolvePermissionMode } from '../../shared/openclaw/approvals';
+import { normalizeMessageSessionKey } from '../../shared/openclaw/messageDomain';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { resolveTaskWorkingDirectory } from '../core/taskWorkspace';
 import type { CoworkStore } from '../data/coworkStore';
 import type { CoworkEngineRouter } from '../engine';
+import type { GatewayEventFrame } from '../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
 import type { OpenClawEngineStatus } from '../openclaw/runtime/openclawEngineManager';
 import type { GatewayHistoryEntry } from '../openclaw/sessions/openclawHistory';
@@ -177,6 +181,72 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
   };
 
   constructor(private readonly deps: BrowserExtensionChatControllerDependencies) {}
+
+  async subscribeThreadEvents(
+    sessionId: string,
+    listener: (event: BrowserExtensionStreamEvent) => void,
+  ): Promise<() => void> {
+    if (!this.deps.getStore().getSession(sessionId)) throw new Error('Conversation not found.');
+    await this.deps.ensureEngineRunning();
+    const runtime = this.deps.getRuntime();
+    if (!runtime) throw new Error('OpenClaw runtime is unavailable.');
+    await runtime.ensureReady();
+    const keys = runtime.getSessionKeysForSession(sessionId);
+    const identities = new Set(keys.map(normalizeMessageSessionKey));
+    const handle = (frame: GatewayEventFrame) => {
+      let value: BrowserExtensionStreamEvent;
+      if (frame.event === 'agent' || frame.event === 'session.tool') {
+        const event = normalizeAgentEvent({
+          deliveryEvent: frame.event,
+          payload: frame.payload,
+          frameSeq: frame.seq,
+        }).event;
+        if (!event) return;
+        value = { kind: 'agent', event };
+      } else if (frame.event === 'chat') {
+        const event = normalizeChatEvent({ payload: frame.payload, frameSeq: frame.seq });
+        if (!event) return;
+        value = { kind: 'chat', event };
+      } else return;
+      // Never infer ownership from a missing key or from a child session suffix.
+      if (
+        !value.event.sessionKey ||
+        !identities.has(normalizeMessageSessionKey(value.event.sessionKey))
+      )
+        return;
+      listener(value);
+    };
+    let disposed = false;
+    const subscribe = async () => {
+      for (const key of keys) {
+        if (disposed) return;
+        await runtime.requestGateway('sessions.messages.subscribe', { key });
+      }
+    };
+    const reconnect = () => {
+      void subscribe().catch(() => {});
+    };
+    runtime.on('gatewayEvent', handle);
+    runtime.on('gatewayReady', reconnect);
+    try {
+      await subscribe();
+    } catch (error) {
+      disposed = true;
+      runtime.off('gatewayEvent', handle);
+      runtime.off('gatewayReady', reconnect);
+      for (const key of keys)
+        void runtime.requestGateway('sessions.messages.unsubscribe', { key }).catch(() => {});
+      throw error;
+    }
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      runtime.off('gatewayEvent', handle);
+      runtime.off('gatewayReady', reconnect);
+      for (const key of keys)
+        void runtime.requestGateway('sessions.messages.unsubscribe', { key }).catch(() => {});
+    };
+  }
 
   consumeTurnError(sessionId: string, runId: string): string | undefined {
     const error = this.completedTurnErrors.get(runId);

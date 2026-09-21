@@ -128,8 +128,9 @@ export function messagesFromThread(thread) {
       ].join(' · ');
       entries.push({
         role: 'process',
-        key: processes[0]?.id || `${turn.id || 'turn'}-process-${processSegment}`,
+        key: `${turn.id || 'turn'}-process-${processSegment}`,
         title,
+        running: processes.some(item => item.type === 'thinking' && item.status === 'running'),
         items: processes,
       });
       processSegment += 1;
@@ -153,10 +154,17 @@ export function messagesFromThread(thread) {
         const text = [...(item.summary ?? []), ...(item.content ?? [])]
           .filter(value => typeof value === 'string' && value)
           .join('\n');
-        if (text) processes.push({ id: item.id, type: 'thinking', text, title: 'Thinking' });
+        if (text)
+          processes.push({
+            id: item.id,
+            type: 'thinking',
+            text,
+            title: 'Thinking',
+            status: item.status,
+          });
       } else if (item.type === 'toolCall') {
         processes.push({
-          id: item.id,
+          id: item.toolUseId || item.id,
           type: 'tool',
           title: toolDisplayTitle(item.toolName),
           input: formatSidePanelValue(item.input),

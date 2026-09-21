@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -57,6 +59,161 @@ describe('buildBrowserExtensionContext', () => {
 });
 
 describe('BrowserExtensionChatController', () => {
+  it('subscribes to native live events, isolates sessions and releases listeners', async () => {
+    const runtime = Object.assign(new EventEmitter(), {
+      ensureReady: vi.fn(async () => {}),
+      getSessionKeysForSession: () => ['agent:main:justdo:one'],
+      requestGateway: vi.fn(async () => ({})),
+    });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () => runtime as never,
+      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+    });
+    const listener = vi.fn();
+    const dispose = await controller.subscribeThreadEvents('one', listener);
+    expect(runtime.requestGateway).toHaveBeenCalledWith('sessions.messages.subscribe', {
+      key: 'agent:main:justdo:one',
+    });
+    for (const sessionKey of [
+      'agent:main:justdo:other',
+      'agent:main:justdo:one:child',
+      undefined,
+      'justdo:one',
+    ]) {
+      runtime.emit('gatewayEvent', {
+        event: 'agent',
+        payload: {
+          sessionKey,
+          runId: 'run',
+          seq: 1,
+          stream: 'assistant',
+          data: { text: 'Growing reply' },
+        },
+      });
+    }
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'agent',
+        event: expect.objectContaining({ data: { text: 'Growing reply' } }),
+      }),
+    );
+    runtime.emit('gatewayReady');
+    await Promise.resolve();
+    expect(runtime.requestGateway).toHaveBeenCalledTimes(2);
+    dispose();
+    dispose();
+    expect(runtime.listenerCount('gatewayEvent')).toBe(0);
+    expect(runtime.listenerCount('gatewayReady')).toBe(0);
+    expect(runtime.requestGateway).toHaveBeenLastCalledWith('sessions.messages.unsubscribe', {
+      key: 'agent:main:justdo:one',
+    });
+  });
+
+  it('does not resume subscribing aliases after disposal during Gateway reconnect', async () => {
+    const runtime = Object.assign(new EventEmitter(), {
+      ensureReady: vi.fn(async () => {}),
+      getSessionKeysForSession: () => ['agent:main:justdo:one', 'justdo:one'],
+      requestGateway: vi.fn(async () => ({})),
+    });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () => runtime as never,
+      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+    });
+    const dispose = await controller.subscribeThreadEvents('one', vi.fn());
+    let resolveReconnect!: (value: object) => void;
+    runtime.requestGateway.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveReconnect = resolve;
+        }),
+    );
+    runtime.emit('gatewayReady');
+    dispose();
+    resolveReconnect({});
+    await Promise.resolve();
+    await Promise.resolve();
+    runtime.emit('gatewayReady');
+    expect(runtime.requestGateway.mock.calls).toEqual([
+      ['sessions.messages.subscribe', { key: 'agent:main:justdo:one' }],
+      ['sessions.messages.subscribe', { key: 'justdo:one' }],
+      ['sessions.messages.subscribe', { key: 'agent:main:justdo:one' }],
+      ['sessions.messages.unsubscribe', { key: 'agent:main:justdo:one' }],
+      ['sessions.messages.unsubscribe', { key: 'justdo:one' }],
+    ]);
+    expect(runtime.listenerCount('gatewayEvent')).toBe(0);
+    expect(runtime.listenerCount('gatewayReady')).toBe(0);
+  });
+
+  it('cancels an overlapping Gateway-ready subscription after initial setup fails', async () => {
+    let rejectInitial!: (error: Error) => void;
+    let resolveReconnect!: (value: object) => void;
+    const runtime = Object.assign(new EventEmitter(), {
+      ensureReady: vi.fn(async () => {}),
+      getSessionKeysForSession: () => ['agent:main:justdo:one', 'justdo:one'],
+      requestGateway: vi
+        .fn(async () => ({}))
+        .mockImplementationOnce(
+          () =>
+            new Promise((_resolve, reject) => {
+              rejectInitial = reject;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveReconnect = resolve;
+            }),
+        ),
+    });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () => runtime as never,
+      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+    });
+    const subscribing = controller.subscribeThreadEvents('one', vi.fn());
+    const rejected = expect(subscribing).rejects.toThrow('Disconnected');
+    await vi.waitFor(() => expect(runtime.requestGateway).toHaveBeenCalledTimes(1));
+    runtime.emit('gatewayReady');
+    rejectInitial(new Error('Disconnected'));
+    await rejected;
+    resolveReconnect({});
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runtime.requestGateway.mock.calls).toEqual([
+      ['sessions.messages.subscribe', { key: 'agent:main:justdo:one' }],
+      ['sessions.messages.subscribe', { key: 'agent:main:justdo:one' }],
+      ['sessions.messages.unsubscribe', { key: 'agent:main:justdo:one' }],
+      ['sessions.messages.unsubscribe', { key: 'justdo:one' }],
+    ]);
+    expect(runtime.listenerCount('gatewayEvent')).toBe(0);
+    expect(runtime.listenerCount('gatewayReady')).toBe(0);
+  });
+
+  it('cleans up a failed live subscription', async () => {
+    const runtime = Object.assign(new EventEmitter(), {
+      ensureReady: vi.fn(async () => {}),
+      getSessionKeysForSession: () => ['agent:main:justdo:one'],
+      requestGateway: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Disconnected'))
+        .mockResolvedValue({}),
+    });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () => runtime as never,
+      getStore: () => ({ getSession: () => ({ id: 'one' }) }) as never,
+    });
+    await expect(controller.subscribeThreadEvents('one', vi.fn())).rejects.toThrow('Disconnected');
+    expect(runtime.listenerCount('gatewayEvent')).toBe(0);
+    expect(runtime.listenerCount('gatewayReady')).toBe(0);
+  });
   it('falls back to stored agent models and the effective composer permission', async () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),

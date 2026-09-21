@@ -75,6 +75,7 @@
     "openclaw:plugins": "node scripts/ensure-openclaw-plugins.cjs",
     "browser-extension:prepare": "node scripts/prepare-browser-extension.cjs",
     "browser-extension:build-markdown": "node scripts/build-browser-extension-markdown.cjs",
+    "browser-extension:build-stream": "node scripts/build-browser-extension-stream.cjs",
     "browser-extension:prepare-dev-host": "node scripts/prepare-browser-extension-dev-host.cjs",
     "openclaw:resources": "node scripts/sync-openclaw-runtime-resources.cjs",
     "openclaw:bundle": "node scripts/bundle-openclaw-gateway.cjs",

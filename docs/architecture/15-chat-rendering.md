@@ -20,6 +20,8 @@ Cowork 主工作区在桌面宽度下固定为左侧对话、右侧显示区两�
 
 ## 1. 目标与不变量
 
+浏览器扩展的 `conversation-overlay` 也消费实时 Gateway 生成事件：Main 按订阅会话转发规范化的 `agent` / `session.tool` / `chat`，不保存新的 transcript。扩展本地打包复用本章的 `agent-event-reducer`，将活动 turn 投影到 side-panel 的 Thinking/Tool 分组及 Markdown 气泡。历史轮询只做权威校准和终态兜底，不能替代实时输出，也不能覆盖更新的 live tail。具体通知契约、订阅生命周期与构建方式见 [浏览器扩展对话](../features/browser-extension-side-chat.md#流式输出)。
+
 附加会话的 `session.tool` 与普通 Agent 事件可能交错到达。工具详情允许按工具调用身份补入较早的 sequence，仍保留每个工具的去重与终态保护；终态后晚到的 start 只能补齐缺失参数，不能覆盖结果、状态或回退工具 sequence。运行活动的 sequence 比较限定在同一 run，补入不回退当前运行活动，新 run 从低 sequence 开始仍正常显示。历史中，用户续跑后的新 assistant run 可将旧 run 缺失结果的工具显示为中断，不伪造执行结果；同一轮中的子助手通知不结束等待中的工具。
 
 - Gateway transcript/history 是持久消息权威。

@@ -7,6 +7,7 @@ import {
   toolInputSummary,
 } from './modules/sidepanel-state.js';
 import { renderMarkdownHtml } from './modules/sidepanel-markdown.js';
+import { BrowserExtensionStream } from './modules/sidepanel-stream.js';
 
 const sessionSelect = document.getElementById('session');
 const messages = document.getElementById('messages');
@@ -33,11 +34,45 @@ let refreshGeneration = 0;
 let currentEntries = [];
 let pendingUserMessage = null;
 let subscribedThreadId = '';
+const streamViews = new Map();
+const pendingCompletions = new Map();
+let streamRenderTimer = null;
+
+function streamView(threadId) {
+  if (!streamViews.has(threadId)) {
+    // Keep only a bounded set of temporary UI projections.
+    if (streamViews.size >= 8) {
+      const oldest = streamViews.keys().next().value;
+      streamViews.delete(oldest);
+      pendingCompletions.delete(oldest);
+    }
+    streamViews.set(threadId, new BrowserExtensionStream(threadId));
+  }
+  return streamViews.get(threadId);
+}
+
+function renderHistory(thread) {
+  const view = streamView(thread.id);
+  view.setHistory(thread);
+  renderThreadMessages(messagesFromThread(view.project()), thread.id);
+}
 
 const MAX_ATTACHMENT_COUNT = 5;
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 const client = new AppServerClient((method, params) => {
+  if (method === 'thread/stream') {
+    if (!streamView(params.threadId).accept(params)) return;
+    if (params.threadId !== sessionSelect.value) return;
+    if (streamRenderTimer === null) {
+      streamRenderTimer = setTimeout(() => {
+        streamRenderTimer = null;
+        const threadId = sessionSelect.value;
+        if (threadId)
+          renderThreadMessages(messagesFromThread(streamView(threadId).project()), threadId);
+      }, 40);
+    }
+  }
   if (method === 'connection/closed') {
     refreshGeneration += 1;
     setRunningTurn('', '');
@@ -45,25 +80,27 @@ const client = new AppServerClient((method, params) => {
     errorLine.textContent = 'Disconnected from __PRODUCT_NAME__. Reconnecting…';
     errorLine.classList.remove('hidden');
   }
-  if (method === 'connection/reconnected') void refreshAll(sessionSelect.value);
+  if (method === 'connection/reconnected') {
+    // Completion may have happened while disconnected. Rehydrate from Gateway
+    // rather than carrying an old running turn into the next run.
+    streamViews.clear();
+    pendingCompletions.clear();
+    void refreshAll(sessionSelect.value);
+  }
   if (method === 'turn/started' && params?.threadId === sessionSelect.value) {
     setRunningTurn(params.threadId, params?.turn?.id);
   }
   if (method === 'thread/updated' && params?.threadId === sessionSelect.value) {
-    renderThreadMessages(messagesFromThread(params.thread), params.threadId);
+    renderHistory(params.thread);
+  }
+  if (method === 'turn/completed' && params?.threadId !== sessionSelect.value) {
+    streamViews.get(params?.threadId)?.finish();
   }
   if (method === 'turn/completed' && params?.threadId === sessionSelect.value) {
     const completedThreadId = params.threadId;
-    const errorMessage = params?.turn?.error?.message;
+    pendingCompletions.set(completedThreadId, params.turn);
     setRunningTurn('', '');
-    void refreshAll(completedThreadId).then(refreshApplied => {
-      if (
-        errorMessage &&
-        shouldShowTurnError(completedThreadId, sessionSelect.value, refreshApplied)
-      ) {
-        showError(errorMessage);
-      }
-    });
+    void refreshAll(completedThreadId);
   }
 });
 
@@ -109,17 +146,18 @@ function renderMessages(entries) {
   const wasEmpty = messages.childElementCount === 0;
   const wasNearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 48;
   const previousScrollTop = messages.scrollTop;
-  const openProcessKeys = new Set(
-    [...messages.querySelectorAll('details.process-cluster[open]')]
-      .map(element => element.dataset.processKey)
-      .filter(Boolean),
+  const processPreferences = new Map(
+    [...messages.querySelectorAll('details.process-cluster')]
+      .filter(element => element.dataset.userOpen !== undefined)
+      .map(element => [element.dataset.processKey, element.dataset.userOpen]),
   );
   const openToolIds = new Set(
     [...messages.querySelectorAll('details.process-tool[open]')]
       .map(element => element.dataset.toolId)
       .filter(Boolean),
   );
-  messages.replaceChildren();
+  const previousNodes = [...messages.children];
+  const nextNodes = [];
   if (!entries.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
@@ -129,17 +167,29 @@ function renderMessages(entries) {
     const title = document.createElement('h1');
     title.textContent = 'What can I help with?';
     empty.append(logo, title);
-    messages.append(empty);
+    messages.replaceChildren(empty);
     return;
   }
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
+    const signature = JSON.stringify(entry);
+    if (previousNodes[index]?.renderSignature === signature) {
+      nextNodes.push(previousNodes[index]);
+      continue;
+    }
     if (entry.role === 'process') {
       const details = document.createElement('details');
       details.className = 'message process-cluster';
       details.dataset.processKey = entry.key;
-      details.open = openProcessKeys.has(entry.key);
+      const preference = processPreferences.get(entry.key);
+      if (preference !== undefined) details.dataset.userOpen = preference;
+      details.open = preference === undefined ? entry.running === true : preference === 'true';
       const summary = document.createElement('summary');
       summary.className = 'process-cluster-title';
+      summary.addEventListener('click', event => {
+        event.preventDefault();
+        details.open = !details.open;
+        details.dataset.userOpen = String(details.open);
+      });
       const icon = document.createElement('span');
       icon.className = 'process-cluster-icon';
       icon.textContent = '⌁';
@@ -202,14 +252,21 @@ function renderMessages(entries) {
         list.append(row);
       }
       details.append(list);
-      messages.append(details);
+      details.renderSignature = signature;
+      nextNodes.push(details);
       continue;
     }
     const item = document.createElement('div');
     item.className = `message ${entry.role} markdown-content`;
     item.innerHTML = renderMarkdownHtml(entry.text);
-    messages.append(item);
+    item.renderSignature = signature;
+    nextNodes.push(item);
   }
+  for (const [index, node] of nextNodes.entries()) {
+    if (messages.children[index] !== node)
+      messages.insertBefore(node, messages.children[index] ?? null);
+  }
+  while (messages.children.length > nextNodes.length) messages.lastElementChild.remove();
   messages.scrollTop = wasEmpty || wasNearBottom ? messages.scrollHeight : previousScrollTop;
 }
 
@@ -301,7 +358,9 @@ async function refreshMessages(threadId, generation) {
   }
   const result = await client.request('thread/read', { includeTurns: true, threadId });
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) {
-    void client.request('thread/unsubscribe', { threadId }).catch(() => {});
+    if (sessionSelect.value !== threadId && subscribedThreadId !== threadId) {
+      void client.request('thread/unsubscribe', { threadId }).catch(() => {});
+    }
     return;
   }
   const previousThreadId = subscribedThreadId;
@@ -309,7 +368,19 @@ async function refreshMessages(threadId, generation) {
   if (previousThreadId && previousThreadId !== threadId) {
     void client.request('thread/unsubscribe', { threadId: previousThreadId }).catch(() => {});
   }
-  renderThreadMessages(messagesFromThread(result.thread), threadId);
+  const completed = pendingCompletions.get(threadId);
+  if (completed) {
+    const view = streamView(threadId);
+    view.setHistory(result.thread, true);
+    view.finish(completed.status === 'interrupted');
+    pendingCompletions.delete(threadId);
+    renderThreadMessages(messagesFromThread(view.project()), threadId);
+    if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true)) {
+      showError(completed.error.message);
+    }
+  } else {
+    renderHistory(result.thread);
+  }
 }
 
 async function refreshAll(preferredSessionId) {
@@ -330,7 +401,7 @@ async function refreshAll(preferredSessionId) {
   } catch (error) {
     if (generation === refreshGeneration) showError(error);
   }
-  return generation === refreshGeneration && sessionSelect.value === preferredSessionId;
+  return false;
 }
 
 function clearAttachments() {
@@ -477,6 +548,7 @@ async function submit() {
       createdThreadId = threadId;
       pendingUserMessage = { threadId, text: message, persistedMatches: 0 };
     }
+    streamView(threadId).start(message);
     const startedTurn = await client.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: message }],
@@ -489,7 +561,12 @@ async function submit() {
     clearAttachments();
     await refreshAll(threadId);
   } catch (error) {
+    const threadId = createdThreadId || sessionSelect.value;
+    if (threadId) streamView(threadId).cancelStart();
     clearPendingUserMessage();
+    if (threadId && threadId === sessionSelect.value) {
+      renderThreadMessages(messagesFromThread(streamView(threadId).project()), threadId);
+    }
     if (!prompt.value) {
       prompt.value = message;
       prompt.dispatchEvent(new Event('input'));
@@ -524,6 +601,8 @@ async function stopCurrentTurn() {
 }
 
 sessionSelect.addEventListener('change', () => {
+  streamViews.delete(sessionSelect.value);
+  pendingCompletions.delete(sessionSelect.value);
   clearAttachments();
   void refreshAll(sessionSelect.value);
 });
