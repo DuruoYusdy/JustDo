@@ -173,7 +173,7 @@ WebSocket URL 携带每次启动随机生成的 256-bit capability，握手还�
 - 右侧工作区使用 Electron `<webview>` 承载真实网页，交互模式下点击、输入、滚动和选择直接进入 guest 页面，不通过截图坐标遥控外部 Chrome。
 - 当前版本暂不迁移到 `WebContentsView`：标注 canvas、元素卡片和评论编辑器需要作为 React DOM 直接覆盖实时网页。`WebContentsView` 不属于 DOM，直接替换会引入额外的 overlay 与跨进程坐标同步。当前实现继续使用受限 guest，不在本轮同时改写显示层与 Agent 控制层。
 - 默认 guest 使用 `persist:justdo-browser`，默认导入 profile 使用独立的 `persist:justdo-browser-imported`，Tool 还可按 OpenClaw profile 命名规则创建 `persist:justdo-browser-profile-<name>`；各 profile 的 Cookie、站点存储与缓存互不混用，来源页创建的弹窗、复制、恢复、标注和页内派生 Tab 必须继承同一 profile。系统/自定义/直连代理偏好同时应用到 default session 与所有已使用的 browser partition；新 partition 在创建真实 Tab 前先完成代理配置，不能让首个请求绕过用户偏好。
-- `will-attach-webview` 把 preload 强制覆盖为有限的检查、viewport、快捷键和凭据确认 bridge，关闭 Node、嵌套 webview 和不安全内容，仅允许 HTTP(S) 与 `about:blank`；request guard 阻止非网页导航，权限请求默认拒绝。下载设置允许选择保存目录并决定是否逐次询问；询问时由 Main 串行显示保存对话框，自动保存时由 Main 分配不覆盖已有文件的路径，两种方式均记录状态；`target=_blank` GET 导航进入受管 guest Tab，无法安全重放的 POST popup 会明确阻止。
+- `will-attach-webview` 把 preload 强制覆盖为有限的检查、viewport、快捷键和凭据确认 bridge，关闭 Node、嵌套 webview 和不安全内容，仅允许 HTTP(S) 与 `about:blank`；request guard 阻止非网页导航。PDF 默认由 Chromium 原生查看器渲染；`application/pdf` 响应头、常见 `.pdf` 与 arXiv 路径只用于识别 PDF 功能，不自动创建 PDF.js 覆盖层。只有用户主动选择兼容查看器时，才以相同 browser partition（保留 Cookie 与代理）读取不超过 64 MiB 的内容交给 PDF.js。兼容模式采用连续页流，仅为视口附近页面建立高分辨率 canvas。只有当前聚焦 guest 的网页全屏与净化后剪贴板写入可直接授权；摄像头、麦克风、定位和通知必须在 Main 原生对话框展示来源并逐次确认，许可在页面或子框架的下一次非同文档导航时清除，其余权限默认拒绝。网站 HTTP Basic/Digest challenge 通过一次性 Renderer 登录框回传给原 guest，不持久化或记录凭据，并在超时、取消、guest 销毁时释放回调。`mailto:`、`tel:`、`sms:`、`magnet:`、`webcal:` 只在 Main 原生确认后交给系统应用。网页右键菜单由 Main 构建，链接新标签继续经过同一 URL 与本地预览 scope 校验，图片另存为复用受管下载链路。下载设置允许选择保存目录并决定是否逐次询问；询问时由 Main 串行显示保存对话框，自动保存时由 Main 分配不覆盖已有文件的路径，两种方式均记录状态；`target=_blank` GET 导航进入受管 guest Tab，无法安全重放的 POST popup 会明确阻止。
 - 检查元素只执行应用内置脚本，脚本只插入经过有限数值化的坐标。返回文本折叠空白并限制长度，不读取表单值、cookie、页面存储或完整 DOM。
 - 普通用户浏览和交互不依赖截图。Agent 显式调用原生兼容的 `screenshot` 时可抓取当前实时 guest 作为 Tool 观察结果，但侧边栏仍显示并操作真实网页。用户完成元素、画笔或矩形标注后会出现评论条，可展开清洗后的 HTML 元素详情、输入或语音录入评论；提交评论时调用 guest `capturePage()`，在 Renderer 内合成标注 PNG，并沿用 20 MB 附件上限。
 - 用户进入画笔、矩形、元素检查、评论或标注合成阶段后，Renderer 会向 Main 标记当前 Tab 正由用户编辑；Agent 只能继续读取快照、文本和诊断，不能导航、点击、输入、上传下载、处理弹窗、切换或关闭页面。所有 Agent 变更操作先由 Main 申请 lease，Renderer 在实时页遮罩提交后显式 ACK，Main 才能执行；`open`、无 Tab 的 `navigate`、focus/close/stop 和 `importprofile` 使用 profile scope 的面板预锁，因此在 ACK 前不会创建、切换或关闭 Tab。首次使用时 Cowork 只挂载无 webview 的空 `BrowserPanel` 来提交锁层，不创建首页或隐藏运行容器。并发调用共享同一 readiness，但单个调用取消不会取消其他等待者；`importprofile` 按实际 `into` profile 加锁。用户锁与 ACK 竞争时用户锁优先。等待下一次 file chooser 的上传和预置弹窗响应会持续持有同一 Tab lease，直至被消费、取消或超时，不能在命令返回后留下无保护的延迟注入窗口。
@@ -181,13 +181,27 @@ WebSocket URL 携带每次启动随机生成的 256-bit capability，握手还�
 - 页面报告始终是不可信数据，加入模型上下文时必须显式标记，不能被解释为用户指令。
 - 浏览器数据导入只允许 Main 进程读取本机 Chromium 系 Profile。Windows 使用当前用户 DPAPI/Chrome 主密钥，macOS 使用对应浏览器的 Keychain Safe Storage 密钥；Renderer 只接收 Profile 名称、导入计数和错误码，不接收源路径、Cookie 值或密码。历史记录写入独立的 `browser-import.sqlite`；密码先用浏览器当前用户密钥解密，再通过 Electron `safeStorage` 二次加密保存。设置页由用户发起的导入写入当前默认 embedded profile；Tool 的 `importprofile` 默认写入隔离的 imported profile，并可显式选择 embedded 或合法命名 profile。导入在用户确认后仍受 Tool 取消和 120 秒期限约束，取消后不得继续复制 Cookie 或持久化 profile。页面点击密码框只能请求显示应用自有确认条；用户在 guest 外明确点击“填充”后，Main 才向对应专用 partition 的主 frame 返回唯一匹配的同源凭据。Chrome `v20` 应用绑定数据无法由当前进程验证解密时必须逐项跳过并报告，禁止写入乱码或伪报成功。
 - 内置浏览器下载由 Electron `will-download` 生命周期记录到 `browser-import.sqlite`，设置页可选择下载目录、切换下载前询问、搜索并查看进度与状态、打开文件、在文件夹中定位、删除单条记录或清空记录。具体下载文件路径始终留在 Main，Renderer 仅持有随机记录 ID；删除或清空只影响历史记录，不删除用户文件。Agent `download`/`waitfordownload` 及可触发下载的 `act` 只在同一 guest 的受控交互窗口内接管下载，期间页面暂时禁止人工输入以避免归属串线；下载只能落在任务 workspace，目标路径解析失败、超时、取消、Tab/窗口关闭都会取消下载并尽力删除部分文件。
-- “清除浏览数据”通过显式 IPC 清理两个内置浏览器 partition 与 `browser-import.sqlite`。历史、下载记录和导入的自动填充凭据按所选时间范围精确删除；Cookie、站点存储和缓存受 Electron session API 限制，只能同时清除两个 partition 的全部对应数据，界面必须明确提示，不能伪报时间精度。下载清理仍只删除记录，不删除磁盘文件。站点权限始终被 guest 权限策略拒绝，因此不展示无效的站点设置清理项。
+- “清除浏览数据”通过显式 IPC 清理两个内置浏览器 partition 与 `browser-import.sqlite`。历史、下载记录和导入的自动填充凭据按所选时间范围精确删除；Cookie、站点存储和缓存受 Electron session API 限制，只能同时清除两个 partition 的全部对应数据，界面必须明确提示，不能伪报时间精度。下载清理仍只删除记录，不删除磁盘文件。站点权限仅在内存中保留到页面或子框架导航、guest 销毁，不写入持久权限库，因此不展示持久站点设置清理项。
 - Pairing string 只写剪贴板；日志仅记录非秘密 relay port 或动作结果。
 - 浏览器 extension 资源必须与锁定 OpenClaw 版本整体同步。
 - side-chat Native Messaging 与 WebSocket app-server 不得接受非固定扩展 id 或绑定非 loopback 地址，不得复用或返回 Gateway token；页面内容一律按不可信外部输入处理。
 - `dangerouslyAllowPrivateNetwork` 表示允许浏览器访问私网，不表示禁止互联网；UI 不得把 profile 隔离描述成网络隔离。
 - 本机端口探测只能辅助引导，不能替代 Gateway 的 `running`/`pageReady` 结果。
 - 切换模式时 app config 与 OpenClaw config 必须一起成功或一起回滚。
+
+### PDF、授权与认证的生命周期
+
+2026-09-21 使用锁定的 Electron 42.7.0 / Chromium 148，在隔离的临时用户目录内对比 `<webview>` 与 `WebContentsView`。持久 partition 下两种容器都能显示 Chromium 内置 PDF 查看器；原有 `will-frame-navigate` 将 `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/<uuid>` 内部流导航当作非法网页跳转拦截，复现工具栏或页面空白。修复只放行非主框架、真实父框架 URL 为内置扩展 `index.html`、目标为该扩展 UUID 流的组合；普通网页、其他扩展和主框架仍不能导航到扩展地址。无需为了 PDF 迁移整个浏览器承载层，也不应将网页与应用壳合并到同一 partition。
+
+默认使用 Chromium 原生查看器，浏览器菜单提供“尝试兼容 PDF 查看器”和“切回浏览器 PDF 查看器”。原生模式没有 PDF.js 的 64 MiB 整体读取限制或额外二次下载。原生 PDF 的打印通过其自带工具栏执行；应用通用网页打印菜单在 PDF 标签禁用并给出引导，避免对外层文档调用 `print()` 导致空白页。
+
+麦克风与摄像头分别记录 `audio` / `video` 授权，组合请求必须同时满足两项，不能由麦克风许可推导摄像头许可。授权归属请求 frame 的 origin；顶层页面与跨域 frame 不必同源。每次非同文档导航（含子框架）使已有许可和待确认请求失效，避免弹窗确认作用于替换后的文档。
+
+HTTP 认证请求以随机 ID 和 guest ID 绑定，主窗口主 frame 才能回应。主导航、guest/窗口关闭、用户取消或 120 秒超时统一结束请求并通知 Renderer 移除弹窗；迟到回应被忽略。只在所属标签和面板可见时显示登录框，应用授权框不受 Agent 网页输入锁阻挡。应用不把输入写入密码库或日志；Chromium 自身可能在浏览器 session 内缓存 HTTP 认证。
+
+兼容模式的 PDF 加载采用调用窗口隔离的 request ID，关闭查看器或窗口会取消请求，网络读取设 60 秒超时及 64 MiB 上限。超限或失败响应主动关闭 body。异步响应晚于组件卸载时不再创建 PDF.js worker。CMap、标准字体、ICC 与 WASM 解码资源随安装包提供，应用 CSP 允许本地资源和 WebAssembly 编译，仍禁止 JavaScript `eval`。
+
+兼容模式 PDF 标签切换保留文档、滚动位置和缩放，仅活动标签绘制页面，并限制单页 canvas 像素数。关闭标签、导航或刷新会释放旧文档；刷新重新加载 PDF。URL 提前识别只使用路径和已知 arXiv PDF 路径，不通过任意查询参数推断；读取结果为 HTML 时回退到真实网页。工具栏缩放和刷新路由到 PDF 查看器；兼容模式尚未实现的 PDF 查找、打印、截图、开发者工具和标注明确禁用，不能调用背后的 WebView 并声称操作了可见文档。加载失败提供重试，超限单独提示；PDF.js 的文本选择、链接/目录、密码 PDF 和打印仍属后续功能；原生查看器的已有能力不受这份兼容模式限制清单约束。
 
 ## 6. 下一步规划：迁移到 WebContentsView
 

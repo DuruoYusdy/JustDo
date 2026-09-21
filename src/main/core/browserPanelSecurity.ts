@@ -7,8 +7,60 @@ const METADATA_HOSTNAMES = new Set([
   'instance-data.ec2.internal',
 ]);
 
+const LOW_RISK_BROWSER_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen']);
+const PROMPTABLE_BROWSER_PERMISSIONS = new Set(['geolocation', 'media', 'notifications']);
+
+const EXTERNAL_BROWSER_PROTOCOLS = new Set(['mailto:', 'magnet:', 'sms:', 'tel:', 'webcal:']);
+
+const CHROMIUM_PDF_VIEWER_URL =
+  'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html';
+
+// Chromium's PDF viewer embeds its PDF stream in a child frame. This is not a
+// website navigation: only the built-in viewer may initiate this exact stream URL.
+export const isBrowserPdfStreamNavigation = (
+  url: string,
+  isMainFrame: boolean,
+  parentUrl: string | undefined,
+): boolean =>
+  !isMainFrame &&
+  parentUrl === CHROMIUM_PDF_VIEWER_URL &&
+  /^chrome-extension:\/\/mhjfbmdgcfjbbpaeojofohoefgiehjai\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(url);
+
+export const browserPermissionKeys = (
+  origin: string,
+  permission: string,
+  mediaTypes: readonly string[] = [],
+): string[] => {
+  if (permission !== 'media') return [`${origin}\0${permission}`];
+  if (!mediaTypes.length || mediaTypes.some(type => type !== 'audio' && type !== 'video'))
+    return [];
+  return [...new Set(mediaTypes)].map(type => `${origin}\0media:${type}`);
+};
+
+export const shouldAllowBrowserPanelPermission = (
+  permission: string,
+  isFocused: boolean,
+): boolean => isFocused && LOW_RISK_BROWSER_PERMISSIONS.has(permission);
+
+export const shouldPromptBrowserPanelPermission = (
+  permission: string,
+  isFocused: boolean,
+): boolean => isFocused && PROMPTABLE_BROWSER_PERMISSIONS.has(permission);
+
+export const isAllowedExternalBrowserUrl = (value: string): boolean => {
+  try {
+    return EXTERNAL_BROWSER_PROTOCOLS.has(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+};
+
 export const isBlockedBrowserMetadataHost = (hostname: string): boolean => {
-  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/u, '');
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/%.*$/u, '');
   if (METADATA_HOSTNAMES.has(normalized)) return true;
   const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(normalized);
   if (ipv4) {

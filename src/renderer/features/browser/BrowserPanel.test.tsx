@@ -17,6 +17,13 @@ import { i18nService } from '@/services/i18n';
 import BrowserPanel, { type BrowserPanelHandle, getBrowserTabAddress } from './BrowserPanel';
 import { promoteBrowserPanelTabs } from './browserPanelRetention';
 
+const { getPdfDocument } = vi.hoisted(() => ({ getPdfDocument: vi.fn() }));
+
+vi.mock('pdfjs-dist', () => ({
+  getDocument: getPdfDocument,
+  GlobalWorkerOptions: {},
+}));
+
 vi.mock('@/features/cowork/components/composer/LocalSpeechInputButton', () => ({
   LocalSpeechInputButton: () => null,
 }));
@@ -26,8 +33,21 @@ type PanelOpenTabListener = (event: {
   openerGuestId?: number;
   errorCode?: 'post-navigation-blocked';
 }) => void;
+type PanelPdfDetectedListener = (event: { url: string; guestId: number }) => void;
+type PanelHttpAuthListener = (event: {
+  id: string;
+  guestId: number;
+  host: string;
+  port: number;
+  realm: string;
+  scheme: string;
+}) => void;
 
 let panelOpenTabListener: PanelOpenTabListener | null = null;
+let panelPdfDetectedListener: PanelPdfDetectedListener | null = null;
+let panelHttpAuthListener: PanelHttpAuthListener | null = null;
+let panelHttpAuthDismissedListener: ((event: { id: string; guestId: number }) => void) | null =
+  null;
 let agentInteractionListener:
   | ((event: { sessionId: string; targetId: string; busy: boolean; operationId?: string }) => void)
   | null = null;
@@ -72,6 +92,7 @@ const getClearDataSummary = vi.fn().mockResolvedValue({
 });
 const clearBrowsingData = vi.fn().mockResolvedValue({ success: true });
 const createLocalHtmlPreview = vi.fn();
+const loadPdf = vi.fn().mockResolvedValue({ success: false, errorCode: 'load_failed' });
 const openExternal = vi.fn().mockResolvedValue({ success: true });
 const openLocalHtmlExternal = vi.fn().mockResolvedValue({ success: true });
 const registerAgentTab = vi.fn();
@@ -79,6 +100,7 @@ const unregisterAgentTab = vi.fn();
 const setAgentActiveTab = vi.fn();
 const setUserInteractionState = vi.fn();
 const acknowledgeAgentInteraction = vi.fn();
+const respondToPanelHttpAuth = vi.fn();
 const inspectedElement = {
   tag: 'a',
   id: 'docs',
@@ -96,6 +118,11 @@ const defineWebviewMethod = (name: string, value: unknown) => {
     writable: true,
     value,
   });
+};
+
+const useCompatibilityPdfViewer = () => {
+  fireEvent.click(screen.getByLabelText('More browser options'));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Try compatibility PDF viewer' }));
 };
 
 function BrowserPanelHarness({
@@ -146,6 +173,8 @@ function BrowserPanelHarness({
 describe('BrowserPanel embedded webview', () => {
   beforeEach(() => {
     panelOpenTabListener = null;
+    panelPdfDetectedListener = null;
+    panelHttpAuthListener = null;
     agentInteractionListener = null;
     loadUrl.mockClear();
     reload.mockClear();
@@ -161,6 +190,8 @@ describe('BrowserPanel embedded webview', () => {
     getClearDataSummary.mockClear();
     clearBrowsingData.mockClear();
     createLocalHtmlPreview.mockReset();
+    loadPdf.mockClear();
+    getPdfDocument.mockReset();
     openExternal.mockClear();
     openLocalHtmlExternal.mockClear();
     registerAgentTab.mockClear();
@@ -168,6 +199,7 @@ describe('BrowserPanel embedded webview', () => {
     setAgentActiveTab.mockClear();
     setUserInteractionState.mockClear();
     acknowledgeAgentInteraction.mockClear();
+    respondToPanelHttpAuth.mockClear();
     i18nService.setLanguage('en', { persist: false });
 
     vi.stubGlobal('crypto', {
@@ -209,6 +241,7 @@ describe('BrowserPanel embedded webview', () => {
       value: {
         browser: {
           createLocalHtmlPreview,
+          loadPdf,
           registerAgentTab,
           unregisterAgentTab,
           setAgentActiveTab,
@@ -220,6 +253,26 @@ describe('BrowserPanel embedded webview', () => {
               if (panelOpenTabListener === listener) panelOpenTabListener = null;
             };
           },
+          onPanelPdfDetected: (listener: PanelPdfDetectedListener) => {
+            panelPdfDetectedListener = listener;
+            return () => {
+              if (panelPdfDetectedListener === listener) panelPdfDetectedListener = null;
+            };
+          },
+          onPanelHttpAuthRequest: (listener: PanelHttpAuthListener) => {
+            panelHttpAuthListener = listener;
+            return () => {
+              if (panelHttpAuthListener === listener) panelHttpAuthListener = null;
+            };
+          },
+          respondToPanelHttpAuth,
+          onPanelHttpAuthDismissed: (listener: typeof panelHttpAuthDismissedListener) => {
+            panelHttpAuthDismissedListener = listener;
+            return () => {
+              panelHttpAuthDismissedListener = null;
+            };
+          },
+          cancelPdf: vi.fn(),
           onAgentInteractionState: (
             listener: (event: {
               sessionId: string;
@@ -302,7 +355,9 @@ describe('BrowserPanel embedded webview', () => {
       />,
     );
 
-    expect(container.querySelector('webview')?.getAttribute('src')).toBe(initialTab.url);
+    const webview = container.querySelector('webview');
+    expect(webview?.getAttribute('src')).toBe(initialTab.url);
+    expect(webview?.getAttribute('plugins')).toBe('true');
     await waitFor(() =>
       expect(registerAgentTab).toHaveBeenCalledWith({
         sessionId: 'agent-session',
@@ -311,6 +366,186 @@ describe('BrowserPanel embedded webview', () => {
         profile: 'embedded',
       }),
     );
+  });
+
+  it('uses Chromium for PDF by default and switches to compatibility mode only on request', async () => {
+    const url = 'https://arxiv.org/pdf/2609.20859';
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="pdf-arxiv-session"
+        initialTabs={[{ id: 'pdf-tab', targetId: 'pdf-tab', title: '', url }]}
+        retainedTargetIds={['pdf-tab']}
+      />,
+    );
+
+    expect(container.querySelector('webview')?.getAttribute('src')).toBe(url);
+    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull();
+    expect(loadPdf).not.toHaveBeenCalled();
+    useCompatibilityPdfViewer();
+    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy());
+    expect(loadPdf).toHaveBeenCalledWith(expect.objectContaining({ url, profile: 'embedded' }));
+    fireEvent.click(screen.getByLabelText('More browser options'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Use browser PDF viewer' }));
+    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull();
+  });
+
+  it('lays out every PDF page in one continuous scroll surface', async () => {
+    const renderPage = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+    const document = {
+      numPages: 3,
+      getPage: vi.fn(async () => ({
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 612 * scale,
+          height: 792 * scale,
+        }),
+        render: renderPage,
+      })),
+    };
+    loadPdf.mockResolvedValueOnce({
+      success: true,
+      data: new TextEncoder().encode('%PDF-1.7'),
+    });
+    getPdfDocument.mockReturnValue({
+      promise: Promise.resolve(document),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      {} as CanvasRenderingContext2D,
+    );
+
+    const url = 'https://arxiv.org/pdf/2609.20859';
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="continuous-pdf-session"
+        initialTabs={[{ id: 'continuous-pdf', targetId: 'continuous-pdf', title: '', url }]}
+        retainedTargetIds={['continuous-pdf']}
+      />,
+    );
+
+    useCompatibilityPdfViewer();
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-pdf-page-number]')).toHaveLength(3),
+    );
+    expect(container.querySelector('[data-pdf-page-number="1"]')).toBeTruthy();
+    expect(container.querySelector('[data-pdf-page-number="3"]')).toBeTruthy();
+  });
+
+  it('recognizes a generic PDF response without replacing the native viewer', async () => {
+    const url = 'https://documents.example.test/download?id=42';
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="pdf-response-session"
+        initialTabs={[{ id: 'pdf-response', targetId: 'pdf-response', title: '', url }]}
+        retainedTargetIds={['pdf-response']}
+      />,
+    );
+
+    await waitFor(() => expect(panelPdfDetectedListener).not.toBeNull());
+    act(() => panelPdfDetectedListener?.({ url, guestId: 7 }));
+
+    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull();
+    expect(loadPdf).not.toHaveBeenCalled();
+    useCompatibilityPdfViewer();
+    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy());
+    expect(loadPdf).toHaveBeenCalledWith(expect.objectContaining({ url, profile: 'embedded' }));
+  });
+
+  it('disables guest-only PDF actions and reloads the visible PDF document', async () => {
+    render(
+      <BrowserPanelHarness
+        draftKey="pdf-actions"
+        initialTabs={[
+          {
+            id: 'pdf-actions',
+            targetId: 'pdf-actions',
+            title: '',
+            url: 'https://example.com/file.pdf',
+          },
+        ]}
+        retainedTargetIds={['pdf-actions']}
+      />,
+    );
+    useCompatibilityPdfViewer();
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
+    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('More browser options'));
+    for (const name of ['Find in page', 'Print', i18nService.t('browserMenuScreenshot')]) {
+      expect((screen.getByRole('menuitem', { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.keyDown(screen.getByRole('menu', { name: 'Browser menu' }), { key: 'Escape' });
+    fireEvent.click(screen.getByLabelText(i18nService.t('browserPanelReload')));
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
+    expect(reload).not.toHaveBeenCalled();
+    expect(printPage).not.toHaveBeenCalled();
+  });
+
+  it('retains PDF viewers when switching tabs without fetching the document again', async () => {
+    const firstUrl = 'https://example.com/first.pdf';
+    const secondUrl = 'https://example.com/second.pdf';
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="retained-pdfs"
+        initialTabs={[
+          { id: 'first', targetId: 'first', title: 'First PDF', url: firstUrl },
+          { id: 'second', targetId: 'second', title: 'Second PDF', url: secondUrl },
+        ]}
+        retainedTargetIds={['first', 'second']}
+      />,
+    );
+    useCompatibilityPdfViewer();
+    fireEvent.click(screen.getByRole('tab', { name: 'Second PDF' }));
+    useCompatibilityPdfViewer();
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
+    const viewers = [...container.querySelectorAll('[data-browser-pdf-viewer]')];
+    fireEvent.click(screen.getByRole('tab', { name: 'Second PDF' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'First PDF' }));
+    expect([...container.querySelectorAll('[data-browser-pdf-viewer]')]).toEqual(viewers);
+    expect(loadPdf).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the guest page when a PDF-like URL returns HTML', async () => {
+    loadPdf.mockResolvedValueOnce({ success: false, errorCode: 'not_pdf' });
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="html-pdf-path"
+        initialTabs={[
+          { id: 'html-pdf', targetId: 'html-pdf', title: '', url: 'https://example.com/login.pdf' },
+        ]}
+        retainedTargetIds={['html-pdf']}
+      />,
+    );
+    useCompatibilityPdfViewer();
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
+    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull());
+    expect(container.querySelector('webview')).toBeTruthy();
+    expect((screen.getByLabelText('Add comment') as HTMLButtonElement).disabled).toBe(false);
+    act(() => panelPdfDetectedListener?.({ url: 'https://example.com/login.pdf', guestId: 7 }));
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
+    expect(container.querySelector('[data-browser-pdf-viewer]')).toBeTruthy();
+  });
+
+  it('rechecks an HTML fallback after an explicit PDF URL reload', async () => {
+    loadPdf.mockResolvedValueOnce({ success: false, errorCode: 'not_pdf' });
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="reload-html-pdf"
+        initialTabs={[
+          {
+            id: 'retry-html',
+            targetId: 'retry-html',
+            title: '',
+            url: 'https://example.com/retry.pdf',
+          },
+        ]}
+        retainedTargetIds={['retry-html']}
+      />,
+    );
+    fireEvent(container.querySelector('webview')!, new Event('dom-ready'));
+    useCompatibilityPdfViewer();
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledOnce());
+    await waitFor(() => expect(container.querySelector('[data-browser-pdf-viewer]')).toBeNull());
+    fireEvent.click(screen.getByLabelText(i18nService.t('browserPanelReload')));
+    await waitFor(() => expect(loadPdf).toHaveBeenCalledTimes(2));
   });
 
   it('registers as soon as a delayed webview attaches without waiting for page readiness', async () => {
@@ -1065,6 +1300,103 @@ describe('BrowserPanel embedded webview', () => {
       'This page tried to submit a form in a new tab. The unsupported request was blocked.',
     );
     expect(container.querySelectorAll('webview')).toHaveLength(initialTabCount);
+  });
+
+  it('collects website authentication credentials for the owning guest', async () => {
+    render(<BrowserPanelHarness />);
+
+    panelHttpAuthListener?.({
+      id: 'auth-1',
+      guestId: 7,
+      host: 'private.example.com',
+      port: 443,
+      realm: 'Members',
+      scheme: 'basic',
+    });
+
+    fireEvent.change(await screen.findByLabelText('Username'), { target: { value: 'alice' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(respondToPanelHttpAuth).toHaveBeenCalledWith({
+      id: 'auth-1',
+      guestId: 7,
+      username: 'alice',
+      password: 'secret',
+    });
+  });
+
+  it('keeps authentication input usable during agent control and parent updates', async () => {
+    const { container } = render(
+      <BrowserPanelHarness
+        draftKey="auth-locked"
+        agentInteractionStates={[
+          {
+            sessionId: 'auth-locked',
+            targetId: BROWSER_AGENT_PANEL_TARGET_ID,
+            profile: 'embedded',
+            busy: true,
+          },
+        ]}
+      />,
+    );
+    act(() =>
+      panelHttpAuthListener?.({
+        id: 'locked-auth',
+        guestId: 7,
+        host: 'private.example',
+        port: 443,
+        realm: '',
+        scheme: 'basic',
+      }),
+    );
+    const password = await screen.findByLabelText('Password');
+    password.focus();
+    expect(fireEvent.keyDown(password, { key: 's' })).toBe(true);
+    fireEvent.change(password, { target: { value: 'secret' } });
+    act(() => container.querySelector('webview')?.dispatchEvent(new Event('page-title-updated')));
+    expect(document.activeElement).toBe(password);
+    act(() => panelHttpAuthDismissedListener?.({ id: 'locked-auth', guestId: 7 }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('defers hidden-panel authentication and cancels pending requests on unmount', () => {
+    const view = render(<BrowserPanelHarness isOpen={false} draftKey="hidden-auth" />);
+    act(() =>
+      panelHttpAuthListener?.({
+        id: 'hidden-auth',
+        guestId: 7,
+        host: 'private.example',
+        port: 443,
+        realm: '',
+        scheme: 'basic',
+      }),
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+    view.rerender(<BrowserPanelHarness isOpen draftKey="hidden-auth" />);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    view.unmount();
+    expect(respondToPanelHttpAuth).toHaveBeenCalledWith({ id: 'hidden-auth', guestId: 7 });
+  });
+
+  it('ignores authentication notifications while a guest is detached', () => {
+    render(<BrowserPanelHarness draftKey="detached-auth" />);
+    defineWebviewMethod('getWebContentsId', () => {
+      throw new Error('detached');
+    });
+    expect(() =>
+      act(() =>
+        panelHttpAuthListener?.({
+          id: 'detached-auth',
+          guestId: 7,
+          host: 'private.example',
+          port: 443,
+          realm: '',
+          scheme: 'basic',
+        }),
+      ),
+    ).not.toThrow();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('opens an editable comment box after locking an inspected element', async () => {

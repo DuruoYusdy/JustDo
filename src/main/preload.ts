@@ -29,11 +29,20 @@ import {
   type BrowserMode,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
+  type BrowserPanelHttpAuthDismissed,
+  type BrowserPanelHttpAuthRequest,
+  type BrowserPanelHttpAuthResponse,
   type BrowserPanelOpenTabEvent,
+  type BrowserPanelPdfDetectedEvent,
   type BrowserPanelShortcutAction,
   type BrowserPanelShortcutSettings,
+  type BrowserPdfLoadRequest,
+  type BrowserPdfLoadResult,
   type BrowserStatusResult,
+  normalizeBrowserPanelHttpAuthRequest,
+  normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelOpenTabEvent,
+  normalizeBrowserPanelPdfDetectedEvent,
 } from '../shared/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
@@ -297,6 +306,9 @@ contextBridge.exposeInMainWorld('electron', {
       workingDirectory?: string,
     ): Promise<BrowserLocalHtmlPreviewResult> =>
       ipcRenderer.invoke(BrowserIpc.CreateLocalHtmlPreview, filePath, workingDirectory),
+    loadPdf: (request: BrowserPdfLoadRequest): Promise<BrowserPdfLoadResult> =>
+      ipcRenderer.invoke(BrowserIpc.LoadPdf, request),
+    cancelPdf: (requestId: string) => ipcRenderer.send(BrowserIpc.CancelPdf, requestId),
     getStatus: (): Promise<BrowserStatusResult> => ipcRenderer.invoke(BrowserIpc.GetStatus),
     canSetMode: (): Promise<BrowserModeSwitchAvailabilityResult> =>
       ipcRenderer.invoke(BrowserIpc.CanSetMode),
@@ -321,6 +333,32 @@ contextBridge.exposeInMainWorld('electron', {
       };
       ipcRenderer.on(BrowserIpc.PanelOpenTab, handler);
       return () => ipcRenderer.removeListener(BrowserIpc.PanelOpenTab, handler);
+    },
+    onPanelHttpAuthRequest: (callback: (request: BrowserPanelHttpAuthRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelHttpAuthRequest(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelHttpAuthRequest, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelHttpAuthRequest, handler);
+    },
+    respondToPanelHttpAuth: (response: BrowserPanelHttpAuthResponse) =>
+      ipcRenderer.send(BrowserIpc.PanelHttpAuthResponse, response),
+    onPanelHttpAuthDismissed: (callback: (event: BrowserPanelHttpAuthDismissed) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelHttpAuthResponse(data);
+        if (normalized) callback({ id: normalized.id, guestId: normalized.guestId });
+      };
+      ipcRenderer.on(BrowserIpc.PanelHttpAuthDismissed, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelHttpAuthDismissed, handler);
+    },
+    onPanelPdfDetected: (callback: (event: BrowserPanelPdfDetectedEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
+        const normalized = normalizeBrowserPanelPdfDetectedEvent(data);
+        if (normalized) callback(normalized);
+      };
+      ipcRenderer.on(BrowserIpc.PanelPdfDetected, handler);
+      return () => ipcRenderer.removeListener(BrowserIpc.PanelPdfDetected, handler);
     },
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) =>
       ipcRenderer.send(BrowserIpc.PanelSetShortcuts, shortcuts),

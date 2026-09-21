@@ -11,7 +11,13 @@ export const BrowserIpc = {
   CopyExtensionPairing: 'browser:copyExtensionPairing',
   TestExtensionConnection: 'browser:testExtensionConnection',
   CreateLocalHtmlPreview: 'browser:createLocalHtmlPreview',
+  LoadPdf: 'browser:loadPdf',
+  CancelPdf: 'browser:cancelPdf',
   PanelOpenTab: 'browser:panelOpenTab',
+  PanelPdfDetected: 'browser:panelPdfDetected',
+  PanelHttpAuthRequest: 'browser:panelHttpAuthRequest',
+  PanelHttpAuthResponse: 'browser:panelHttpAuthResponse',
+  PanelHttpAuthDismissed: 'browser:panelHttpAuthDismissed',
   PanelSetShortcuts: 'browser:panelSetShortcuts',
   PanelShortcutAction: 'browser:panelShortcutAction',
   ListImportSources: 'browser:listImportSources',
@@ -160,6 +166,118 @@ export type BrowserPanelOpenTabEvent = {
   errorCode?: 'post-navigation-blocked';
 };
 
+export type BrowserPanelPdfDetectedEvent = {
+  url: string;
+  guestId: number;
+};
+
+export type BrowserPanelHttpAuthRequest = {
+  id: string;
+  guestId: number;
+  host: string;
+  port: number;
+  realm: string;
+  scheme: string;
+};
+
+export type BrowserPanelHttpAuthResponse = {
+  id: string;
+  guestId: number;
+  username?: string;
+  password?: string;
+};
+
+export type BrowserPanelHttpAuthDismissed = Pick<BrowserPanelHttpAuthRequest, 'id' | 'guestId'>;
+
+export const normalizeBrowserPanelHttpAuthRequest = (
+  value: unknown,
+): BrowserPanelHttpAuthRequest | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== 'string' ||
+    !record.id ||
+    typeof record.guestId !== 'number' ||
+    !Number.isInteger(record.guestId) ||
+    typeof record.host !== 'string' ||
+    !record.host ||
+    typeof record.port !== 'number' ||
+    !Number.isInteger(record.port) ||
+    typeof record.realm !== 'string' ||
+    typeof record.scheme !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: record.id.slice(0, 128),
+    guestId: record.guestId,
+    host: record.host.slice(0, 512),
+    port: record.port,
+    realm: record.realm.slice(0, 1_024),
+    scheme: record.scheme.slice(0, 64),
+  };
+};
+
+export const normalizeBrowserPanelHttpAuthResponse = (
+  value: unknown,
+): BrowserPanelHttpAuthResponse | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== 'string' ||
+    !record.id ||
+    record.id.length > 128 ||
+    typeof record.guestId !== 'number' ||
+    !Number.isInteger(record.guestId)
+  ) {
+    return null;
+  }
+  const hasCredentials = typeof record.username === 'string' && typeof record.password === 'string';
+  if (
+    hasCredentials &&
+    ((record.username as string).length > 4_096 || (record.password as string).length > 4_096)
+  )
+    return null;
+  return {
+    id: record.id,
+    guestId: record.guestId,
+    ...(hasCredentials
+      ? {
+          username: record.username as string,
+          password: record.password as string,
+        }
+      : {}),
+  };
+};
+
+export const normalizeBrowserPanelPdfDetectedEvent = (
+  value: unknown,
+): BrowserPanelPdfDetectedEvent | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.url !== 'string' ||
+    !/^https?:\/\//iu.test(record.url) ||
+    !Number.isInteger(record.guestId)
+  ) {
+    return null;
+  }
+  return { url: record.url, guestId: record.guestId as number };
+};
+
+export type BrowserPdfLoadRequest = {
+  requestId: string;
+  url: string;
+  profile: BrowserAgentProfile;
+};
+
+export type BrowserPdfLoadResult =
+  | { success: true; data: Uint8Array }
+  | {
+      success: false;
+      errorCode: 'invalid_request' | 'not_pdf' | 'too_large' | 'load_failed';
+    };
+
 export const normalizeBrowserPanelOpenTabEvent = (
   value: unknown,
 ): BrowserPanelOpenTabEvent | null => {
@@ -196,9 +314,8 @@ export const isBrowserGuestCommand = (value: unknown): value is BrowserGuestComm
 
 export type BrowserGuestZoomDirection = -1 | 1;
 
-export const isBrowserGuestZoomDirection = (
-  value: unknown,
-): value is BrowserGuestZoomDirection => value === -1 || value === 1;
+export const isBrowserGuestZoomDirection = (value: unknown): value is BrowserGuestZoomDirection =>
+  value === -1 || value === 1;
 
 export const resolveBrowserGuestWheelZoomDirection = (input: {
   ctrlKey: boolean;
@@ -495,6 +612,7 @@ export type BrowserPanelTab = {
   faviconUrl?: string;
   muted?: boolean;
   url: string;
+  pdfUrl?: string;
   profile?: BrowserAgentProfile;
   sourceFilePath?: string;
   sourcePreviewUrl?: string;

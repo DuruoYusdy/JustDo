@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { shouldApplyApplicationCsp } from './contentSecurityPolicy';
+const { onHeadersReceived } = vi.hoisted(() => ({ onHeadersReceived: vi.fn() }));
+vi.mock('electron', () => ({
+  session: { defaultSession: { webRequest: { onHeadersReceived } } },
+}));
+
+import { registerContentSecurityPolicy, shouldApplyApplicationCsp } from './contentSecurityPolicy';
 
 describe('shouldApplyApplicationCsp', () => {
   it('limits development CSP injection to the application origin', () => {
@@ -14,5 +19,18 @@ describe('shouldApplyApplicationCsp', () => {
       shouldApplyApplicationCsp('file:///C:/Program%20Files/JustDo/index.html', '', false),
     ).toBe(true);
     expect(shouldApplyApplicationCsp('https://example.com/', '', false)).toBe(false);
+  });
+
+  it('allows bundled PDF WebAssembly without allowing JavaScript eval', () => {
+    registerContentSecurityPolicy({ isDev: false, devServerPort: 43127 });
+    const handler = onHeadersReceived.mock.lastCall?.[0];
+    const callback = vi.fn();
+    handler({ url: 'file:///app/index.html', responseHeaders: {} }, callback);
+
+    const policy = callback.mock.lastCall?.[0].responseHeaders['Content-Security-Policy'];
+    const scripts = policy.split('; ').find((directive: string) => directive.startsWith('script-src'));
+    expect(scripts).toBe("script-src 'self' 'wasm-unsafe-eval'");
+    expect(scripts).not.toContain("'unsafe-eval'");
+    expect(policy).toContain("connect-src 'self' *");
   });
 });

@@ -7,6 +7,8 @@ import {
   isBrowserProfileRunning,
   normalizeBrowserDownloadSettings,
   normalizeBrowserMode,
+  normalizeBrowserPanelHttpAuthRequest,
+  normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelOpenTabEvent,
   normalizeBrowserSearchEngine,
   parseDevToolsActivePort,
@@ -156,5 +158,57 @@ describe('normalizeBrowserPanelOpenTabEvent', () => {
       normalizeBrowserPanelOpenTabEvent({ url: 'https://example.com', errorCode: 'unknown' }),
     ).toEqual({ url: 'https://example.com' });
     expect(normalizeBrowserPanelOpenTabEvent({ errorCode: 'post-navigation-blocked' })).toBeNull();
+  });
+});
+
+describe('browser HTTP authentication IPC', () => {
+  test('rejects oversized credentials rather than sending a changed password', () => {
+    expect(
+      normalizeBrowserPanelHttpAuthResponse({
+        id: 'request-1',
+        guestId: 42,
+        username: 'alice',
+        password: 'x'.repeat(4097),
+      }),
+    ).toBeNull();
+  });
+  test('normalizes requests and removes unknown fields', () => {
+    expect(
+      normalizeBrowserPanelHttpAuthRequest({
+        id: 'request-1',
+        guestId: 42,
+        host: 'example.com',
+        port: 443,
+        realm: 'Private',
+        scheme: 'basic',
+        password: 'discarded',
+      }),
+    ).toEqual({
+      id: 'request-1',
+      guestId: 42,
+      host: 'example.com',
+      port: 443,
+      realm: 'Private',
+      scheme: 'basic',
+    });
+  });
+
+  test('accepts complete credentials or an explicit cancellation only', () => {
+    expect(
+      normalizeBrowserPanelHttpAuthResponse({
+        id: 'request-1',
+        guestId: 42,
+        username: 'alice',
+        password: 'secret',
+      }),
+    ).toEqual({ id: 'request-1', guestId: 42, username: 'alice', password: 'secret' });
+    expect(
+      normalizeBrowserPanelHttpAuthResponse({
+        id: 'request-1',
+        guestId: 42,
+        username: 'partial',
+      }),
+    ).toEqual({ id: 'request-1', guestId: 42 });
+    expect(normalizeBrowserPanelHttpAuthResponse({ id: 'request-1' })).toBeNull();
   });
 });

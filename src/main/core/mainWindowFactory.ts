@@ -2,9 +2,11 @@ import { randomUUID } from 'crypto';
 import {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   session,
   shell,
@@ -20,6 +22,7 @@ import {
   BrowserIpc,
   browserProfileFromPartition,
   DEFAULT_BROWSER_PANEL_SHORTCUTS,
+  normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelShortcutSettings,
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
@@ -44,11 +47,18 @@ import {
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
 } from '../browser/localHtmlPreviewServer';
+import { BrowserHttpAuthRequests, BrowserPermissionState } from './browserPanelRequestState';
 import {
+  browserPermissionKeys,
   isAllowedBrowserPanelUrl,
+  isAllowedExternalBrowserUrl,
   isAllowedMainWindowNavigation,
   isBlockedBrowserMetadataHost,
+  isBrowserPdfStreamNavigation,
+  shouldAllowBrowserPanelPermission,
+  shouldPromptBrowserPanelPermission,
 } from './browserPanelSecurity';
+import { t } from './i18n';
 import {
   shouldAllowAudioMediaCheck,
   shouldAllowAudioMediaRequest,
@@ -87,6 +97,7 @@ const LOAD_TIMEOUT_MS = 30_000;
 const CHAT_TIMELINE_TRACE_PREFIX = '[ChatTimelineTrace] ';
 const CHAT_TIMELINE_TRACE_MAX_BYTES = 64 * 1024;
 const SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS = 5_000;
+const BROWSER_HTTP_AUTH_TIMEOUT_MS = 120_000;
 
 export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWindow => {
   const mainWindow = new BrowserWindow({
@@ -160,6 +171,134 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     [BROWSER_PANEL_PARTITION, browserPanelSession],
     [BROWSER_IMPORTED_PROFILE_PARTITION, importedBrowserSession],
   ]);
+  const browserPermissions = new BrowserPermissionState();
+  const pendingBrowserHttpAuth = new BrowserHttpAuthRequests(
+    BROWSER_HTTP_AUTH_TIMEOUT_MS,
+    event => {
+      if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send(BrowserIpc.PanelHttpAuthDismissed, event);
+      }
+    },
+  );
+  let browserPermissionPromptQueue = Promise.resolve();
+  type BrowserPermissionRequestDetails = {
+    mediaTypes?: Array<'video' | 'audio'>;
+    requestingUrl?: string;
+    securityOrigin?: string;
+  };
+  const normalizeBrowserPermissionOrigin = (value: string | undefined): string | null => {
+    try {
+      if (!value) return null;
+      const url = new URL(value);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null;
+    } catch {
+      return null;
+    }
+  };
+  const browserPermissionOrigin = (
+    webContents: Electron.WebContents,
+    details: BrowserPermissionRequestDetails,
+  ): string | null =>
+    normalizeBrowserPermissionOrigin(
+      details.securityOrigin || details.requestingUrl || webContents.getURL(),
+    );
+  const browserPermissionMediaType = (
+    permission: string,
+    details: BrowserPermissionRequestDetails,
+  ): string => {
+    if (permission !== 'media') return '';
+    return [...(details.mediaTypes ?? [])].sort().join(',');
+  };
+  const browserPermissionLabel = (permission: string, mediaType: string): string => {
+    if (permission === 'geolocation') return t('browserPermissionLocation');
+    if (permission === 'notifications') return t('browserPermissionNotifications');
+    if (mediaType === 'audio,video') return t('browserPermissionCameraAndMicrophone');
+    if (mediaType === 'video') return t('browserPermissionCamera');
+    return t('browserPermissionMicrophone');
+  };
+  const configureBrowserSessionPermissions = (browserSession: Electron.Session): void => {
+    browserSession.setPermissionCheckHandler(
+      (webContents, permission, requestingOrigin, details) => {
+        if (shouldAllowBrowserPanelPermission(permission, Boolean(webContents?.isFocused()))) {
+          return true;
+        }
+        if (
+          !webContents ||
+          !shouldPromptBrowserPanelPermission(permission, webContents.isFocused())
+        ) {
+          return false;
+        }
+        const origin = normalizeBrowserPermissionOrigin(requestingOrigin);
+        return Boolean(
+          origin &&
+          browserPermissions.has(webContents.id, origin, permission, [
+            details.mediaType ?? 'unknown',
+          ]),
+        );
+      },
+    );
+    browserSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      if (shouldAllowBrowserPanelPermission(permission, webContents.isFocused())) {
+        callback(true);
+        return;
+      }
+      if (!shouldPromptBrowserPanelPermission(permission, webContents.isFocused())) {
+        callback(false);
+        return;
+      }
+      const requestDetails = details as BrowserPermissionRequestDetails;
+      const origin = browserPermissionOrigin(webContents, requestDetails);
+      if (!origin) {
+        callback(false);
+        return;
+      }
+      const keys = browserPermissionKeys(origin, permission, requestDetails.mediaTypes);
+      if (!keys.length) {
+        callback(false);
+        return;
+      }
+      if (browserPermissions.has(webContents.id, origin, permission, requestDetails.mediaTypes)) {
+        callback(true);
+        return;
+      }
+      const mediaType = browserPermissionMediaType(permission, requestDetails);
+      const generationIsCurrent = browserPermissions.capture(webContents.id);
+      const isCurrentDocument = (): boolean => !webContents.isDestroyed() && generationIsCurrent();
+      const requestPermission = async (): Promise<void> => {
+        try {
+          if (!isCurrentDocument() || !webContents.isFocused()) {
+            callback(false);
+            return;
+          }
+          const result = await dialog.showMessageBox(mainWindow, {
+            type: 'question',
+            title: t('browserPermissionTitle'),
+            message: t('browserPermissionMessage', {
+              site: new URL(origin).host,
+              permission: browserPermissionLabel(permission, mediaType),
+            }),
+            detail: origin,
+            buttons: [t('browserPermissionAllow'), t('browserPermissionDeny')],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+          });
+          const stillSamePage = isCurrentDocument();
+          const granted = result.response === 0 && stillSamePage;
+          if (granted) {
+            browserPermissions.grant(webContents.id, origin, permission, requestDetails.mediaTypes);
+          }
+          callback(granted);
+        } catch {
+          callback(false);
+        }
+      };
+      browserPermissionPromptQueue = browserPermissionPromptQueue.then(
+        requestPermission,
+        requestPermission,
+      );
+    });
+  };
   const localPreviewScopesByGuestId = new Map<number, string>();
   let browserPanelShortcuts = DEFAULT_BROWSER_PANEL_SHORTCUTS;
   const handleBrowserPanelShortcuts = (event: Electron.IpcMainEvent, value: unknown) => {
@@ -172,14 +311,31 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     if (normalized) browserPanelShortcuts = normalized;
   };
   ipcMain.on(BrowserIpc.PanelSetShortcuts, handleBrowserPanelShortcuts);
+  const handleBrowserHttpAuthResponse = (event: Electron.IpcMainEvent, value: unknown) => {
+    if (
+      event.sender !== mainWindow.webContents ||
+      event.senderFrame !== mainWindow.webContents.mainFrame
+    ) {
+      return;
+    }
+    const response = normalizeBrowserPanelHttpAuthResponse(value);
+    if (!response) return;
+    if (!pendingBrowserHttpAuth.belongsTo(response.id, response.guestId)) return;
+    pendingBrowserHttpAuth.resolve(
+      response.id,
+      response.username === undefined || response.password === undefined
+        ? undefined
+        : { username: response.username, password: response.password },
+    );
+  };
+  ipcMain.on(BrowserIpc.PanelHttpAuthResponse, handleBrowserHttpAuthResponse);
   mainWindow.once('closed', () => {
     ipcMain.off(BrowserIpc.PanelSetShortcuts, handleBrowserPanelShortcuts);
+    ipcMain.off(BrowserIpc.PanelHttpAuthResponse, handleBrowserHttpAuthResponse);
+    pendingBrowserHttpAuth.dispose();
   });
   for (const browserSession of browserPanelSessions.values()) {
-    browserSession.setPermissionCheckHandler(() => false);
-    browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(false);
-    });
+    configureBrowserSessionPermissions(browserSession);
   }
   windowSession.setPermissionCheckHandler((webContents, permission, _origin, details) => {
     if (webContents !== mainWindow.webContents) return false;
@@ -259,6 +415,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
     webPreferences.webviewTag = false;
+    webPreferences.plugins = true;
     webPreferences.spellcheck = true;
     // The Agent dialog action observes and resolves dialogs through the exact
     // guest WebContents debugger. Keep browser-page dialogs enabled while the
@@ -274,11 +431,9 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       const browserSession = session.fromPartition(params.partition);
       browserPanelSessions.set(params.partition, browserSession);
       void registerBrowserProxySession(browserSession);
-      browserSession.setPermissionCheckHandler(() => false);
-      browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-        callback(false);
-      });
+      configureBrowserSessionPermissions(browserSession);
       installBrowserRequestGuard(browserSession);
+      installBrowserPdfDetection(browserSession);
       browserSession.on('will-download', handleBrowserDownload);
     }
   });
@@ -297,8 +452,45 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     const canNavigateWithinPreviewScope = (url: string): boolean => {
       return !localPreviewScopeUrl || isSameLocalHtmlPreviewScope(localPreviewScopeUrl, url);
     };
+    let externalProtocolPromptPending = false;
+    const requestExternalProtocol = (url: string): void => {
+      if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;
+      externalProtocolPromptPending = true;
+      void dialog
+        .showMessageBox(mainWindow, {
+          type: 'question',
+          title: t('browserExternalProtocolTitle'),
+          message: t('browserExternalProtocolMessage'),
+          detail: url.slice(0, 2_048),
+          buttons: [t('browserExternalProtocolConfirm'), t('browserExternalProtocolCancel')],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        })
+        .then(async result => {
+          if (result.response === 0 && !mainWindow.isDestroyed()) await shell.openExternal(url);
+        })
+        .catch(() => {
+          if (!mainWindow.isDestroyed()) {
+            void dialog
+              .showMessageBox(mainWindow, {
+                type: 'error',
+                title: t('browserExternalProtocolTitle'),
+                message: t('browserExternalProtocolFailed'),
+              })
+              .catch((): void => {});
+          }
+        })
+        .finally(() => {
+          externalProtocolPromptPending = false;
+        });
+    };
     guestContents.setWindowOpenHandler(details => {
       const { url } = details;
+      if (isAllowedExternalBrowserUrl(url)) {
+        requestExternalProtocol(url);
+        return { action: 'deny' };
+      }
       if (!canNavigateWithinPreviewScope(url)) return { action: 'deny' };
       if (details.postBody) {
         mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
@@ -342,11 +534,19 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
     });
     guestContents.on('will-navigate', (event, url) => {
       bindLocalPreviewScope(url);
+      if (isAllowedExternalBrowserUrl(url)) {
+        event.preventDefault();
+        requestExternalProtocol(url);
+        return;
+      }
       if (!isAllowedBrowserPanelUrl(url) || !canNavigateWithinPreviewScope(url)) {
         event.preventDefault();
       }
     });
     guestContents.on('will-frame-navigate', event => {
+      if (isBrowserPdfStreamNavigation(event.url, event.isMainFrame, event.frame?.parent?.url)) {
+        return;
+      }
       if (event.isMainFrame) bindLocalPreviewScope(event.url);
       if (!isAllowedBrowserPanelUrl(event.url) || !canNavigateWithinPreviewScope(event.url)) {
         event.preventDefault();
@@ -361,8 +561,80 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       const url = guestContents.getURL();
       if (!localPreviewScopeUrl) recordBrowserHistory(url, guestContents.getTitle());
     });
+    guestContents.on('context-menu', (_contextEvent, params) => {
+      const template: Electron.MenuItemConstructorOptions[] = [];
+      if (params.linkURL && isAllowedBrowserPanelUrl(params.linkURL)) {
+        template.push(
+          {
+            label: t('browserContextOpenLinkNewTab'),
+            click: () => {
+              if (!canNavigateWithinPreviewScope(params.linkURL)) return;
+              mainWindow.webContents.send(BrowserIpc.PanelOpenTab, {
+                url: params.linkURL,
+                openerGuestId: guestContents.id,
+              });
+            },
+          },
+          {
+            label: t('browserContextCopyLink'),
+            click: () => clipboard.writeText(params.linkURL),
+          },
+          { type: 'separator' },
+        );
+      }
+      if (params.isEditable) {
+        template.push(
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+          { type: 'separator' },
+        );
+      } else if (params.selectionText) {
+        template.push({ role: 'copy' }, { type: 'separator' });
+      }
+      if (
+        params.mediaType === 'image' &&
+        params.srcURL &&
+        isAllowedBrowserPanelUrl(params.srcURL)
+      ) {
+        template.push(
+          {
+            label: t('browserContextSaveImage'),
+            click: () => guestContents.downloadURL(params.srcURL),
+          },
+          { type: 'separator' },
+        );
+      }
+      template.push(
+        {
+          label: t('browserContextBack'),
+          enabled: guestContents.navigationHistory.canGoBack(),
+          click: () => guestContents.navigationHistory.goBack(),
+        },
+        {
+          label: t('browserContextForward'),
+          enabled: guestContents.navigationHistory.canGoForward(),
+          click: () => guestContents.navigationHistory.goForward(),
+        },
+        { label: t('browserContextReload'), click: () => guestContents.reload() },
+      );
+      Menu.buildFromTemplate(template).popup({ window: mainWindow });
+    });
     guestContents.once('destroyed', () => {
       localPreviewScopesByGuestId.delete(guestContents.id);
+      browserPermissions.destroy(guestContents.id);
+      pendingBrowserHttpAuth.cancelGuest(guestContents.id);
+    });
+    guestContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+      if (isInPlace) return;
+      browserPermissions.invalidate(guestContents.id);
+      if (isMainFrame) {
+        pendingBrowserHttpAuth.cancelGuest(guestContents.id);
+      }
     });
     guestContents.on('login', (event, _details, authInfo, callback) => {
       const credentials = options.getProxyCredentials();
@@ -371,12 +643,26 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         credentials &&
         authInfo.host.toLowerCase() === credentials.host.toLowerCase() &&
         authInfo.port === credentials.port;
-      if (!matchesConfiguredProxy) {
+      if (matchesConfiguredProxy) {
+        event.preventDefault();
+        callback(credentials.username, credentials.password);
+        return;
+      }
+      if (authInfo.isProxy || mainWindow.isDestroyed() || guestContents.isDestroyed()) {
         callback();
         return;
       }
       event.preventDefault();
-      callback(credentials.username, credentials.password);
+      const id = randomUUID();
+      pendingBrowserHttpAuth.add(id, guestContents.id, callback);
+      mainWindow.webContents.send(BrowserIpc.PanelHttpAuthRequest, {
+        id,
+        guestId: guestContents.id,
+        host: authInfo.host,
+        port: authInfo.port,
+        realm: authInfo.realm,
+        scheme: authInfo.scheme,
+      });
     });
   });
   const installBrowserRequestGuard = (browserSession: Electron.Session) =>
@@ -422,7 +708,27 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         })
         .catch(() => callback({ cancel: true }));
     });
-  browserPanelSessions.forEach(installBrowserRequestGuard);
+  const installBrowserPdfDetection = (browserSession: Electron.Session) =>
+    browserSession.webRequest.onHeadersReceived((details, callback) => {
+      const contentType = Object.entries(details.responseHeaders ?? {}).find(
+        ([name]) => name.toLowerCase() === 'content-type',
+      )?.[1];
+      if (
+        details.resourceType === 'mainFrame' &&
+        details.webContentsId &&
+        contentType?.some(value => value.toLowerCase().includes('application/pdf'))
+      ) {
+        mainWindow.webContents.send(BrowserIpc.PanelPdfDetected, {
+          url: details.url,
+          guestId: details.webContentsId,
+        });
+      }
+      callback({});
+    });
+  browserPanelSessions.forEach(browserSession => {
+    installBrowserRequestGuard(browserSession);
+    installBrowserPdfDetection(browserSession);
+  });
   const pendingDownloads = new Set<Electron.DownloadItem>();
   const reservedDownloadPaths = new Set<string>();
   const downloadDefaultDirectories = new WeakMap<Electron.DownloadItem, string>();

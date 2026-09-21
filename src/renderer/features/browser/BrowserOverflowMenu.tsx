@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom';
 import { i18nService } from '@/services/i18n';
 
 export type BrowserOverflowAction =
+  | 'pdf-viewer'
   | 'find'
   | 'print'
   | 'device-tools'
@@ -34,12 +35,18 @@ export default function BrowserOverflowMenu({
   onAction,
   onZoomChange,
   onDismiss,
+  disabledActions = [],
+  disabledActionHint,
+  pdfCompatibilityMode,
 }: {
   anchor: { left: number; right: number; top: number; bottom: number };
   zoomFactor: number;
   onAction: (action: BrowserOverflowAction) => void;
   onZoomChange: (factor: number) => void;
   onDismiss: () => void;
+  disabledActions?: readonly BrowserOverflowAction[];
+  disabledActionHint?: string;
+  pdfCompatibilityMode?: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const iconClass = 'h-4 w-4 shrink-0 text-secondary';
@@ -49,6 +56,11 @@ export default function BrowserOverflowMenu({
     icon: React.ReactNode;
     trailing?: React.ReactNode;
   }> = [
+    {
+      action: 'pdf-viewer',
+      label: i18nService.t(pdfCompatibilityMode ? 'browserPdfUseNative' : 'browserPdfUseCompatibility'),
+      icon: <ArrowPathIcon className={iconClass} />,
+    },
     {
       action: 'find',
       label: i18nService.t('browserMenuFind'),
@@ -133,10 +145,16 @@ export default function BrowserOverflowMenu({
     const item = items.find(candidate => candidate.action === action)!;
     return (
       <button
+        disabled={disabledActions.includes(action)}
+        title={
+          disabledActions.includes(action)
+            ? disabledActionHint ?? i18nService.t('browserPdfActionUnavailable')
+            : undefined
+        }
         key={action}
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm hover:bg-surface-raised focus:bg-surface-raised focus:outline-none"
+        className="flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm hover:bg-surface-raised focus:bg-surface-raised focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
         onClick={() => onAction(action)}
       >
         {item.icon}
@@ -164,6 +182,7 @@ export default function BrowserOverflowMenu({
       >
         {renderItem('find')}
         {renderItem('print')}
+        {pdfCompatibilityMode !== undefined && renderItem('pdf-viewer')}
         <div className="my-1 border-t border-border pt-1">
           <div className="flex items-center gap-3 rounded-md px-2.5 py-1.5 text-sm">
             <span className="min-w-0 flex-1">{i18nService.t('browserMenuZoom')}</span>

@@ -31,13 +31,14 @@ export const registerContentSecurityPolicy = ({
     }
     const cspDirectives = [
       "default-src 'self'",
+      // PDF.js uses bundled WebAssembly decoders; JavaScript eval remains disabled.
       isDev
-        ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}`
-        : "script-src 'self'",
+        ? `script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}`
+        : "script-src 'self' 'wasm-unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' blob: data: https: http: localfile:",
       // 允许连接到所有域名，不做限制
-      'connect-src *',
+      "connect-src 'self' *",
       "font-src 'self' data:",
       "media-src 'self' blob:",
       "worker-src 'self' blob:",

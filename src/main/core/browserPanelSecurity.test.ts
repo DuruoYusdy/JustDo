@@ -8,10 +8,74 @@ import {
   stepBrowserZoomFactor,
 } from '../../shared/browser';
 import {
+  browserPermissionKeys,
   isAllowedBrowserPanelUrl,
+  isAllowedExternalBrowserUrl,
   isAllowedMainWindowNavigation,
   isBlockedBrowserMetadataHost,
+  isBrowserPdfStreamNavigation,
+  shouldAllowBrowserPanelPermission,
+  shouldPromptBrowserPanelPermission,
 } from './browserPanelSecurity';
+
+describe('browser panel capabilities', () => {
+  it('allows only the built-in PDF viewer child stream, never website or top-level extension navigation', () => {
+    const viewer = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html';
+    const stream = viewer.replace('index.html', '0091021c-34fe-4486-af22-ab6f723d0442');
+    expect(isBrowserPdfStreamNavigation(stream, false, viewer)).toBe(true);
+    expect(isBrowserPdfStreamNavigation(stream, true, viewer)).toBe(false);
+    expect(isBrowserPdfStreamNavigation(stream, false, 'https://example.com/')).toBe(false);
+    expect(isBrowserPdfStreamNavigation(stream, false, undefined)).toBe(false);
+    expect(isBrowserPdfStreamNavigation(viewer, false, viewer)).toBe(false);
+    expect(isBrowserPdfStreamNavigation(`${stream}?redirect=https://example.com`, false, viewer)).toBe(false);
+    expect(isBrowserPdfStreamNavigation('chrome-extension://other/index.html', false, viewer)).toBe(false);
+    expect(isAllowedBrowserPanelUrl(stream)).toBe(false);
+  });
+  it('does not treat a microphone grant as camera permission', () => {
+    const grants = new Set(browserPermissionKeys('https://example.test', 'media', ['audio']));
+    expect(
+      browserPermissionKeys('https://example.test', 'media', ['video']).every(key =>
+        grants.has(key),
+      ),
+    ).toBe(false);
+    expect(
+      browserPermissionKeys('https://example.test', 'media', ['audio']).every(key =>
+        grants.has(key),
+      ),
+    ).toBe(true);
+    expect(browserPermissionKeys('https://example.test', 'media', ['unknown'])).toEqual([]);
+    expect(browserPermissionKeys('https://example.test', 'media')).toEqual([]);
+  });
+  it('allows only focused low-risk browser permissions without prompting', () => {
+    expect(shouldAllowBrowserPanelPermission('fullscreen', true)).toBe(true);
+    expect(shouldAllowBrowserPanelPermission('clipboard-sanitized-write', true)).toBe(true);
+    expect(shouldAllowBrowserPanelPermission('fullscreen', false)).toBe(false);
+    expect(shouldAllowBrowserPanelPermission('clipboard-read', true)).toBe(false);
+    expect(shouldAllowBrowserPanelPermission('media', true)).toBe(false);
+  });
+
+  it('prompts for privacy permissions only from the focused browser guest', () => {
+    expect(shouldPromptBrowserPanelPermission('media', true)).toBe(true);
+    expect(shouldPromptBrowserPanelPermission('geolocation', true)).toBe(true);
+    expect(shouldPromptBrowserPanelPermission('notifications', true)).toBe(true);
+    expect(shouldPromptBrowserPanelPermission('media', false)).toBe(false);
+    expect(shouldPromptBrowserPanelPermission('display-capture', true)).toBe(false);
+    expect(shouldPromptBrowserPanelPermission('clipboard-read', true)).toBe(false);
+  });
+
+  it.each([
+    'mailto:team@example.com',
+    'tel:+8613800138000',
+    'sms:+8613800138000',
+    'magnet:?xt=urn:btih:example',
+    'webcal://example.com/calendar.ics',
+  ])('allows the safe external URL %s', url => expect(isAllowedExternalBrowserUrl(url)).toBe(true));
+
+  it.each(['https://example.com', 'file:///C:/secret.txt', 'javascript:1'])(
+    'rejects the external URL %s',
+    url => expect(isAllowedExternalBrowserUrl(url)).toBe(false),
+  );
+});
 
 describe('isAllowedBrowserPanelUrl', () => {
   it('allows only blank and HTTP(S) guest navigation', () => {
@@ -147,15 +211,17 @@ describe('browser guest zoom', () => {
   });
 
   it('maps only primary-modified vertical wheel input to zoom steps', () => {
-    expect(resolveBrowserGuestWheelZoomDirection({ ctrlKey: true, metaKey: false, deltaY: -1 })).toBe(
-      1,
-    );
-    expect(resolveBrowserGuestWheelZoomDirection({ ctrlKey: false, metaKey: true, deltaY: 1 })).toBe(
-      -1,
-    );
+    expect(
+      resolveBrowserGuestWheelZoomDirection({ ctrlKey: true, metaKey: false, deltaY: -1 }),
+    ).toBe(1);
+    expect(
+      resolveBrowserGuestWheelZoomDirection({ ctrlKey: false, metaKey: true, deltaY: 1 }),
+    ).toBe(-1);
     expect(
       resolveBrowserGuestWheelZoomDirection({ ctrlKey: false, metaKey: false, deltaY: -1 }),
     ).toBeNull();
-    expect(resolveBrowserGuestWheelZoomDirection({ ctrlKey: true, metaKey: false, deltaY: 0 })).toBeNull();
+    expect(
+      resolveBrowserGuestWheelZoomDirection({ ctrlKey: true, metaKey: false, deltaY: 0 }),
+    ).toBeNull();
   });
 });

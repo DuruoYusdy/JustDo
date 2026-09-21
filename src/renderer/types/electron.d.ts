@@ -87,7 +87,12 @@ type BrowserMode = import('../../shared/browser').BrowserMode;
 type BrowserModeSwitchAvailabilityResult =
   import('../../shared/browser').BrowserModeSwitchAvailabilityResult;
 type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
+type BrowserPdfLoadRequest = import('../../shared/browser').BrowserPdfLoadRequest;
+type BrowserPdfLoadResult = import('../../shared/browser').BrowserPdfLoadResult;
 type BrowserPanelOpenTabEvent = import('../../shared/browser').BrowserPanelOpenTabEvent;
+type BrowserPanelHttpAuthRequest = import('../../shared/browser').BrowserPanelHttpAuthRequest;
+type BrowserPanelHttpAuthResponse = import('../../shared/browser').BrowserPanelHttpAuthResponse;
+type BrowserPanelPdfDetectedEvent = import('../../shared/browser').BrowserPanelPdfDetectedEvent;
 type BrowserAgentSessionEvent = import('../../shared/browser').BrowserAgentSessionEvent;
 type BrowserAgentTabReference = import('../../shared/browser').BrowserAgentTabReference;
 type BrowserAgentTabRegistration = import('../../shared/browser').BrowserAgentTabRegistration;
@@ -424,6 +429,8 @@ interface IElectronAPI {
       filePath: string,
       workingDirectory?: string,
     ) => Promise<BrowserLocalHtmlPreviewResult>;
+    loadPdf: (request: BrowserPdfLoadRequest) => Promise<BrowserPdfLoadResult>;
+    cancelPdf: (requestId: string) => void;
     getStatus: () => Promise<BrowserStatusResult>;
     canSetMode: () => Promise<BrowserModeSwitchAvailabilityResult>;
     setMode: (mode: BrowserMode) => Promise<BrowserModeUpdateResult>;
@@ -434,6 +441,14 @@ interface IElectronAPI {
     copyExtensionPairing: () => Promise<BrowserActionResult>;
     testExtensionConnection: () => Promise<BrowserConnectionTestResult>;
     onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => () => void;
+    onPanelHttpAuthRequest: (
+      callback: (request: BrowserPanelHttpAuthRequest) => void,
+    ) => () => void;
+    respondToPanelHttpAuth: (response: BrowserPanelHttpAuthResponse) => void;
+    onPanelHttpAuthDismissed: (
+      callback: (event: import('../../shared/browser').BrowserPanelHttpAuthDismissed) => void,
+    ) => () => void;
+    onPanelPdfDetected: (callback: (event: BrowserPanelPdfDetectedEvent) => void) => () => void;
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) => void;
     onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => () => void;
     registerAgentTab: (registration: BrowserAgentTabRegistration) => void;

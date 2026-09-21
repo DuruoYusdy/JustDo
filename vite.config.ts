@@ -6,6 +6,7 @@ import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 
 import packageJson from './package.json';
+import { pdfAssetsPlugin } from './scripts/vite-pdf-assets.mjs';
 
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
@@ -21,6 +22,7 @@ const escapedProductName = packageJson.productName.replace(
 
 export default defineConfig({
   plugins: [
+    pdfAssetsPlugin(dependencyRoot),
     {
       name: 'product-name-html',
       transformIndexHtml(html) {
