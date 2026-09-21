@@ -416,20 +416,70 @@ const buildPosixExportScript = (env: NodeJS.ProcessEnv): string => {
 export type TerminalCandidate = {
   command: string;
   args: string[];
+  windowsHide?: boolean;
+};
+
+export const resolveWindowsPowerShell = (env: NodeJS.ProcessEnv): string => {
+  for (const directory of (env.PATH || env.Path)?.split(path.delimiter) ?? []) {
+    const normalizedDirectory = directory.replace(/^"|"$/g, '').trim();
+    if (!path.isAbsolute(normalizedDirectory)) continue;
+    const candidate = path.join(normalizedDirectory, 'pwsh.exe');
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  const systemRoot = env.SystemRoot || process.env.SystemRoot || 'C:\\Windows';
+  const bundledPowerShell = path.join(
+    systemRoot,
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  );
+  return fs.existsSync(bundledPowerShell) ? bundledPowerShell : 'powershell.exe';
 };
 
 export const buildWindowsTerminalCandidates = (
   commandProcessor: string,
+  powershellPath: string,
   cwd: string,
-  setupCommand: string,
+  terminalTitle: string,
 ): TerminalCandidate[] => [
   {
     command: commandProcessor,
-    args: ['/d', '/k', setupCommand],
+    // Electron is a GUI process and has no console to inherit. Launching cmd.exe
+    // directly can therefore leave a live command processor with no visible
+    // window. `start` explicitly creates the interactive terminal window while
+    // this short-lived launcher remains hidden.
+    args: [
+      '/d',
+      '/c',
+      'start',
+      '',
+      powershellPath,
+      '-NoLogo',
+      '-NoExit',
+      '-Command',
+      `$Host.UI.RawUI.WindowTitle = '${terminalTitle.replace(/'/g, "''")}'`,
+    ],
+    windowsHide: true,
+  },
+  {
+    command: commandProcessor,
+    args: [
+      '/d',
+      '/c',
+      'start',
+      '',
+      commandProcessor,
+      '/d',
+      '/k',
+      `title ${escapeWindowsCmdValue(terminalTitle)}`,
+    ],
+    windowsHide: true,
   },
   {
     command: 'wt.exe',
-    args: ['-w', 'new', 'new-tab', '-d', cwd, commandProcessor, '/d', '/k', setupCommand],
+    args: ['-w', 'new', 'new-tab', '-d', cwd, powershellPath, '-NoLogo', '-NoExit'],
   },
 ];
 
@@ -450,6 +500,7 @@ export const spawnDetachedTerminal = (
     };
     const child = spawnProcess(candidate.command, candidate.args, {
       ...options,
+      windowsHide: candidate.windowsHide ?? options.windowsHide,
       detached: true,
       stdio: 'ignore',
     });
@@ -482,9 +533,15 @@ const launchTerminal = async (options: {
     const commandProcessor =
       process.env.ComSpec ||
       path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
-    const setupCommand = `title ${escapeWindowsCmdValue(`${PRODUCT_NAME} Terminal`)}`;
+    const powershellPath = resolveWindowsPowerShell(env);
+    const terminalTitle = `${PRODUCT_NAME} Terminal`;
     console.log(`[OpenClawEngine] Opening OpenClaw terminal on Windows, cwd=${cwd}`);
-    for (const candidate of buildWindowsTerminalCandidates(commandProcessor, cwd, setupCommand)) {
+    for (const candidate of buildWindowsTerminalCandidates(
+      commandProcessor,
+      powershellPath,
+      cwd,
+      terminalTitle,
+    )) {
       const result = await spawnDetachedTerminal(candidate, { cwd, env, windowsHide: false });
       if (result.success) {
         console.log(`[OpenClawEngine] Opened Windows terminal via ${candidate.command}`);

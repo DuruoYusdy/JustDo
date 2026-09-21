@@ -18,6 +18,7 @@ import {
   readOpenClawAssistantMedia,
   registerOpenClawEngineHandlers,
   resolveExternalTerminalCwd,
+  resolveWindowsPowerShell,
   restartOpenClawGatewayForUser,
   spawnDetachedTerminal,
 } from './engine';
@@ -437,13 +438,54 @@ describe('OpenClaw terminal environment', () => {
 });
 
 describe('external terminal startup', () => {
-  test('launches the system command processor first with Windows Terminal as fallback', () => {
+  test('prefers PowerShell 7 when pwsh.exe is available on PATH', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'powershell-path-'));
+    const executable = path.join(directory, 'pwsh.exe');
+    fs.writeFileSync(executable, '');
+    try {
+      expect(resolveWindowsPowerShell({ PATH: directory })).toBe(executable);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('opens Windows PowerShell first with command prompt and Windows Terminal fallbacks', () => {
     expect(
-      buildWindowsTerminalCandidates('C:\\Windows\\System32\\cmd.exe', 'C:\\workspace', 'echo ready'),
+      buildWindowsTerminalCandidates(
+        'C:\\Windows\\System32\\cmd.exe',
+        'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        'C:\\workspace',
+        "JustDo's Terminal",
+      ),
     ).toEqual([
       {
         command: 'C:\\Windows\\System32\\cmd.exe',
-        args: ['/d', '/k', 'echo ready'],
+        args: [
+          '/d',
+          '/c',
+          'start',
+          '',
+          'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+          '-NoLogo',
+          '-NoExit',
+          '-Command',
+          "$Host.UI.RawUI.WindowTitle = 'JustDo''s Terminal'",
+        ],
+        windowsHide: true,
+      },
+      {
+        command: 'C:\\Windows\\System32\\cmd.exe',
+        args: [
+          '/d',
+          '/c',
+          'start',
+          '',
+          'C:\\Windows\\System32\\cmd.exe',
+          '/d',
+          '/k',
+          "title JustDo's Terminal",
+        ],
+        windowsHide: true,
       },
       {
         command: 'wt.exe',
@@ -453,10 +495,9 @@ describe('external terminal startup', () => {
           'new-tab',
           '-d',
           'C:\\workspace',
-          'C:\\Windows\\System32\\cmd.exe',
-          '/d',
-          '/k',
-          'echo ready',
+          'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+          '-NoLogo',
+          '-NoExit',
         ],
       },
     ]);
@@ -495,6 +536,25 @@ describe('external terminal startup', () => {
       error: 'Terminal launcher exited with code 1',
     });
     expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  test('lets a terminal candidate hide only its launcher window', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    child.unref = vi.fn();
+    const spawnProcess = vi.fn(() => child) as unknown as typeof spawn;
+    const launched = spawnDetachedTerminal(
+      { command: 'cmd.exe', args: [], windowsHide: true },
+      { windowsHide: false },
+      spawnProcess,
+    );
+
+    expect(spawnProcess).toHaveBeenCalledWith('cmd.exe', [], {
+      windowsHide: true,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.emit('exit', 0, null);
+    await expect(launched).resolves.toEqual({ success: true });
   });
 
   test('can wait for a short-lived launcher to exit without assuming startup success', async () => {

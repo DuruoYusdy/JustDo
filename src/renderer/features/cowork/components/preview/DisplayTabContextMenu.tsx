@@ -39,7 +39,7 @@ const DisplayTabContextMenu = ({
   y,
 }: DisplayTabContextMenuProps) => {
   const menuRef = useRef<HTMLDivElement>(null);
-  const left = Math.max(8, Math.min(x, window.innerWidth - 232));
+  const left = Math.max(8, Math.min(x, window.innerWidth - 296));
   const estimatedHeight = 16 + (items.length + 3) * 36 + (items.length ? 5 : 0);
   const top = Math.max(8, Math.min(y, window.innerHeight - estimatedHeight));
 
@@ -121,7 +121,7 @@ const DisplayTabContextMenu = ({
         ref={menuRef}
         role="menu"
         aria-label={i18nService.t('coworkDisplayTabMenu')}
-        className="fixed z-[110] w-56 overflow-y-auto rounded-lg border border-border bg-background p-1.5 text-sm text-foreground shadow-2xl"
+        className="fixed z-[110] w-72 overflow-y-auto rounded-lg border border-border bg-background p-1.5 text-sm text-foreground shadow-2xl"
         style={{ left, top, maxHeight: 'calc(100vh - 16px)' }}
         onContextMenu={event => event.preventDefault()}
         onKeyDown={handleKeyDown}
@@ -137,7 +137,7 @@ const DisplayTabContextMenu = ({
                 onClick={() => runAction(item.onSelect)}
               >
                 {item.icon}
-                <span>{item.label}</span>
+                <span className="whitespace-nowrap">{item.label}</span>
               </button>
             ))}
           </div>
@@ -152,7 +152,7 @@ const DisplayTabContextMenu = ({
             onClick={() => runAction(item.onSelect)}
           >
             <XMarkIcon className="h-4 w-4 shrink-0" />
-            <span>{item.label}</span>
+            <span className="whitespace-nowrap">{item.label}</span>
           </button>
         ))}
       </div>

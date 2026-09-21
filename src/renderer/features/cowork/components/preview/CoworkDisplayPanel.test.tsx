@@ -171,8 +171,14 @@ describe('CoworkDisplayPanel', () => {
       clientX: 40,
       clientY: 50,
     });
-    expect(screen.getByRole('menu', { name: 'Tab menu' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Open system terminal' })).toBeTruthy();
+    const menu = screen.getByRole('menu', { name: 'Tab menu' });
+    const openSystemTerminalItem = screen.getByRole('menuitem', {
+      name: 'Open system terminal',
+    });
+    expect(menu.classList.contains('w-72')).toBe(true);
+    expect(
+      openSystemTerminalItem.querySelector('span')?.classList.contains('whitespace-nowrap'),
+    ).toBe(true);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open system terminal' }));
     expect(openSystemTerminal).toHaveBeenCalledTimes(1);
     await waitFor(() =>
