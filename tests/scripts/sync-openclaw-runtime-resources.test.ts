@@ -5,11 +5,22 @@ import path from 'node:path';
 import { expect, test, vi } from 'vitest';
 
 const {
+  renameExtensionIntoPlace,
   resolveExtensionInstallTimeoutMs,
   syncDocChannels,
   syncGatewayConfigChannels,
   syncLocalExtensions,
 } = require('../../scripts/sync-openclaw-runtime-resources.cjs') as {
+  renameExtensionIntoPlace: (
+    sourceDir: string,
+    targetDir: string,
+    options?: {
+      rename?: (sourceDir: string, targetDir: string) => void;
+      sleep?: (delayMs: number) => void;
+      maxRetries?: number;
+      retryDelayMs?: number;
+    },
+  ) => void;
   resolveExtensionInstallTimeoutMs: (env?: Record<string, string | undefined>) => number;
   syncDocChannels: (
     repoRoot: string,
@@ -45,6 +56,41 @@ const {
     copied: string[];
   };
 };
+
+test('retries transient Windows errors while moving an extension into place', () => {
+  const rename = vi
+    .fn<(sourceDir: string, targetDir: string) => void>()
+    .mockImplementationOnce(() => {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    })
+    .mockImplementationOnce(() => {
+      throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+    })
+    .mockImplementation(() => undefined);
+  const sleep = vi.fn<(delayMs: number) => void>();
+
+  renameExtensionIntoPlace('staged', 'installed', {
+    rename,
+    sleep,
+    maxRetries: 2,
+    retryDelayMs: 25,
+  });
+
+  expect(rename).toHaveBeenCalledTimes(3);
+  expect(sleep.mock.calls).toEqual([[25], [25]]);
+});
+
+test('does not retry a non-transient extension rename error', () => {
+  const error = Object.assign(new Error('source is missing'), { code: 'ENOENT' });
+  const rename = vi.fn(() => {
+    throw error;
+  });
+  const sleep = vi.fn();
+
+  expect(() => renameExtensionIntoPlace('staged', 'installed', { rename, sleep })).toThrow(error);
+  expect(rename).toHaveBeenCalledOnce();
+  expect(sleep).not.toHaveBeenCalled();
+});
 
 test('uses a bounded configurable timeout for locked extension installs', () => {
   expect(resolveExtensionInstallTimeoutMs({})).toBe(20 * 60 * 1000);

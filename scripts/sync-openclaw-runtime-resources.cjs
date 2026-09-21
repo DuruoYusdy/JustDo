@@ -95,6 +95,33 @@ const EXTENSION_ASSEMBLY_MANIFEST = '.justdo-extension-assembly.json';
 const EXTENSION_ASSEMBLY_VERSION = 2;
 const DEFAULT_EXTENSION_NPM_CI_TIMEOUT_MS = 20 * 60 * 1000;
 const MAX_EXTENSION_NPM_CI_TIMEOUT_MS = 60 * 60 * 1000;
+const EXTENSION_RENAME_MAX_RETRIES = 5;
+const EXTENSION_RENAME_RETRY_DELAY_MS = 200;
+const RETRYABLE_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+
+function sleepSync(delayMs) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function renameExtensionIntoPlace(sourceDir, targetDir, options = {}) {
+  const rename = options.rename || fs.renameSync;
+  const sleep = options.sleep || sleepSync;
+  const maxRetries = options.maxRetries ?? EXTENSION_RENAME_MAX_RETRIES;
+  const retryDelayMs = options.retryDelayMs ?? EXTENSION_RENAME_RETRY_DELAY_MS;
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      rename(sourceDir, targetDir);
+      return;
+    } catch (error) {
+      const isRetryable = RETRYABLE_RENAME_ERROR_CODES.has(error?.code);
+      if (!isRetryable || attempt >= maxRetries) {
+        throw error;
+      }
+      sleep(retryDelayMs);
+    }
+  }
+}
 
 function readJsonFile(filePath) {
   try {
@@ -420,7 +447,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         );
       }
       fs.rmSync(extensionTargetDir, { recursive: true, force: true });
-      fs.renameSync(stagingDir, extensionTargetDir);
+      renameExtensionIntoPlace(stagingDir, extensionTargetDir);
       copied.push(entry.name);
     } finally {
       fs.rmSync(stagingRoot, { recursive: true, force: true });
@@ -492,6 +519,7 @@ if (require.main === module) {
 
 module.exports = {
   installProductionDependencies,
+  renameExtensionIntoPlace,
   resolveExtensionInstallTimeoutMs,
   resolveRuntimeInstallTarget,
   syncDocChannels,
