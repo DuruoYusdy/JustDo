@@ -63,7 +63,7 @@ describe('ExternalAgentsSettingsSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'externalAgentsTest Hermes' }));
 
     expect(testAgent).toHaveBeenCalledWith('hermes');
-    expect(await screen.findByText(/externalAgentsTestSucceeded/)).toBeTruthy();
+    expect(await screen.findByText(/externalAgentsTestPassed/)).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -151,7 +151,7 @@ describe('ExternalAgentsSettingsSection', () => {
       'deepseek-harness',
       'hermes',
     ]);
-    expect(await screen.findAllByText('externalAgentsTestSucceeded')).toHaveLength(5);
+    expect(await screen.findAllByText('externalAgentsTestPassed')).toHaveLength(5);
     expect(onChange).not.toHaveBeenCalled();
   });
 

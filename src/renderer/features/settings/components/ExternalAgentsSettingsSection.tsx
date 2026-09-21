@@ -408,6 +408,7 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
             const enabled = settings.agents[definition.id].enabled;
             const testState = testStates[definition.id];
             const isCurrentTest = testingAgentId === definition.id;
+            const testSucceeded = !isCurrentTest && testState?.status === 'success';
             const errorExpanded = Boolean(expandedErrors[definition.id]);
 
             return (
@@ -430,20 +431,61 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
                   </span>
                 ) : null}
 
-                <div className="flex min-w-0 items-start gap-3.5">
+                <div className="flex min-w-0 items-center gap-3">
                   <span
                     className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border shadow-sm ${AGENT_ICON_STYLES[definition.id]}`}
                   >
                     <ExternalAgentBrandIcon agentId={definition.id} className="h-6 w-6" />
                   </span>
-                  <div className="flex min-h-11 min-w-0 flex-1 items-center">
-                    <h3 className="truncate text-sm font-semibold text-foreground">
-                      {definition.name}
-                    </h3>
+                  <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                    {definition.name}
+                  </h3>
+                  <div className="flex w-[92px] shrink-0 flex-col gap-1 rounded-xl border border-border/60 bg-surface-raised/55 p-1 shadow-inner">
+                    <button
+                      type="button"
+                      onClick={() => void testAgent(definition.id)}
+                      disabled={isTesting}
+                      className={`inline-flex h-7 w-full items-center justify-center gap-1.5 rounded-lg text-[11px] font-semibold shadow-sm ring-1 ring-inset transition-all focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45 ${
+                        testSucceeded
+                          ? 'bg-success/10 text-success ring-success/20 hover:bg-success/15 focus-visible:ring-success/25'
+                          : 'bg-surface text-primary ring-border/60 hover:bg-primary/[0.07] hover:ring-primary/25 focus-visible:ring-primary/25'
+                      }`}
+                      aria-label={`${i18nService.t('externalAgentsTest')} ${definition.name}`}
+                    >
+                      {isCurrentTest ? (
+                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-current/25 border-t-current" />
+                      ) : testSucceeded ? (
+                        <CheckCircleIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      ) : (
+                        <SignalIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      )}
+                      {i18nService.t(
+                        isCurrentTest
+                          ? 'externalAgentsTesting'
+                          : testSucceeded
+                            ? 'externalAgentsTestPassed'
+                            : 'externalAgentsTest',
+                      )}
+                    </button>
+                    <label className="group relative inline-flex h-7 w-full cursor-pointer items-center justify-between rounded-lg px-1.5 transition-colors hover:bg-surface/80">
+                      <span className="text-[10px] font-medium text-secondary transition-colors group-hover:text-foreground">
+                        {i18nService.t(
+                          enabled ? 'externalAgentsEnabledState' : 'externalAgentsDisabledState',
+                        )}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={event => updateAgent(definition.id, event.target.checked)}
+                        className="peer sr-only"
+                        aria-label={`${definition.name} ${i18nService.t('enabled')}`}
+                      />
+                      <span className="relative h-4 w-7 rounded-full bg-border-input shadow-inner transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-3 after:w-3 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-primary peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30" />
+                    </label>
                   </div>
                 </div>
 
-                {isCurrentTest || testState ? (
+                {isCurrentTest || testState?.status === 'error' ? (
                   <div className="mt-3">
                     {isCurrentTest ? (
                       <div
@@ -466,15 +508,6 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
                           <span className="h-1 w-1 animate-bounce rounded-full bg-primary [animation-delay:-0.15s]" />
                           <span className="h-1 w-1 animate-bounce rounded-full bg-primary" />
                         </span>
-                      </div>
-                    ) : testState?.status === 'success' ? (
-                      <div
-                        className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        <CheckCircleIcon className="h-3.5 w-3.5 shrink-0" />
-                        {i18nService.t('externalAgentsTestSucceeded')}
                       </div>
                     ) : testState?.status === 'error' ? (
                       <div
@@ -519,38 +552,6 @@ const ExternalAgentsSettingsSection: React.FC<Props> = ({
                     ) : null}
                   </div>
                 ) : null}
-
-                <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/55 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => void testAgent(definition.id)}
-                    disabled={isTesting}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/80 bg-surface px-2.5 text-xs font-medium text-foreground shadow-sm transition-all hover:border-primary/30 hover:bg-primary/[0.04] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-45"
-                    aria-label={`${i18nService.t('externalAgentsTest')} ${definition.name}`}
-                  >
-                    {isCurrentTest ? (
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current/25 border-t-current" />
-                    ) : (
-                      <SignalIcon className="h-3.5 w-3.5" />
-                    )}
-                    {i18nService.t(isCurrentTest ? 'externalAgentsTesting' : 'externalAgentsTest')}
-                  </button>
-                  <label className="group relative inline-flex cursor-pointer items-center gap-2.5">
-                    <span className="text-[11px] font-medium text-secondary transition-colors group-hover:text-foreground">
-                      {i18nService.t(
-                        enabled ? 'externalAgentsEnabledState' : 'externalAgentsDisabledState',
-                      )}
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={event => updateAgent(definition.id, event.target.checked)}
-                      className="peer sr-only"
-                      aria-label={`${definition.name} ${i18nService.t('enabled')}`}
-                    />
-                    <span className="relative h-5 w-9 rounded-full bg-border-input transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-primary peer-checked:after:translate-x-4 peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30" />
-                  </label>
-                </div>
               </article>
             );
           })}

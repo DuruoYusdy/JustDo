@@ -59,7 +59,7 @@ const installElectronBrowserMock = (overrides: Record<string, unknown> = {}) => 
     openExtensionManagement: vi.fn(),
     revealExtension: vi.fn(),
     copyExtensionPairing: vi.fn(),
-    testExtensionConnection: vi.fn(),
+    testExtensionConnection: vi.fn().mockResolvedValue({ success: true }),
     emitEngineProgress: (status: OpenClawEngineStatus) => engineProgressListener?.(status),
     ...overrides,
   };
@@ -132,6 +132,9 @@ describe('BrowserSettingsTab extension connection checks', () => {
     fireEvent.click(screen.getByRole('radio', { name: /browserModeEmbeddedTitle/ }));
     await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.Embedded));
     expect(screen.getByText('browserModeEmbeddedActive')).toBeTruthy();
+    const embeddedSettings = screen.getByText('browserEmbeddedSettingsTitle').closest('section');
+    expect(embeddedSettings?.textContent).toContain('browserGeneralSettingsTitle');
+    expect(embeddedSettings?.textContent).toContain('browserDownloadSettingsTitle');
   });
 
   test('persists the selected address bar search engine', async () => {
@@ -233,7 +236,7 @@ describe('BrowserSettingsTab extension connection checks', () => {
     ).toBe(false);
   });
 
-  test('discards a pending extension result after switching browser modes', async () => {
+  test('keeps installation independent while showing pairing only for extension mode', async () => {
     const first = deferred<{ success: true }>();
     const second = deferred<{ success: true }>();
     const testExtensionConnection = vi
@@ -246,15 +249,23 @@ describe('BrowserSettingsTab extension connection checks', () => {
 
     render(<BrowserSettingsTab />);
     await waitFor(() => expect(testExtensionConnection).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('browserExtensionSectionTitle')).toBeTruthy();
+    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.getByText('browserExtensionStepPairTitle')).toBeTruthy();
+    expect(screen.getByText('browserModeChromeGroupTitle')).toBeTruthy();
+    expect(screen.getByText('browserModeEmbeddedGroupTitle')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('radio', { name: /browserModeIsolatedTitle/ }));
     await waitFor(() => expect(screen.getByText('browserModeIsolatedActive')).toBeTruthy());
-
-    fireEvent.click(screen.getByRole('radio', { name: /browserModeExtensionTitle/ }));
-    await waitFor(() => expect(testExtensionConnection).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('browserExtensionStepInstallTitle')).toBeTruthy();
+    expect(screen.queryByText('browserExtensionStepPairTitle')).toBeNull();
 
     await act(async () => first.resolve({ success: true }));
     expect(screen.queryByText('browserConnectionVerified')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeExtensionTitle/ }));
+    await waitFor(() => expect(testExtensionConnection).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('browserExtensionStepPairTitle')).toBeTruthy();
     expect(browser.setMode).toHaveBeenNthCalledWith(1, BrowserMode.Isolated);
     expect(browser.setMode).toHaveBeenNthCalledWith(2, BrowserMode.Extension);
   });

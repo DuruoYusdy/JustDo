@@ -380,7 +380,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     externalAgentsTesting: '测试中',
     externalAgentsTestingDescription: '正在启动并检查 ACP 连接',
     externalAgentsSeconds: ' 秒',
-    externalAgentsTestSucceeded: '连接测试通过',
+    externalAgentsTestPassed: '测试通过',
     externalAgentsTestFailed: '连接测试失败',
     externalAgentsShowErrorDetails: '查看详情',
     externalAgentsHideErrorDetails: '收起详情',
@@ -542,21 +542,26 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       '嵌套会快速放大同时存在的任务数量，并增加模型费用、速率限制和工具进程压力。',
     agentRuntimeSaveFailed: '运行配置保存失败。',
     browserSettings: '浏览器',
-    browserModeTitle: '选择浏览器使用方式',
-    browserModeDescription: '此设置决定会话中的浏览器操作使用哪个浏览器环境，切换后会自动生效。',
-    browserModeIsolatedTitle: '使用隔离浏览器',
+    browserModeTitle: '选择浏览器连接方式',
+    browserModeDescription:
+      '此设置决定 AI 执行浏览器操作时连接哪个环境：前三种连接 Chrome，最后一种连接应用内置浏览器。',
+    browserModeChromeGroupTitle: 'Chrome 浏览器',
+    browserModeEmbeddedGroupTitle: '应用内置浏览器',
+    browserModeIsolatedTitle: '连接隔离 Chrome',
     browserModeIsolatedDescription:
       '使用独立的浏览器资料，不读取日常 Chrome 的账号、Cookie 或标签页。',
     browserModeIsolatedActive:
       '当前使用隔离浏览器。它与日常 Chrome 完全分开，也是默认和更安全的选择。',
     browserModeIsolatedNetworkNotice: '隔离浏览器仅支持访问公司内网，无法访问互联网。',
-    browserModeUserTitle: '允许连接你的浏览器',
+    browserModeUserTitle: '连接日常 Chrome',
     browserModeUserDescription:
       '连接日常 Chrome，复用其中的登录状态、Cookie 和标签页，需要你主动授权。',
     browserModeExtensionTitle: '通过扩展连接 Chrome',
     browserModeExtensionDescription:
-      '安装并配对内置浏览器扩展，可在扩展设置中选择共享全部网页或仅共享指定标签页。',
-    browserModeEmbeddedTitle: '使用内置浏览器',
+      '通过已安装的扩展连接 Chrome，可共享全部网页或仅共享指定标签页。',
+    browserModeExtensionActive:
+      '当前浏览器操作通过已安装的 Chrome 扩展连接。请完成配对，并在扩展中选择允许共享的网页范围。',
+    browserModeEmbeddedTitle: '连接内置浏览器',
     browserModeEmbeddedDescription: 'AI 与你共同操作应用侧边栏里的同一个实时网页。',
     browserModeEmbeddedActive:
       '当前使用内置浏览器。浏览器操作会显示在会话侧边栏中，你可以随时直接接管。',
@@ -607,14 +612,15 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Chrome 授权握手超时。请关闭 Remote Debugging 后重新开启，确认没有其他 MCP 正在连接，然后立即重试。Chrome 150/151 存在相关已知问题。',
     browserGatewayUnavailable: 'AI 引擎尚未连接，请稍后重试。',
     browserConnectionFailed: 'Chrome 连接测试失败',
+    browserExtensionSectionTitle: 'Chrome 扩展',
+    browserExtensionSectionDescription:
+      'Chrome 扩展是浏览器中的 AI 助手，可直接在侧边栏中对话，并按需附带当前网页内容。',
     browserExtensionTitle: '通过扩展连接你的 Chrome',
     browserExtensionDescription:
       '首次手动配对默认仅共享选定标签页，配对后会自动重连；如需扩大范围，可在扩展设置中选择“All tabs”。',
-    browserExtensionStepChromeTitle: '安装并启动 Google Chrome',
-    browserExtensionStepChromeDescription: '扩展模式要求 Chrome 125 或更高版本。',
-    browserExtensionStepInstallTitle: '加载内置浏览器扩展',
+    browserExtensionStepInstallTitle: '安装 Chrome 扩展',
     browserExtensionStepInstallDescription:
-      '（1）打开 Chrome 扩展管理页，开启“开发者模式”。\n（2）点击“加载已解压的扩展程序”，选择应用打开目录中的“chrome-extension”文件夹。',
+      '（1）安装并启动 Chrome 125 或更高版本。\n（2）打开 Chrome 扩展管理页，开启“开发者模式”。\n（3）将应用目录中的“chrome-extension”文件夹直接拖入 Chrome 扩展管理页。\n（4）点击 Chrome 右上角的 {extensionsButton} 找到此扩展；可点击图钉将它固定到工具栏。',
     browserExtensionOpenPage: '打开扩展管理页',
     browserExtensionRevealFolder: '打开扩展文件夹',
     browserExtensionPageCopied: '管理页地址已复制，请粘贴到 Chrome 地址栏并回车：',
@@ -752,9 +758,12 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserSearchEngineBaidu: '百度',
     browserSearchEngineGoogle: 'Google',
     browserSearchEngineSaveFailed: '无法保存搜索引擎设置',
+    browserEmbeddedSettingsTitle: '内置浏览器设置',
+    browserEmbeddedSettingsDescription: '以下设置仅用于应用侧边栏中的内置浏览器。',
     browserGeneralSettingsTitle: '浏览与数据',
     browserGeneralSettingsDescription: '管理地址栏搜索和浏览历史',
     browserDownloadSettingsTitle: '下载',
+    browserDownloadSettingsDescription: '管理内置浏览器的文件保存与下载记录',
     browserDownloadLocationTitle: '位置',
     browserDownloadSystemFolder: '系统下载文件夹',
     browserDownloadChangeLocation: '更改',
@@ -2929,7 +2938,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     externalAgentsTesting: 'Testing',
     externalAgentsTestingDescription: 'Starting and checking the ACP connection',
     externalAgentsSeconds: 's',
-    externalAgentsTestSucceeded: 'Connection test passed',
+    externalAgentsTestPassed: 'Passed',
     externalAgentsTestFailed: 'Connection test failed',
     externalAgentsShowErrorDetails: 'View details',
     externalAgentsHideErrorDetails: 'Hide details',
@@ -3102,23 +3111,27 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     agentRuntimeSaveFailed: 'Runtime configuration could not be saved.',
     browserSettings: 'Browser',
     browserUserChromeTitle: 'Connect your Chrome',
-    browserModeTitle: 'Choose how the browser is used',
+    browserModeTitle: 'Choose a browser connection',
     browserModeDescription:
-      'This setting determines which browser environment conversations use. Changes apply automatically.',
-    browserModeIsolatedTitle: 'Use isolated browser',
+      'This setting chooses where AI browser actions run: the first three options connect to Chrome, while the last connects to the built-in browser.',
+    browserModeChromeGroupTitle: 'Chrome browser',
+    browserModeEmbeddedGroupTitle: 'Built-in app browser',
+    browserModeIsolatedTitle: 'Connect isolated Chrome',
     browserModeIsolatedDescription:
       'Uses a separate browser profile without access to your everyday Chrome accounts, cookies, or tabs.',
     browserModeIsolatedActive:
       'The isolated browser is active. It stays separate from everyday Chrome and is the default, safer choice.',
     browserModeIsolatedNetworkNotice:
       'The isolated browser can access company intranet sites only and cannot access the internet.',
-    browserModeUserTitle: 'Allow access to your browser',
+    browserModeUserTitle: 'Connect everyday Chrome',
     browserModeUserDescription:
       'Connects to everyday Chrome and reuses its sign-in state, cookies, and tabs after you explicitly authorize it.',
     browserModeExtensionTitle: 'Connect through extension',
     browserModeExtensionDescription:
-      'Install and pair the bundled browser extension, then choose all eligible pages or selected tabs in its settings.',
-    browserModeEmbeddedTitle: 'Use built-in browser',
+      'Connect to Chrome through the installed extension and share all eligible pages or selected tabs.',
+    browserModeExtensionActive:
+      'Browser actions currently connect through the installed Chrome extension. Pair it and choose which pages the extension may share.',
+    browserModeEmbeddedTitle: 'Connect built-in browser',
     browserModeEmbeddedDescription:
       'You and the AI share the same live page in the conversation sidebar.',
     browserModeEmbeddedActive:
@@ -3171,14 +3184,15 @@ export const translations: Record<LanguageType, Record<string, string>> = {
       'Chrome authorization timed out. Turn Remote Debugging off and on again, make sure no other MCP client is connecting, then retry immediately. Chrome 150/151 has a related known issue.',
     browserGatewayUnavailable: 'The AI engine is not connected. Try again shortly.',
     browserConnectionFailed: 'Chrome connection test failed',
+    browserExtensionSectionTitle: 'Chrome extension',
+    browserExtensionSectionDescription:
+      'The Chrome extension brings the AI assistant into your browser, where you can chat in the side panel and optionally include context from the current page.',
     browserExtensionTitle: 'Connect your Chrome through the extension',
     browserExtensionDescription:
       'Manual pairing shares selected tabs by default and reconnects automatically; choose All tabs in extension settings only when broader access is needed.',
-    browserExtensionStepChromeTitle: 'Install and start Google Chrome',
-    browserExtensionStepChromeDescription: 'Extension mode requires Chrome 125 or newer.',
-    browserExtensionStepInstallTitle: 'Load the bundled browser extension',
+    browserExtensionStepInstallTitle: 'Install the Chrome extension',
     browserExtensionStepInstallDescription:
-      '(1) Open Chrome’s extension management page and enable Developer mode.\n(2) Choose Load unpacked, then select the chrome-extension folder inside the directory opened by the app.',
+      '(1) Install and start Chrome 125 or newer.\n(2) Open Chrome’s extension management page and enable Developer mode.\n(3) Drag the chrome-extension folder from the app directory directly onto Chrome’s extension management page.\n(4) Select {extensionsButton} at the top right of Chrome to find this extension; use the pin icon to keep it in the toolbar.',
     browserExtensionOpenPage: 'Open extensions page',
     browserExtensionRevealFolder: 'Open extension folder',
     browserExtensionPageCopied:
@@ -3324,9 +3338,14 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     browserSearchEngineBaidu: 'Baidu',
     browserSearchEngineGoogle: 'Google',
     browserSearchEngineSaveFailed: 'Unable to save the search engine setting',
+    browserEmbeddedSettingsTitle: 'Built-in browser settings',
+    browserEmbeddedSettingsDescription:
+      'The settings below apply only to the built-in browser in the app sidebar.',
     browserGeneralSettingsTitle: 'Browsing and data',
     browserGeneralSettingsDescription: 'Manage address bar search and browsing history',
     browserDownloadSettingsTitle: 'Downloads',
+    browserDownloadSettingsDescription:
+      'Manage file saving and download history for the built-in browser',
     browserDownloadLocationTitle: 'Location',
     browserDownloadSystemFolder: 'System downloads folder',
     browserDownloadChangeLocation: 'Change',
