@@ -357,6 +357,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setUnsupportedFilePreviews,
     },
     setSessionField,
+    openBrowserTab,
     promote: promoteDisplaySession,
   } = useSessionDisplayState(
     currentSessionId,
@@ -1680,19 +1681,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           );
           return;
         }
-        const pendingTabs = pendingBrowserTabsRef.current.get(displaySessionKey) ?? [];
-        pendingTabs.push({
-          url: result.url,
+        const tab = createBrowserPanelTab(result.url, {
           sourceFilePath: result.filePath,
           sourcePreviewUrl: result.url,
           sourceRootPath: result.rootPath,
           sourcePreviewRootUrl: result.previewRootUrl,
         });
-        pendingBrowserTabsRef.current.set(displaySessionKey, pendingTabs);
-        setIsDisplayPanelOpen(true);
-        setHasBrowserPanelOpened(true);
-        setIsBrowserPanelOpen(true);
-        setBrowserTabCreationSequence(sequence => sequence + 1);
+        openBrowserTab(displaySessionKey, tab, MAX_BROWSER_TABS);
       } catch {
         window.dispatchEvent(
           new CustomEvent('app:showToast', { detail: i18nService.t('coworkFilePreviewFailed') }),
@@ -1701,13 +1696,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
     window.addEventListener('cowork:open-local-html', handleOpenLocalHtml);
     return () => window.removeEventListener('cowork:open-local-html', handleOpenLocalHtml);
-  }, [
-    displaySessionKey,
-    setBrowserTabCreationSequence,
-    setHasBrowserPanelOpened,
-    setIsBrowserPanelOpen,
-    setIsDisplayPanelOpen,
-  ]);
+  }, [displaySessionKey, openBrowserTab]);
 
   const handleCreateTerminalTab = useCallback(() => {
     if (terminalTabs.length >= MAX_TERMINAL_TABS) return;

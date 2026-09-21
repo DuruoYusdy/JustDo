@@ -299,6 +299,44 @@ export function useSessionDisplayState(
     setStates(current => promoteSessionDisplayState(current, fromSessionKey, toSessionKey));
   }, []);
 
+  const openBrowserTab = useCallback(
+    (targetSessionKey: string, tab: BrowserPanelTab, maximumTabs: number) => {
+      setStates(current => {
+        const currentState =
+          current[targetSessionKey] ?? createSessionDisplayState(browserPanelWidth);
+        if (
+          currentState.browserTabs.some(candidate => candidate.targetId === tab.targetId) ||
+          currentState.browserTabs.length >= maximumTabs
+        ) {
+          return current;
+        }
+        const tabId = `${BROWSER_TAB_PREFIX}${tab.targetId}`;
+        const updatedState = withTrackedTabRecency(
+          currentState,
+          {
+            ...currentState,
+            browserTabs: [...currentState.browserTabs, tab],
+            browserPanelTargetId: tab.targetId,
+            preferredDisplayTabId: tabId,
+            isDisplayPanelOpen: true,
+            isBrowserPanelOpen: true,
+            hasBrowserPanelOpened: true,
+            isWorkspaceFilesOpen: false,
+          },
+          tabId,
+          () => ++sequenceRef.current,
+        );
+        return enforceBackgroundTabLimit(
+          { ...current, [targetSessionKey]: updatedState },
+          sessionKey,
+          maxRetainedTabs,
+          stableProtectedSessionIds,
+        );
+      });
+    },
+    [browserPanelWidth, maxRetainedTabs, sessionKey, stableProtectedSessionIds],
+  );
+
   useEffect(() => {
     setStates(current => {
       const currentState = current[sessionKey] ?? createSessionDisplayState(browserPanelWidth);
@@ -337,5 +375,5 @@ export function useSessionDisplayState(
     previousSessionKeysRef.current = nextKeys;
   }, [states]);
 
-  return { sessionKey, state, states, setters, setSessionField, promote };
+  return { sessionKey, state, states, setters, setSessionField, openBrowserTab, promote };
 }

@@ -211,6 +211,30 @@ describe('useSessionDisplayState', () => {
     ]);
   });
 
+  it('opens the first browser tab atomically with the display panel', () => {
+    const { result } = renderHook(() => useSessionDisplayState('session-a', 520));
+    const tab = {
+      id: 'embedded-local-html',
+      targetId: 'embedded-local-html',
+      title: '',
+      url: 'http://127.0.0.1:43128/token/index.html',
+      sourceFilePath: 'C:\\workspace\\site\\index.html',
+      sourcePreviewUrl: 'http://127.0.0.1:43128/token/index.html',
+      sourceRootPath: 'C:\\workspace\\site',
+      sourcePreviewRootUrl: 'http://127.0.0.1:43128/token/',
+    };
+
+    act(() => result.current.openBrowserTab('session-a', tab, 8));
+
+    expect(result.current.state.browserTabs).toEqual([tab]);
+    expect(result.current.state.browserPanelTargetId).toBe(tab.targetId);
+    expect(result.current.state.preferredDisplayTabId).toBe(`browser:${tab.targetId}`);
+    expect(result.current.state.isDisplayPanelOpen).toBe(true);
+    expect(result.current.state.isBrowserPanelOpen).toBe(true);
+    expect(result.current.state.hasBrowserPanelOpened).toBe(true);
+    expect(result.current.state.isWorkspaceFilesOpen).toBe(false);
+  });
+
   it('moves home state through temporary-session promotion', () => {
     const { result, rerender } = renderHook(
       ({ sessionId }: { sessionId: string | null }) => useSessionDisplayState(sessionId, 520),
