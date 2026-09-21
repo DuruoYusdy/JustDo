@@ -87,7 +87,7 @@ blockquote {
 }
 
 .cowork-content-width {
-  width: var(--justdo-chat-content-width, 70%);
+  width: var(--justdo-chat-content-width, 80%);
   /* The viewport is the only cap so every slider step remains visible. */
   max-width: calc(100% - 32px);
   min-width: min(320px, calc(100% - 32px));

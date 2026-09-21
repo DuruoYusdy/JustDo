@@ -12,7 +12,7 @@ export interface AppearanceConfig {
 }
 
 export const defaultAppearanceConfig: AppearanceConfig = {
-  chatContentWidth: 70,
+  chatContentWidth: 80,
   fontFamily: 'system',
   fontSize: 16,
   messageLayout: 'bubble',

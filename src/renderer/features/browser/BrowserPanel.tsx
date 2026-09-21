@@ -128,8 +128,9 @@ type LiveWebview = HTMLElement & {
   send: (channel: string, ...args: unknown[]) => void;
 };
 
-export const BROWSER_PANEL_DEFAULT_WIDTH = 520;
 const BROWSER_PANEL_MIN_WIDTH = 320;
+// Zero lets the display host size the panel to half its available width.
+export const BROWSER_PANEL_DEFAULT_WIDTH = 0;
 const ANNOTATION_NOTICE_DURATION_MS = 3_500;
 // Bump this when guest creation preferences change. Besides documenting that those
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests

@@ -66,7 +66,9 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   width: controlledWidth,
 }) => {
   const [uncontrolledWidth, setUncontrolledWidth] = useState(DISPLAY_PANEL_DEFAULT_WIDTH);
-  const width = controlledWidth ?? uncontrolledWidth;
+  const configuredWidth = controlledWidth ?? uncontrolledWidth;
+  const [automaticWidth, setAutomaticWidth] = useState(() => window.innerWidth / 2);
+  const width = configuredWidth === 0 ? automaticWidth : configuredWidth;
   const widthRef = useRef(width);
   widthRef.current = width;
   const onWidthChangeRef = useRef(onWidthChange);
@@ -97,7 +99,14 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   );
 
   useEffect(() => {
-    const resize = () => setWidth(current => clampWidth(current));
+    const resize = () => {
+      if (configuredWidth === 0) {
+        const availableWidth = panelRef.current?.parentElement?.clientWidth;
+        if (availableWidth) setAutomaticWidth(clampWidth(availableWidth / 2));
+      } else {
+        setWidth(current => clampWidth(current));
+      }
+    };
     resize();
     const container = panelRef.current?.parentElement;
     const observer =
@@ -108,7 +117,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       observer?.disconnect();
       window.removeEventListener('resize', resize);
     };
-  }, [clampWidth, setWidth]);
+  }, [clampWidth, configuredWidth, setWidth]);
 
   useEffect(() => {
     if (!hasSidePanel) return;

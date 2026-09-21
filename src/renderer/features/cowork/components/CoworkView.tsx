@@ -594,8 +594,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         return false;
       }
       dispatch(addDraftBrowserAnnotation({ draftKey, annotation }));
-      const nextComment = annotation.comment?.trim() ?? '';
-      if (nextComment) promptInputRef.current?.appendValue(nextComment);
       requestAnimationFrame(() => promptInputRef.current?.focus());
       return true;
     },

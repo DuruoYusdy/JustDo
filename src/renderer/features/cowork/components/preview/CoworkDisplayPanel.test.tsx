@@ -14,6 +14,38 @@ afterEach(() => {
 });
 
 describe('CoworkDisplayPanel', () => {
+  it('keeps automatic width at half the container until the user resizes it', () => {
+    let availableWidth = 1_000;
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => availableWidth);
+    const onWidthChange = vi.fn();
+    const panel = (width: number) => (
+      <CoworkDisplayPanel
+        activeTabId=""
+        isOpen
+        onClose={vi.fn()}
+        onWidthChange={onWidthChange}
+        tabs={[]}
+        width={width}
+      >
+        <div>Browser content</div>
+      </CoworkDisplayPanel>
+    );
+    const view = render(panel(0));
+    expect(screen.getByRole('complementary').style.width).toBe('500px');
+
+    availableWidth = 1_600;
+    fireEvent(window, new Event('resize'));
+    expect(screen.getByRole('complementary').style.width).toBe('800px');
+    expect(onWidthChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole('separator'), { key: 'ArrowRight' });
+    expect(onWidthChange).toHaveBeenLastCalledWith(776);
+    view.rerender(panel(776));
+    availableWidth = 1_800;
+    fireEvent(window, new Event('resize'));
+    expect(screen.getByRole('complementary').style.width).toBe('776px');
+  });
+
   it('shows its launcher without a tab strip while keeping panel content mounted', () => {
     i18nService.setLanguage('en', { persist: false });
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);
