@@ -118,6 +118,36 @@ describe('CoworkDisplayPanel', () => {
     expect(separator.getAttribute('aria-valuenow')).toBe('496');
   });
 
+  it('renders the width supplied by the owning session', () => {
+    i18nService.setLanguage('en', { persist: false });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);
+    const view = render(
+      <CoworkDisplayPanel
+        activeTabId="file"
+        isOpen
+        onClose={vi.fn()}
+        tabs={[]}
+        width={600}
+      >
+        <div>Preview content</div>
+      </CoworkDisplayPanel>,
+    );
+
+    expect(screen.getByRole('complementary').style.width).toBe('600px');
+    view.rerender(
+      <CoworkDisplayPanel
+        activeTabId="file"
+        isOpen
+        onClose={vi.fn()}
+        tabs={[]}
+        width={440}
+      >
+        <div>Preview content</div>
+      </CoworkDisplayPanel>,
+    );
+    expect(screen.getByRole('complementary').style.width).toBe('440px');
+  });
+
   it('offers close, close-other, and close-right actions for display tabs', async () => {
     i18nService.setLanguage('en', { persist: false });
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1_000);

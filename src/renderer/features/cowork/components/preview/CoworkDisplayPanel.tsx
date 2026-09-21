@@ -36,9 +36,11 @@ interface CoworkDisplayPanelProps {
   emptyState?: React.ReactNode;
   isOpen: boolean;
   onClose: () => void;
+  onWidthChange?: (width: number) => void;
   sidePanel?: React.ReactNode;
   showEmptyState?: boolean;
   tabs: CoworkDisplayTab[];
+  width?: number;
 }
 
 const DISPLAY_PANEL_DEFAULT_WIDTH = 520;
@@ -57,11 +59,18 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
   emptyState,
   isOpen,
   onClose,
+  onWidthChange,
   sidePanel,
   tabs,
   showEmptyState = tabs.length === 0,
+  width: controlledWidth,
 }) => {
-  const [width, setWidth] = useState(DISPLAY_PANEL_DEFAULT_WIDTH);
+  const [uncontrolledWidth, setUncontrolledWidth] = useState(DISPLAY_PANEL_DEFAULT_WIDTH);
+  const width = controlledWidth ?? uncontrolledWidth;
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const onWidthChangeRef = useRef(onWidthChange);
+  onWidthChangeRef.current = onWidthChange;
   const [isWorkspaceFullscreen, setIsWorkspaceFullscreen] = useState(false);
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   const hasSidePanel = Boolean(sidePanel);
@@ -76,6 +85,17 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
     );
   }, []);
 
+  const setWidth = useCallback(
+    (value: number | ((current: number) => number)) => {
+      const nextWidth = typeof value === 'function' ? value(widthRef.current) : value;
+      if (Object.is(widthRef.current, nextWidth)) return;
+      widthRef.current = nextWidth;
+      setUncontrolledWidth(nextWidth);
+      onWidthChangeRef.current?.(nextWidth);
+    },
+    [],
+  );
+
   useEffect(() => {
     const resize = () => setWidth(current => clampWidth(current));
     resize();
@@ -88,12 +108,12 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       observer?.disconnect();
       window.removeEventListener('resize', resize);
     };
-  }, [clampWidth]);
+  }, [clampWidth, setWidth]);
 
   useEffect(() => {
     if (!hasSidePanel) return;
     setWidth(current => clampWidth(Math.max(current, 760)));
-  }, [clampWidth, hasSidePanel]);
+  }, [clampWidth, hasSidePanel, setWidth]);
 
   useEffect(() => {
     if (!isOpen) setTabMenu(null);
@@ -150,7 +170,7 @@ const CoworkDisplayPanel: React.FC<CoworkDisplayPanelProps> = ({
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', cleanupResize);
     },
-    [clampWidth],
+    [clampWidth, setWidth],
   );
 
   const closeTabs = useCallback(async (closingTabs: CoworkDisplayTab[]): Promise<boolean> => {

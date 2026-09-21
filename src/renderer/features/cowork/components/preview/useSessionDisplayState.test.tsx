@@ -162,6 +162,24 @@ describe('useSessionDisplayState', () => {
     expect(result.current.state.isDisplayPanelOpen).toBe(true);
   });
 
+  it('restores the resized display panel width after switching sessions', () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) => useSessionDisplayState(sessionId, 520),
+      { initialProps: { sessionId: 'session-a' } },
+    );
+
+    act(() => result.current.setters.setBrowserPanelWidth(680));
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.browserPanelWidth).toBe(520);
+
+    act(() => result.current.setters.setBrowserPanelWidth(440));
+    rerender({ sessionId: 'session-a' });
+    expect(result.current.state.browserPanelWidth).toBe(680);
+
+    rerender({ sessionId: 'session-b' });
+    expect(result.current.state.browserPanelWidth).toBe(440);
+  });
+
   it('updates retained background runtime state without activating the session', () => {
     const { result, rerender } = renderHook(
       ({ sessionId }: { sessionId: string }) => useSessionDisplayState(sessionId, 520),

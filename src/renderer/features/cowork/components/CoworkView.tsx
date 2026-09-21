@@ -333,6 +333,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       isDisplayPanelOpen,
       isBrowserPanelOpen,
       hasBrowserPanelOpened,
+      browserPanelWidth,
       browserTabs,
       browserTabCreationSequence,
       terminalTabs,
@@ -3053,6 +3054,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               activeTabId={activeDisplayTabId ?? ''}
               isOpen={isDisplayPanelOpen}
               onClose={closeDisplayPanel}
+              width={browserPanelWidth}
+              onWidthChange={width =>
+                setSessionField(displaySessionKey, 'browserPanelWidth', width)
+              }
               showEmptyState={displayTabs.length === 0}
               tabs={displayTabs}
               emptyState={
@@ -3355,6 +3360,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             activeTabId={activeDisplayTabId ?? ''}
             isOpen={isDisplayPanelOpen}
             onClose={closeDisplayPanel}
+            width={browserPanelWidth}
+            onWidthChange={width =>
+              setSessionField(displaySessionKey, 'browserPanelWidth', width)
+            }
             showEmptyState={homeDisplayTabs.length === 0}
             tabs={homeDisplayTabs}
             emptyState={
