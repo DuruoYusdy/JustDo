@@ -64,6 +64,7 @@ import {
   normalizeBrowserPanelOpenTabEvent,
   normalizeBrowserPanelPdfDetectedEvent,
 } from '../shared/browser/browser';
+import { BrowserRecordingChannel, type BrowserRecordingLease } from '../shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { CollaborationIpc } from '../shared/cowork/collaboration';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
@@ -384,6 +385,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.send(BrowserIpc.AgentSetActiveTab, reference),
     setUserInteractionState: (state: BrowserAgentInteractionState) =>
       ipcRenderer.send(BrowserIpc.UserInteractionState, state),
+    setRecordingLease: (state: BrowserRecordingLease): Promise<boolean> =>
+      ipcRenderer.invoke(BrowserRecordingChannel.Lease, state),
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) =>
       ipcRenderer.send(BrowserIpc.AgentInteractionReady, state),
     onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => {

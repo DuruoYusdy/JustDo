@@ -85,6 +85,28 @@ describe('useSessionDisplayState', () => {
     expect(retained.background.browserPanelTargetId).toBeNull();
   });
 
+  it('retains an unsent recording runtime even with zero background tabs, then releases protection', () => {
+    const background = {
+      ...createSessionDisplayState(520),
+      hasBrowserPanelOpened: true,
+      hasBrowserRecording: true,
+      browserTabs: [
+        { id: 'recording', targetId: 'recording', title: 'Recording', url: 'https://example.com/' },
+      ],
+    };
+    const states = { background, active: createSessionDisplayState(520) };
+    const retained = enforceBackgroundTabLimit(states, 'active', 0);
+    expect(retained.background.browserTabs).toHaveLength(1);
+    expect(retained.background.hasBrowserPanelOpened).toBe(true);
+    const released = enforceBackgroundTabLimit(
+      { ...retained, background: { ...retained.background, hasBrowserRecording: false } },
+      'active',
+      0,
+    );
+    expect(released.background.browserTabs).toHaveLength(0);
+    expect(released.background.hasBrowserPanelOpened).toBe(false);
+  });
+
   it('keeps tabs and panel visibility isolated by session', () => {
     const { result, rerender } = renderHook(
       ({ sessionId }: { sessionId: string | null }) => useSessionDisplayState(sessionId, 520),

@@ -360,6 +360,7 @@ function projectBrowserAnnotationForDisplay(message: unknown): unknown {
     if (!parsed) return null;
     return [
       { type: 'text', text: parsed.userText },
+      ...(parsed.recording ? [{ type: 'browser_recording', recording: parsed.recording }] : []),
       ...parsed.annotations.map(annotation => ({ type: 'browser_annotation', annotation })),
     ];
   };

@@ -1,3 +1,4 @@
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
 
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
@@ -25,31 +26,57 @@ function messageTimestamp(message: GatewayMessage): number | null {
   return null;
 }
 
-function messageText(message: GatewayMessage): string {
+function messageContentIdentity(message: GatewayMessage): { text: string; recordings: string } {
   const record = messageRecord(message);
-  if (typeof record.content === 'string') return record.content.trim();
-  if (typeof record.text === 'string') return record.text.trim();
-  if (!Array.isArray(record.content)) return '';
-  return record.content
-    .map(block => {
-      if (!block || typeof block !== 'object' || Array.isArray(block)) return '';
-      const value = block as Record<string, unknown>;
-      return typeof value.text === 'string' ? value.text : '';
-    })
-    .join('')
-    .trim();
+  const recordings: unknown[] = [];
+  const addRecording = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    const steps = (value as Record<string, unknown>).steps;
+    if (!Array.isArray(steps)) return;
+    // Step ids survive history normalization, unlike wrapper ids and page text
+    // (which Gateway may sanitize). Different recording-only sends must not
+    // match merely because both have an empty visible prompt.
+    recordings.push(steps.map(step => [step?.id, step?.action, step?.pageId]));
+  };
+  const textPart = (text: string) => {
+    const browser = parseBrowserAnnotationPrompt(text);
+    if (browser?.recording) addRecording(browser.recording);
+    return browser?.recording ? browser.userText : text;
+  };
+  const text =
+    typeof record.content === 'string'
+      ? textPart(record.content)
+      : typeof record.text === 'string'
+        ? textPart(record.text)
+        : Array.isArray(record.content)
+          ? record.content
+              .map(block => {
+                if (!block || typeof block !== 'object' || Array.isArray(block)) return '';
+                const value = block as Record<string, unknown>;
+                if (value.type === 'browser_recording') addRecording(value.recording);
+                return typeof value.text === 'string' ? textPart(value.text) : '';
+              })
+              .join('')
+          : '';
+  return { text: text.trim(), recordings: JSON.stringify(recordings) };
 }
 
 export function isPendingUserMessageMatch(
   message: GatewayMessage,
   pending: GatewayMessage,
 ): boolean {
-  const pendingText = messageText(pending);
-  const persistedText = messageText(message);
+  const pendingContent = messageContentIdentity(pending);
+  const persistedContent = messageContentIdentity(message);
+  const pendingText = pendingContent.text;
+  const persistedText = persistedContent.text;
   const comparablePendingText = parseGoalStartObjective(pendingText) ?? pendingText;
   const comparablePersistedText = parseGoalStartObjective(persistedText) ?? persistedText;
   const pendingTimestamp = messageTimestamp(pending);
-  if (messageRole(message) !== 'user' || comparablePersistedText !== comparablePendingText) {
+  if (
+    messageRole(message) !== 'user' ||
+    comparablePersistedText !== comparablePendingText ||
+    persistedContent.recordings !== pendingContent.recordings
+  ) {
     return false;
   }
 

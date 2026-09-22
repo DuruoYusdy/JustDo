@@ -16,6 +16,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import mermaid from 'mermaid';
 import monacoEditorStyles from 'monaco-editor/min/vs/editor/editor.main.css?inline';
 
+import browserRecordingStyles from '@/features/browser/browserRecording.css?inline';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import {
   type EditDiffMode,
@@ -466,6 +467,7 @@ export class JustDoChatElement extends LitElement {
   // ─── Styles ─────────────────────────────────────────────────────────────
 
   static styles = [
+    unsafeCSS(browserRecordingStyles),
     unsafeCSS(katexStyles),
     unsafeCSS(monacoEditorStyles),
     css`

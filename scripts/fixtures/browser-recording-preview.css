@@ -1,0 +1,66 @@
+body {
+  margin: 0;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+.preview {
+  padding: 24px;
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: #edf0f5;
+  color: #202631;
+}
+.preview nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.preview nav button {
+  border: 1px solid #cbd2de;
+  border-radius: 7px;
+  background: white;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.preview-grid {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+.preview-editor {
+  height: 800px;
+  overflow: hidden;
+  border: 1px solid #dce1eb;
+  border-radius: 14px;
+  box-shadow: 0 8px 30px #1a254012;
+}
+.preview-chat {
+  padding: 18px;
+  border-radius: 14px;
+  background: #f7f8fb;
+}
+.preview-chat h2 {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: #737c8c;
+}
+.preview.dark {
+  background: #141820;
+  color: #e2e7ef;
+  --justdo-foreground: #e2e7ef;
+  --justdo-text-secondary: #97a2b6;
+  --justdo-surface: #202631;
+  --justdo-surface-raised: #191f29;
+  --justdo-border-subtle: #333e4e;
+  --justdo-primary: #91a7ff;
+  --justdo-primary-foreground: #151d36;
+  --text-primary: #e2e7ef;
+  --text-secondary: #97a2b6;
+  --surface-raised: #202631;
+  --accent: #91a7ff;
+}
+.preview.dark .preview-chat {
+  background: #191f29;
+}

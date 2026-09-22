@@ -42,6 +42,7 @@ export interface SessionDisplayState {
   isDisplayPanelOpen: boolean;
   isBrowserPanelOpen: boolean;
   hasBrowserPanelOpened: boolean;
+  hasBrowserRecording: boolean;
   browserPanelWidth: number;
   browserPanelTargetId: string | null;
   browserTabs: BrowserPanelTab[];
@@ -65,6 +66,7 @@ export const createSessionDisplayState = (browserPanelWidth: number): SessionDis
   isDisplayPanelOpen: false,
   isBrowserPanelOpen: false,
   hasBrowserPanelOpened: false,
+  hasBrowserRecording: false,
   browserPanelWidth,
   browserPanelTargetId: null,
   browserTabs: [],
@@ -167,7 +169,12 @@ export const enforceBackgroundTabLimit = (
   protectedSessionIds: readonly string[] = [],
 ): SessionDisplayStateMap => {
   const limit = normalizeMaxRetainedDisplayTabs(maximum);
-  const protectedSessions = new Set(protectedSessionIds);
+  const protectedSessions = new Set([
+    ...protectedSessionIds,
+    ...Object.entries(states)
+      .filter(([, state]) => state.hasBrowserRecording)
+      .map(([key]) => key),
+  ]);
   const backgroundTabs = Object.entries(states).flatMap(([sessionKey, state]) =>
     sessionKey === activeSessionKey || protectedSessions.has(sessionKey)
       ? []

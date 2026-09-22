@@ -7,6 +7,7 @@ import {
   FAILED_RUN_MESSAGE_FLAG,
   FAILED_RUN_MESSAGE_ID,
 } from '@/libs/openclaw-chat/model/failed-run-message';
+import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/optimistic-user-message';
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
 import { prepareVisibleTimelineRows } from '@/libs/openclaw-chat/model/timeline-avatar-state';
 import { readTranscriptIdentity } from '@/libs/openclaw-chat/model/transcript-identity';
@@ -24,6 +25,86 @@ afterEach(() => {
 });
 
 describe('projectGatewayHistoryForDisplay', () => {
+  test('keeps a different recording pending even when both visible prompts are empty', () => {
+    const prompt = (id: string) =>
+      composeBrowserGatewayPrompt('', [], {
+        id,
+        sessionId: 'session',
+        profile: 'embedded',
+        title: '',
+        note: '',
+        startedAt: 1,
+        images: [],
+        steps: [
+          {
+            id,
+            action: 'click',
+            pageId: 'tab',
+            at: 0,
+            url: 'https://example.com/',
+            title: 'Example',
+          },
+        ],
+      });
+    const history = projectGatewayHistoryForDisplay([
+      { role: 'user', content: prompt('first'), timestamp: 100 },
+    ]) as GatewayMessage[];
+    const pending = projectGatewayHistoryForDisplay([
+      { role: 'user', content: prompt('second'), timestamp: 110 },
+    ])[0] as GatewayMessage;
+    expect(mergePendingUserMessageForDisplay(history, pending)).toEqual([...history, pending]);
+    const plain = { role: 'user', content: '', timestamp: 100 } as GatewayMessage;
+    expect(mergePendingUserMessageForDisplay([plain], pending)).toEqual([plain, pending]);
+    const rawPending = { role: 'user', content: prompt('first'), timestamp: 110 } as GatewayMessage;
+    expect(mergePendingUserMessageForDisplay(history, rawPending)).toEqual(history);
+  });
+  test.each([false, true])(
+    'restores a recording-only history message and replaces its pending bubble (sanitized=%s)',
+    sanitized => {
+      const prompt = composeBrowserGatewayPrompt('', [], {
+        id: 'recording',
+        sessionId: 'session',
+        profile: 'embedded',
+        title: '',
+        note: 'x'.repeat(60),
+        startedAt: 1,
+        images: [],
+        steps: [
+          {
+            id: 'step',
+            action: 'click',
+            pageId: 'tab',
+            at: 0,
+            url: 'https://example.com/',
+            title: 'Example',
+          },
+        ],
+      }).replace(`"note":"${'x'.repeat(60)}"`, `"note":"${'\u200b'.repeat(60)}"`);
+      const pending = projectGatewayHistoryForDisplay([
+        { role: 'user', content: prompt, timestamp: 100 },
+      ])[0] as GatewayMessage;
+      const history = projectGatewayHistoryForDisplay([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: (sanitized ? prompt.replace(/\u200b/g, '') : prompt).trim() },
+          ],
+          timestamp: 110,
+        },
+      ]) as GatewayMessage[];
+      expect(history[0].content).toEqual([
+        { type: 'text', text: '' },
+        {
+          type: 'browser_recording',
+          recording: expect.objectContaining({
+            steps: [expect.objectContaining({ id: 'step', action: 'click' })],
+          }),
+        },
+      ]);
+      expect(mergePendingUserMessageForDisplay(history, pending)).toEqual(history);
+      expect(projectGatewayHistoryForDisplay(history)).toEqual(history);
+    },
+  );
   test('collapses the managed-media companion when the producer row already owns the file', () => {
     const source = {
       role: 'assistant',

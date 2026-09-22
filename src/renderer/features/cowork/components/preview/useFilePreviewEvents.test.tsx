@@ -44,6 +44,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test('reuses the image preview tab when a recording screenshot is opened repeatedly', () => {
+  const { result } = renderHook(usePreviewHarness);
+  const openScreenshot = () =>
+    window.dispatchEvent(
+      new CustomEvent(IMAGE_PREVIEW_EVENT, {
+        detail: { src: imageSource, alt: 'Step screenshot 1' },
+      }),
+    );
+  act(() => {
+    openScreenshot();
+  });
+  const tabId = result.current.preferredDisplayTabId;
+  act(() => {
+    openScreenshot();
+    openScreenshot();
+  });
+  expect(result.current.filePreviews).toHaveLength(1);
+  expect(result.current.filePreviews[0]).toMatchObject({ kind: 'image', src: imageSource });
+  expect(result.current.preferredDisplayTabId).toBe(tabId);
+  expect(result.current.isDisplayPanelOpen).toBe(true);
+});
+
 test.each(['file', 'thumbnail', 'existing-image'])(
   'keeps the %s selected when a slower text read completes',
   async entry => {

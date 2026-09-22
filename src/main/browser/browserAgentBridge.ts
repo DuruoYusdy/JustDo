@@ -13,6 +13,7 @@ import {
   browserPartitionForProfile,
   isBrowserAgentProfile,
 } from '../../shared/browser/browser';
+import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
 import { t } from '../core/i18n';
 import { registerBrowserProxySession } from '../core/network/systemProxyPreference';
 import { isBlockedBrowserMetadataHost } from '../core/window/browserPanelSecurity';
@@ -631,6 +632,16 @@ export class BrowserAgentBridge {
   private readonly activeEvaluations = new Map<number, Electron.Debugger>();
   private readonly navigationGenerations = new Map<number, number>();
   private readonly userInteractionLocks = new Set<number>();
+  private readonly recordingLocks = new Map<
+    string,
+    {
+      ownerId: number;
+      sessionId: string;
+      profile: BrowserAgentProfile;
+      recordingId: string;
+      release: () => void;
+    }
+  >();
   private readonly agentInteractionLeases = new Map<number, BrowserAgentInteractionLease>();
   private readonly panelInteractionLeases = new Map<string, BrowserAgentInteractionLease>();
   private readonly interactionAckWaiters = new Map<string, BrowserInteractionAckWaiter>();
@@ -712,10 +723,66 @@ export class BrowserAgentBridge {
       if (!this.isTrustedIpcSender(event)) return;
       const reference = this.parseReference(value);
       const scopeId = reference ? this.resolveReferenceScope(reference, event.sender.id) : null;
-      const tab = reference && scopeId ? this.tabsBySession.get(scopeId)?.get(reference.targetId) : null;
+      const tab =
+        reference && scopeId ? this.tabsBySession.get(scopeId)?.get(reference.targetId) : null;
       if (tab?.ownerId === event.sender.id) {
         this.activeTargets.set(scopeId!, reference!.targetId);
       }
+    });
+    ipcMain.handle(BrowserRecordingChannel.Lease, (event, value: unknown) => {
+      if (!this.isTrustedIpcSender(event)) return false;
+      const v = asRecord(value);
+      if (
+        !v ||
+        typeof v.recordingId !== 'string' ||
+        v.recordingId.length > 80 ||
+        typeof v.sessionId !== 'string' ||
+        !isBrowserAgentProfile(v.profile) ||
+        typeof v.acquire !== 'boolean'
+      )
+        return false;
+      const profile = v.profile as BrowserAgentProfile;
+      const key = `${event.sender.id}:${profile}`;
+      const existing = this.recordingLocks.get(key);
+      if (!v.acquire) {
+        if (existing?.recordingId === v.recordingId && existing.sessionId === v.sessionId)
+          existing.release();
+        return true;
+      }
+      if (existing)
+        return existing.recordingId === v.recordingId && existing.sessionId === v.sessionId;
+      if ([...this.recordingLocks.values()].some(lock => lock.ownerId === event.sender.id))
+        return false;
+      if (
+        !this.listLiveTabsForSession(v.sessionId).some(
+          tab => tab.ownerId === event.sender.id && tab.profile === profile,
+        )
+      )
+        return false;
+      if (
+        [...this.agentInteractionLeases.values(), ...this.panelInteractionLeases.values()].some(
+          lease => lease.profile === profile,
+        )
+      )
+        return false;
+      const release = () => {
+        if (this.recordingLocks.get(key)?.recordingId === v.recordingId)
+          this.recordingLocks.delete(key);
+        event.sender.removeListener('destroyed', release);
+        event.sender.removeListener('render-process-gone', release);
+        event.sender.removeListener('did-start-navigation', release);
+      };
+      this.recordingLocks.set(key, {
+        ownerId: event.sender.id,
+        sessionId: v.sessionId,
+        profile,
+        recordingId: v.recordingId,
+        release,
+      });
+      event.sender.once('destroyed', release);
+      event.sender.once('render-process-gone', release);
+      event.sender.once('did-start-navigation', release);
+      return true;
     });
     ipcMain.on(BrowserIpc.UserInteractionState, (event, value: unknown) => {
       if (!this.isTrustedIpcSender(event)) return;
@@ -723,15 +790,15 @@ export class BrowserAgentBridge {
       if (typeof state?.busy !== 'boolean') return;
       const reference = this.parseReference(value);
       const scopeId = reference ? this.resolveReferenceScope(reference, event.sender.id) : null;
-      const tab = reference && scopeId ? this.tabsBySession.get(scopeId)?.get(reference.targetId) : null;
+      const tab =
+        reference && scopeId ? this.tabsBySession.get(scopeId)?.get(reference.targetId) : null;
       if (!tab || tab.ownerId !== event.sender.id) return;
       if (state.busy) {
         this.userInteractionLocks.add(tab.webContentsId);
         const interactionError = new Error('The user started interacting with the browser.');
         this.rejectInteractionAcksForTab(tab.webContentsId, interactionError);
         this.rejectInteractionAcksForSession(tab.sessionId, interactionError);
-      }
-      else this.userInteractionLocks.delete(tab.webContentsId);
+      } else this.userInteractionLocks.delete(tab.webContentsId);
     });
     ipcMain.on(BrowserIpc.AgentInteractionReady, (event, value: unknown) => {
       if (!this.isTrustedIpcSender(event)) return;
@@ -812,6 +879,9 @@ export class BrowserAgentBridge {
     this.navigationGenerations.clear();
     this.ariaRefState.clear();
     this.userInteractionLocks.clear();
+    for (const lock of this.recordingLocks.values()) lock.release();
+    this.recordingLocks.clear();
+    ipcMain.removeHandler(BrowserRecordingChannel.Lease);
     for (const lease of this.agentInteractionLeases.values()) {
       lease.readyController.abort(stoppedError);
     }
@@ -912,6 +982,7 @@ export class BrowserAgentBridge {
     signal: AbortSignal,
     operation: () => Promise<T> | T,
   ): Promise<T> {
+    this.assertNoRecording(profile);
     if (this.userInteractionLocks.has(tab.webContentsId)) {
       throw new Error('The user is annotating the browser. Retry after they finish.');
     }
@@ -956,6 +1027,7 @@ export class BrowserAgentBridge {
       }
       await this.awaitInteractionLeaseReady(lease.readyPromise, signal);
       signal.throwIfAborted();
+      this.assertNoRecording(profile);
       if (this.userInteractionLocks.has(tab.webContentsId)) {
         throw new Error('The user is annotating the browser. Retry after they finish.');
       }
@@ -975,6 +1047,7 @@ export class BrowserAgentBridge {
     signal: AbortSignal,
     operation: () => Promise<T> | T,
   ): Promise<T> {
+    this.assertNoRecording(profile);
     const scopeId = browserScopeId(sessionId, profile);
     if (
       this.listLiveTabsForSession(sessionId).some(tab =>
@@ -1022,6 +1095,7 @@ export class BrowserAgentBridge {
       }
       await this.awaitInteractionLeaseReady(lease.readyPromise, signal);
       signal.throwIfAborted();
+      this.assertNoRecording(profile);
       if (
         this.listLiveTabsForSession(sessionId).some(tab =>
           this.userInteractionLocks.has(tab.webContentsId),
@@ -1032,6 +1106,12 @@ export class BrowserAgentBridge {
       return await operation();
     } finally {
       this.releasePanelInteractionLease(scopeId);
+    }
+  }
+
+  private assertNoRecording(profile: BrowserAgentProfile): void {
+    if ([...this.recordingLocks.values()].some(lock => lock.profile === profile)) {
+      throw new Error('The user is recording a browser demonstration. Retry after they finish.');
     }
   }
 
@@ -1119,7 +1199,7 @@ export class BrowserAgentBridge {
     };
   }
 
-  private isTrustedIpcSender(event: IpcMainEvent): boolean {
+  private isTrustedIpcSender(event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>): boolean {
     const senderFrame = event.senderFrame;
     const mainFrame = event.sender.mainFrame;
     return (
@@ -2888,8 +2968,7 @@ export class BrowserAgentBridge {
     guest: Electron.WebContents,
   ): Promise<{
     content: Array<
-      | { type: 'text'; text: string }
-      | { type: 'image'; data: string; mimeType: string }
+      { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
     >;
     details: Record<string, unknown>;
   }> {
@@ -3362,9 +3441,7 @@ export class BrowserAgentBridge {
       previousDelta?.url === documentIdentity ? previousDelta.keys : undefined;
     const newRefs = new Set(
       previousDeltaKeys
-        ? [...refIdentityKeys].flatMap(([ref, key]) =>
-            previousDeltaKeys.has(key) ? [] : [ref],
-          )
+        ? [...refIdentityKeys].flatMap(([ref, key]) => (previousDeltaKeys.has(key) ? [] : [ref]))
         : [],
     );
     const elementLines = result.elements.map(element => {
@@ -3437,8 +3514,7 @@ export class BrowserAgentBridge {
     });
     const response: {
       content: Array<
-        | { type: 'text'; text: string }
-        | { type: 'image'; data: string; mimeType: string }
+        { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
       >;
       details: Record<string, unknown>;
     } = {

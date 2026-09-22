@@ -1,5 +1,6 @@
 import { PRODUCT_NAME } from '@shared/productMetadata';
 
+import { browserRecordingTranslations } from '@/features/browser/browserRecordingTranslations';
 import type { LanguageType } from '@/services/i18n';
 
 import { getHomeGreetingTranslations } from './homeGreetings';
@@ -7,6 +8,7 @@ import { getHomeGreetingTranslations } from './homeGreetings';
 // 语言文本映射
 export const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    ...browserRecordingTranslations.zh,
     collaborationExportMain: '导出主对话',
     collaborationDeleteConfirm:
       '删除此会话及所有关联的助手会话？长期助手配置、其他任务和项目文件不会被删除。',
@@ -2666,6 +2668,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronToastDeliveryChannelRequired: '请选择一个外部通知通道。',
   },
   en: {
+    ...browserRecordingTranslations.en,
     collaborationExportMain: 'Export main conversation',
     collaborationDeleteConfirm:
       'Delete this conversation and all associated peer sessions? Assistant profiles, other tasks and project files are kept.',

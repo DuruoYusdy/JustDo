@@ -8,6 +8,7 @@ import {
   type BrowserLocalHtmlPreviewResult,
   type BrowserPanelTab,
 } from '@shared/browser/browser';
+import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { type ComponentProps, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,7 +63,14 @@ const stopFind = vi.fn();
 const printPage = vi.fn((_options, callback) => callback?.(true));
 const setZoomFactor = vi.fn();
 const openDevTools = vi.fn();
-const guestSend = vi.fn(function (this: HTMLElement, channel: string, requestId?: string) {
+const guestSend = vi.fn(function (this: HTMLElement, channel: string, requestId?: unknown) {
+  if (channel === BrowserRecordingChannel.Control) {
+    this.dispatchEvent(Object.assign(new Event('ipc-message'), {
+      channel: BrowserRecordingChannel.Ready,
+      args: [{ ...(requestId as object), documentId: 'recording-document' }],
+    }));
+    return;
+  }
   if (channel !== 'justdo-browser-inspect') return;
   const event = new Event('ipc-message');
   Object.assign(event, {
@@ -130,6 +138,7 @@ function BrowserPanelHarness({
   embedded = false,
   isOpen = true,
   onTabsChange,
+  onRecordingRetentionChange,
   onAddAnnotation = () => true,
   onRequestBrowserSettings,
   panelRef,
@@ -141,6 +150,7 @@ function BrowserPanelHarness({
   embedded?: boolean;
   isOpen?: boolean;
   onTabsChange?: ComponentProps<typeof BrowserPanel>['onTabsChange'];
+  onRecordingRetentionChange?: ComponentProps<typeof BrowserPanel>['onRecordingRetentionChange'];
   onAddAnnotation?: ComponentProps<typeof BrowserPanel>['onAddAnnotation'];
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
   panelRef?: (instance: BrowserPanelHandle | null) => void;
@@ -161,6 +171,7 @@ function BrowserPanelHarness({
       onActiveTargetChange={setActiveTargetId}
       onAddAnnotation={onAddAnnotation}
       onTabsChange={onTabsChange}
+      onRecordingRetentionChange={onRecordingRetentionChange}
       onRequestBrowserSettings={onRequestBrowserSettings}
       initialTabs={initialTabs}
       retainedTargetIds={retainedTargetIds}
@@ -240,6 +251,7 @@ describe('BrowserPanel embedded webview', () => {
       configurable: true,
       value: {
         browser: {
+          setRecordingLease: vi.fn().mockResolvedValue(true),
           createLocalHtmlPreview,
           loadPdf,
           registerAgentTab,
@@ -958,6 +970,35 @@ describe('BrowserPanel embedded webview', () => {
     expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
       'https://example.com/retained',
     );
+  });
+
+  it('ignores iframe navigation in the top-level address and recording steps', async () => {
+    const retain = vi.fn();
+    const view = render(<BrowserPanelHarness onRecordingRetentionChange={retain} initialTabs={[{
+      targetId: 'recording-page', id: 'recording-page',
+      url: 'https://example.com/', title: 'Example',
+    }]} />);
+    const guest = view.container.querySelector('webview')!;
+    act(() => guest.dispatchEvent(new Event('dom-ready')));
+    fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
+    await screen.findByRole('button', { name: 'Pause recording' });
+    expect(retain).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText('1')).toBeTruthy();
+    act(() => guest.dispatchEvent(Object.assign(new Event('did-navigate-in-page'), {
+      isMainFrame: false, url: 'https://example.com/frame#changed',
+    })));
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value)
+      .toBe('https://example.com/');
+    expect(screen.getByText('1')).toBeTruthy();
+    act(() => guest.dispatchEvent(Object.assign(new Event('did-navigate-in-page'), {
+      isMainFrame: true, url: 'https://example.com/#changed',
+    })));
+    expect(screen.getByText('2')).toBeTruthy();
+    view.rerender(<BrowserPanelHarness isOpen={false} onRecordingRetentionChange={retain} />);
+    await waitFor(() => expect(guestSend).toHaveBeenLastCalledWith(
+      BrowserRecordingChannel.Control, expect.objectContaining({ active: false }),
+    ));
+    expect(retain).toHaveBeenLastCalledWith(true);
   });
 
   it('keeps the live guest mounted while the panel is hidden', () => {

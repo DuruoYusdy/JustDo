@@ -2,6 +2,7 @@ import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/ou
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents';
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
+import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -23,6 +24,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux';
 
 import BrowserAnnotationCard from '@/features/browser/BrowserAnnotationCard';
+import { BrowserRecordingDraftCard } from '@/features/browser/BrowserRecordingDraftCard';
+import { recordingSubmissionIssue } from '@/features/browser/browserRecordingSubmission';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/agentModelSelection';
 import AttachmentCard from '@/features/cowork/components/composer/AttachmentCard';
 import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer/blockedSlashCommand';
@@ -77,6 +80,7 @@ import {
   selectDraftPrompts,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
+import { removeDraftBrowserRecording } from '@/features/cowork/coworkSlice';
 import {
   addDraftAttachment,
   beginManualModelSelection,
@@ -191,6 +195,7 @@ const getSendShortcutLabel = (value: string): string => {
 };
 
 export interface CoworkPromptInputRef {
+  supportsImages: () => boolean;
   /** 设置输入框值 */
   setValue: (value: string) => void;
   /** 在当前可见草稿后追加文字，不依赖延迟持久化状态 */
@@ -302,6 +307,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const browserAnnotations = useSelector((state: RootState) =>
       selectDraftBrowserAnnotations(state, draftKey),
     );
+    const browserRecording = useSelector(
+      (state: RootState) => state.cowork.draftBrowserRecordings?.[draftKey],
+    );
+    const [recordingTextOnly, setRecordingTextOnly] = useState(false);
+    useEffect(() => setRecordingTextOnly(false), [browserRecording?.id]);
     const agents = useSelector((state: RootState) => state.agent.agents);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const [openClawModelCatalog, setOpenClawModelCatalog] = useState<OpenClawModelChoice[]>([]);
@@ -425,8 +435,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const initialGoalObjectiveRef = useRef(initialGoalObjective);
     initialGoalObjectiveRef.current = initialGoalObjective;
     const goalStateMatchesSession = goalStateSessionIdRef.current === sessionId;
-    const hasSessionGoal =
-      goalStateMatchesSession && Boolean(sessionGoal || pendingGoalObjective);
+    const hasSessionGoal = goalStateMatchesSession && Boolean(sessionGoal || pendingGoalObjective);
     useEffect(() => {
       onGoalPresenceChange?.(sessionId, hasSessionGoal);
     }, [hasSessionGoal, onGoalPresenceChange, sessionId]);
@@ -727,6 +736,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     // 暴露方法给父组件
     React.useImperativeHandle(ref, () => ({
+      supportsImages: () => modelSupportsImage,
       setValue: (newValue: string) => {
         latestValueRef.current = newValue;
         setValue(newValue);
@@ -848,6 +858,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
           return;
         }
+        if (browserRecording && trimmedValue.startsWith('/')) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('recordingSpecial') }),
+          );
+          return;
+        }
         const planPrompt = parsePlanSlashCommandPrompt(trimmedValue);
         const submittedViaPlanCommand = planPrompt !== null;
         if (planPrompt !== null) {
@@ -883,6 +899,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           if (!planPrompt) return;
         }
         if (rejectBlockedSlashCommand(trimmedValue)) return;
+        if (browserRecording && completionFeedbackRef.current) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('recordingSpecial') }),
+          );
+          return;
+        }
+        if (browserRecording?.images.length && !recordingTextOnly && !modelSupportsImage) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('recordingVision') }),
+          );
+          return;
+        }
 
         if (showFolderSelector && !workingDirectory?.trim()) {
           setShowFolderRequiredWarning(true);
@@ -928,6 +956,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               executionAwaitsInputForGoal) &&
             !submittedViaPlanCommand &&
             !isGoalSlashCommand(trimmedValue);
+          if (resumeWithInput && browserRecording) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', { detail: i18nService.t('recordingSpecial') }),
+            );
+            return;
+          }
           if (resumeWithInput && attachments.length > 0) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', {
@@ -980,6 +1014,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
 
           const rawSlashCommand = trimmedValue.startsWith('/');
+          const submittedRecording = browserRecording
+            ? {
+                ...browserRecording,
+                images: recordingTextOnly ? [] : recordingImagesInStepOrder(browserRecording),
+              }
+            : undefined;
+          for (const image of submittedRecording?.images ?? []) {
+            const extracted = extractBase64FromDataUrl(image.dataUrl);
+            if (!extracted) {
+              attachmentPreparationFailed = true;
+              continue;
+            }
+            attachmentPayloads.push({
+              name: image.fileName,
+              mimeType: extracted.mimeType,
+              base64Data: extracted.base64Data,
+            });
+          }
           const submittedBrowserAnnotations = rawSlashCommand ? [] : browserAnnotations;
           const userAttachmentPayloadCount = attachmentPayloads.length;
           if (!resumeWithInput) {
@@ -999,6 +1051,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
 
           if (!submissionIsCurrent() || isStopPending() || goalActionPendingRef.current) return;
+          const recordingIssue = recordingSubmissionIssue(
+            submittedRecording,
+            attachmentPayloads,
+            modelSupportsImage,
+          );
+          if (recordingIssue) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', { detail: i18nService.t(recordingIssue) }),
+            );
+            return;
+          }
           if (attachmentPreparationFailed) {
             if (!modelSupportsImage && imagePreparationFailed) {
               setImageVisionHint(true);
@@ -1035,8 +1098,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           const browserGatewayPrompt = composeBrowserGatewayPrompt(
             finalPrompt,
             submittedBrowserAnnotations,
+            submittedRecording,
           );
           const clearSubmittedBrowserAnnotations = () => {
+            if (submittedRecording)
+              dispatch(
+                removeDraftBrowserRecording({
+                  draftKey,
+                  id: submittedRecording.id,
+                  expectedRecording: browserRecording,
+                }),
+              );
             dispatch(
               clearDraftBrowserAnnotations({
                 draftKey,
@@ -1159,7 +1231,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             result = await onSubmit(
               finalPrompt,
               attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
-              submittedBrowserAnnotations.length > 0 ? browserGatewayPrompt : undefined,
+              submittedBrowserAnnotations.length > 0 || submittedRecording
+                ? browserGatewayPrompt
+                : undefined,
             );
           } catch (error) {
             if (goalClear) cancelGoalClear();
@@ -1211,6 +1285,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         onSubmit,
         attachments,
         browserAnnotations,
+        browserRecording,
+        recordingTextOnly,
         showFolderSelector,
         workingDirectory,
         dispatch,
@@ -2456,6 +2532,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               />
             ))}
           </div>
+        )}
+        {!isSideChat && browserRecording && (
+          <BrowserRecordingDraftCard
+            key={`${draftKey}:${browserRecording.id}`}
+            draft={browserRecording}
+            draftKey={draftKey}
+            textOnly={recordingTextOnly}
+            onTextOnly={setRecordingTextOnly}
+          />
         )}
         {!isSideChat && browserAnnotations.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">

@@ -1,5 +1,7 @@
 # 浏览器设置与 OpenClaw v2026.9.2 边界
 
+操作演示录制的交互、数据流与限制见[浏览器操作演示](browser-operation-recording.md)。录制属于嵌入式网页工作区，不修改 OpenClaw 配对扩展或 relay。
+
 本文描述 JustDo 浏览器设置、右侧嵌入式浏览器工作区，以及它们与 OpenClaw v2026.9.2 Browser plugin 的边界。OpenClaw 持有 Agent 浏览器执行、profile driver、relay 协议与 tab 授权；JustDo 持有模式选择、设置引导、可直接操作的嵌入式网页、用户标注和 Electron guest 安全边界。
 
 ## 1. 产品模式

@@ -10,6 +10,9 @@ import {
   isBrowserGuestCommand,
   resolveBrowserGuestWheelZoomDirection,
 } from '../shared/browser/browser';
+import { installBrowserRecordingGuest } from './browser/browserRecordingGuest';
+
+installBrowserRecordingGuest();
 
 type InspectionPoint = { x: number; y: number };
 const MAX_SIBLINGS_SCANNED = 512;

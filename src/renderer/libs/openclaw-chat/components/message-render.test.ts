@@ -218,6 +218,48 @@ describe('browser annotation messages', () => {
   });
 });
 
+test.each([false, true])(
+  'renders a trimmed recording-only message as a card (blocks=%s)',
+  contentArray => {
+    const prompt = composeBrowserGatewayPrompt('', [], {
+      id: 'recording',
+      sessionId: 'session',
+      profile: 'embedded',
+      title: '',
+      note: '',
+      startedAt: 1,
+      images: [],
+      steps: [
+        {
+          id: 'step',
+          action: 'click',
+          pageId: 'tab',
+          at: 0,
+          url: 'https://example.com/',
+          title: 'Example',
+        },
+      ],
+    }).trim();
+    const rendered = stringifyTemplate(
+      renderMessageBlock({
+        ...createGroup('user'),
+        messages: [
+          {
+            key: 'recording',
+            message: {
+              role: 'user',
+              content: contentArray ? [{ type: 'text', text: prompt }] : prompt,
+            },
+          },
+        ],
+      }),
+    );
+    expect(rendered).toContain('recording-message');
+    expect(rendered).not.toContain('EXTERNAL_UNTRUSTED_CONTENT');
+    expect(rendered).not.toContain('recording-data-length:');
+  },
+);
+
 describe('group footer helpers', () => {
   test('shows peer source labels instead of attributing them to the user', () => {
     expect(getGroupFooterLabel({ ...createGroup('user'), senderLabel: 'Review peer' })).toBe(
@@ -231,9 +273,7 @@ describe('group footer helpers', () => {
       senderId: 'review-agent',
       senderLabel: '协作消息 · review-agent',
     };
-    expect(getGroupFooterLabel(group, undefined, { 'review-agent': '审查助手' })).toBe(
-      '审查助手',
-    );
+    expect(getGroupFooterLabel(group, undefined, { 'review-agent': '审查助手' })).toBe('审查助手');
     const rendered = stringifyTemplate(
       renderMessageBlock(group, { peerNames: { 'review-agent': '审查助手' } }),
     );

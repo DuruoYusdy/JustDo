@@ -1,8 +1,50 @@
+import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { describe, expect, test } from 'vitest';
 
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 
+import { projectGatewayHistoryForDisplay } from './history-display-normalizer';
+
 describe('normalizeMessage image content', () => {
+  test('preserves screenshot references through history projection and repeated normalization', () => {
+    const prompt = composeBrowserGatewayPrompt('', [], {
+      id: 'r',
+      sessionId: 's',
+      profile: 'embedded',
+      title: '',
+      note: '',
+      startedAt: 0,
+      steps: [
+        {
+          id: 'step',
+          action: 'click',
+          pageId: 'tab',
+          at: 0,
+          url: 'https://example.com',
+          title: '',
+        },
+      ],
+      images: [{ stepId: 'step', fileName: 'step.jpg', dataUrl: 'data:image/jpeg;base64,YWJj' }],
+    });
+    const projected = projectGatewayHistoryForDisplay([{ role: 'user', content: prompt }])[0];
+    const normalized = normalizeMessage(projected);
+    const repeated = normalizeMessage(normalized);
+    for (const message of [normalized, repeated]) {
+      expect(message.content).toContainEqual(
+        expect.objectContaining({
+          type: 'browser_recording',
+          recording: expect.objectContaining({
+            steps: [
+              expect.objectContaining({
+                screenshotFiles: ['step.jpg'],
+                screenshotFingerprints: [expect.any(String)],
+              }),
+            ],
+          }),
+        }),
+      );
+    }
+  });
   test.each(['vendor/model', 'openrouter/auto'])(
     'keeps provider identity for native model %s',
     model => {

@@ -1,5 +1,6 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, original, PayloadAction } from '@reduxjs/toolkit';
 import type { BrowserAnnotationDraft } from '@shared/browser/browser';
+import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
@@ -37,6 +38,7 @@ interface CoworkState {
   draftAttachments: Record<string, DraftAttachment[]>;
   /** Browser annotations are generated context and remain scoped to one composer draft. */
   draftBrowserAnnotations: Record<string, BrowserAnnotationDraft[]>;
+  draftBrowserRecordings: Record<string, BrowserRecordingDraft>;
   unreadSessionIds: string[];
   isCoworkActive: boolean;
   isStreaming: boolean;
@@ -67,6 +69,7 @@ const initialState: CoworkState = {
   draftPrompts: {},
   draftAttachments: {},
   draftBrowserAnnotations: {},
+  draftBrowserRecordings: {},
   unreadSessionIds: [],
   isCoworkActive: false,
   isStreaming: false,
@@ -294,6 +297,7 @@ const coworkSlice = createSlice({
         interaction => interaction.sessionId !== action.payload,
       );
       delete state.draftBrowserAnnotations[action.payload];
+      delete state.draftBrowserRecordings[action.payload];
     },
 
     deleteSessions(state, action: PayloadAction<string[]>) {
@@ -302,6 +306,7 @@ const coworkSlice = createSlice({
         clearSessionModelSelectionState(state, sessionId);
         delete state.planModeBySession[sessionId];
         delete state.draftBrowserAnnotations[sessionId];
+        delete state.draftBrowserRecordings[sessionId];
       }
       const deletedSessionIds = new Set(action.payload);
       state.pendingInteractions = state.pendingInteractions.filter(
@@ -570,6 +575,35 @@ const coworkSlice = createSlice({
       delete state.draftAttachments[action.payload];
     },
 
+    setDraftBrowserRecording(
+      state,
+      action: PayloadAction<{ draftKey: string; recording: BrowserRecordingDraft }>,
+    ) {
+      const { draftKey, recording } = action.payload;
+      const existing = state.draftBrowserRecordings[draftKey];
+      if (!existing || existing.id === recording.id)
+        state.draftBrowserRecordings[draftKey] = recording;
+    },
+    removeDraftBrowserRecording(
+      state,
+      action: PayloadAction<{
+        draftKey: string;
+        id: string;
+        expectedRecording?: BrowserRecordingDraft;
+      }>,
+    ) {
+      const { draftKey, id, expectedRecording } = action.payload;
+      // Compare against the immutable source, not Immer's proxy. A save while
+      // submission is pending creates a new object even when its id is unchanged.
+      if (
+        expectedRecording &&
+        original(state)?.draftBrowserRecordings[draftKey] !== expectedRecording
+      )
+        return;
+      if (state.draftBrowserRecordings[draftKey]?.id === id) {
+        delete state.draftBrowserRecordings[draftKey];
+      }
+    },
     addDraftBrowserAnnotation(
       state,
       action: PayloadAction<{ draftKey: string; annotation: BrowserAnnotationDraft }>,
@@ -691,6 +725,8 @@ export const {
   hydrateDraftImageAttachment,
   clearDraftAttachments,
   addDraftBrowserAnnotation,
+  setDraftBrowserRecording,
+  removeDraftBrowserRecording,
   removeDraftBrowserAnnotation,
   clearDraftBrowserAnnotations,
   addSession,

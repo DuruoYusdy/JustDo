@@ -41,6 +41,7 @@ import {
   resolveBrowserPanelShortcutAction,
   stepBrowserZoomFactor,
 } from '@shared/browser/browser';
+import { RecordingStatus } from '@shared/browser/browserRecording';
 import React, {
   forwardRef,
   lazy,
@@ -83,6 +84,9 @@ import { normalizeLiveInspectedElement } from '@/features/browser/liveBrowserIns
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
+
+import { BrowserRecordingControls } from './BrowserRecordingControls';
+import { useBrowserRecording } from './useBrowserRecording';
 
 type BrowserPanelMode = 'interact' | 'inspect' | 'pen' | 'rectangle';
 type Gesture =
@@ -277,6 +281,7 @@ const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
   });
 
 export interface BrowserPanelHandle {
+  promoteRecordingSession: (fromSessionId: string, toSessionId: string) => void;
   closeTab: (targetId: string) => void;
   openTabContextMenu: (
     targetId: string,
@@ -307,6 +312,7 @@ interface BrowserPanelProps {
   onAddAnnotation: (annotation: BrowserAnnotationDraft) => boolean;
   onRequestBrowserSettings?: (page?: 'history' | 'downloads') => void;
   onTabsChange?: (tabs: BrowserPanelTab[]) => void;
+  onRecordingRetentionChange?: (retained: boolean) => void;
   initialTabs?: readonly BrowserPanelTab[];
   retainedTargetIds?: readonly string[];
   agentInteractionStates?: readonly BrowserAgentInteractionState[];
@@ -325,6 +331,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     onAddAnnotation,
     onRequestBrowserSettings,
     onTabsChange,
+    onRecordingRetentionChange,
     initialTabs,
     retainedTargetIds,
     agentInteractionStates = [],
@@ -438,6 +445,22 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
   const activeWebview = activeTab ? (webviewsRef.current.get(activeTab.targetId) ?? null) : null;
+  const recorder = useBrowserRecording({
+    draftKey,
+    isOpen,
+    activeTab: activeTab ?? undefined,
+    tabs,
+    guests: webviewsRef,
+  });
+  const recorderRef = useRef(recorder);
+  recorderRef.current = recorder;
+  const recordingRetentionCallback = useRef(onRecordingRetentionChange);
+  recordingRetentionCallback.current = onRecordingRetentionChange;
+  const retainsRecording = Boolean(recorder.session) || recorder.busy;
+  useEffect(() => {
+    recordingRetentionCallback.current?.(retainsRecording);
+  }, [retainsRecording]);
+  const isRecording = !!recorder.session && recorder.session.status !== RecordingStatus.Review;
   const detectedPdfUrl =
     activeTab &&
     nonPdfUrls.get(activeTab.targetId) !== activeTab.url &&
@@ -478,7 +501,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const toggleAnnotationMode = useCallback(
     (nextMode: Exclude<BrowserPanelMode, 'interact'>) => {
-      if (activePdfUrl) return;
+      if (activePdfUrl || isRecording) return;
       setAnnotationToolMenuAnchor(null);
       setHovered(null);
       gestureRef.current = null;
@@ -504,7 +527,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       setMode(nextMode);
     },
-    [activePdfUrl, mode],
+    [activePdfUrl, mode, isRecording],
   );
 
   useEffect(() => {
@@ -831,57 +854,62 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   const closeTab = useCallback(
     (targetId: string) => {
-      const currentTabs = tabsRef.current;
-      const closingIndex = currentTabs.findIndex(tab => tab.targetId === targetId);
-      if (closingIndex < 0) return;
-      const closingTab = currentTabs[closingIndex]!;
-      const closingWebview = webviewsRef.current.get(targetId);
-      const closingUrl = closingWebview?.getURL() || closingTab.url;
-      if (closingUrl && closingUrl !== 'about:blank') {
-        closedTabsRef.current = [
-          ...closedTabsRef.current.slice(-9),
-          { ...closingTab, url: closingUrl },
-        ];
-      }
-      initialUrlsRef.current.delete(targetId);
-      pdfZoomFactorsRef.current.delete(targetId);
-      setCompatibilityPdfUrls(current => {
-        const next = new Map(current);
-        next.delete(targetId);
-        return next;
-      });
-      setNonPdfUrls(current => {
-        if (!current.has(targetId)) return current;
-        const next = new Map(current);
-        next.delete(targetId);
-        return next;
-      });
-      guestElementRefs.current.delete(targetId);
-      const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
-      tabsRef.current = nextTabs;
-      setTabs(nextTabs);
-      setReadyTargets(current => {
-        const next = new Set(current);
-        next.delete(targetId);
-        return next;
-      });
-      setLoadingTargets(current => {
-        const next = new Set(current);
-        next.delete(targetId);
-        return next;
-      });
-      setLoadErrors(current => {
-        const next = new Map(current);
-        next.delete(targetId);
-        return next;
-      });
-      if (activeTargetRef.current !== targetId) return;
-      clearAnnotations();
-      const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
-      activeTargetRef.current = nextTab?.targetId ?? null;
-      onActiveTargetChange(nextTab?.targetId ?? null);
-      setUrlDraft(getBrowserTabAddress(nextTab));
-      if (nextTab) setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
+      const performClose = () => {
+        const currentTabs = tabsRef.current;
+        const closingIndex = currentTabs.findIndex(tab => tab.targetId === targetId);
+        if (closingIndex < 0) return;
+        const closingTab = currentTabs[closingIndex]!;
+        const closingWebview = webviewsRef.current.get(targetId);
+        const closingUrl = closingWebview?.getURL() || closingTab.url;
+        if (closingUrl && closingUrl !== 'about:blank') {
+          closedTabsRef.current = [
+            ...closedTabsRef.current.slice(-9),
+            { ...closingTab, url: closingUrl },
+          ];
+        }
+        initialUrlsRef.current.delete(targetId);
+        pdfZoomFactorsRef.current.delete(targetId);
+        setCompatibilityPdfUrls(current => {
+          const next = new Map(current);
+          next.delete(targetId);
+          return next;
+        });
+        setNonPdfUrls(current => {
+          if (!current.has(targetId)) return current;
+          const next = new Map(current);
+          next.delete(targetId);
+          return next;
+        });
+        guestElementRefs.current.delete(targetId);
+        const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
+        tabsRef.current = nextTabs;
+        setTabs(nextTabs);
+        setReadyTargets(current => {
+          const next = new Set(current);
+          next.delete(targetId);
+          return next;
+        });
+        setLoadingTargets(current => {
+          const next = new Set(current);
+          next.delete(targetId);
+          return next;
+        });
+        setLoadErrors(current => {
+          const next = new Map(current);
+          next.delete(targetId);
+          return next;
+        });
+        if (activeTargetRef.current !== targetId) return;
+        clearAnnotations();
+        const nextTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)] ?? null;
+        activeTargetRef.current = nextTab?.targetId ?? null;
+        onActiveTargetChange(nextTab?.targetId ?? null);
+        setUrlDraft(getBrowserTabAddress(nextTab));
+        if (nextTab) setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
+      };
+      if (recorderRef.current.session?.status === RecordingStatus.Recording)
+        void recorderRef.current.drain().then(performClose);
+      else performClose();
     },
     [clearAnnotations, onActiveTargetChange],
   );
@@ -900,6 +928,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       closeTab,
       openTabContextMenu,
       openTab,
+      promoteRecordingSession: (fromSessionId, toSessionId) =>
+        recorderRef.current.promoteSession(fromSessionId, toSessionId),
     }),
     [closeTab, openTab, openTabContextMenu],
   );
@@ -1066,6 +1096,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         handleNavigation(targetId, webview);
       });
       webview.addEventListener('dom-ready', () => {
+        recorderRef.current.onReady(targetId);
         registerAgentTab();
         readyGuestsRef.current.add(webview);
         const retainedTab = tabsRef.current.find(tab => tab.targetId === targetId);
@@ -1086,6 +1117,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
       webview.addEventListener('ipc-message', event => {
         const details = event as GuestEvent;
+        recorderRef.current.onMessage(targetId, details.channel ?? '', details.args?.[0]);
         if (details.channel === BROWSER_GUEST_COMMAND_CHANNEL) {
           const [command] = details.args ?? [];
           if (isBrowserGuestCommand(command)) runBrowserCommand(command, targetId);
@@ -1132,7 +1164,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
       for (const eventName of ['did-navigate', 'did-navigate-in-page']) {
         webview.addEventListener(eventName, event => {
-          handleNavigation(targetId, webview, (event as GuestEvent).url, undefined, true);
+          const details = event as GuestEvent;
+          if (details.isMainFrame === false) return;
+          recorderRef.current.onNavigation(targetId, details.url ?? webview.getURL());
+          handleNavigation(targetId, webview, details.url, undefined, true);
         });
       }
       webview.addEventListener('page-title-updated', event => {
@@ -2261,8 +2296,21 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           aria-label={i18nService.t('browserPanelAddress')}
           placeholder={i18nService.t('browserPanelAddressPlaceholder')}
         />
+        <BrowserRecordingControls
+          recorder={recorder}
+          disabled={
+            !activeTab ||
+            !readyTargets.has(activeTab.targetId) ||
+            !/^https?:/.test(activeTab.url) ||
+            !!detectedPdfUrl ||
+            mode !== 'interact' ||
+            isCommentComposerOpen ||
+            isCapturing ||
+            agentInteractionLocked
+          }
+        />
         <div
-          className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised/60 p-0.5"
+          className={`ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border border-border/70 bg-surface-raised/60 p-0.5 ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
           data-testid="browser-annotation-tool-group"
         >
           <Tooltip content={inspectActionLabel} position="bottom" renderInPortal dismissOnClick>

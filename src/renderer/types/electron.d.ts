@@ -5,6 +5,7 @@ import type {
   AgentResult,
 } from '../../shared/agents';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
+type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
@@ -462,6 +463,7 @@ interface IElectronAPI {
     unregisterAgentTab: (reference: BrowserAgentTabReference) => void;
     setAgentActiveTab: (reference: BrowserAgentTabReference) => void;
     setUserInteractionState: (state: BrowserAgentInteractionState) => void;
+    setRecordingLease: (state: BrowserRecordingLease) => Promise<boolean>;
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) => void;
     onAgentEnsureTab: (callback: (event: BrowserAgentSessionEvent) => void) => () => void;
     onAgentFocusTab: (callback: (event: BrowserAgentTabReference) => void) => () => void;

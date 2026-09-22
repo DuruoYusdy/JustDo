@@ -1,8 +1,8 @@
 /**
  * Message normalization utilities for chat rendering.
  */
-
 import { type BrowserAnnotationDisplay, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/openclaw/modelRef';
 
@@ -620,6 +620,9 @@ function expandUserDisplayContent(
   if (!browserPrompt) return expandUserTextMediaContent(displayText, includeLegacyTextFields);
   return [
     ...expandUserTextMediaContent(browserPrompt.userText, includeLegacyTextFields),
+    ...(browserPrompt.recording
+      ? [{ type: 'browser_recording' as const, recording: browserPrompt.recording }]
+      : []),
     ...browserPrompt.annotations.map(annotation => ({
       type: 'browser_annotation' as const,
       annotation,
@@ -672,6 +675,19 @@ export function normalizeMessage(
     }
   } else if (Array.isArray(m.content)) {
     content = m.content.flatMap((item: Record<string, unknown>) => {
+      if (item.type === 'browser_recording') {
+        try {
+          const recording = parseRecordingContext(
+            serializeRecording(
+              item.recording as import('@shared/browser/browserRecording').BrowserRecordingDraft,
+              { preserveHistoryScreenshotReferences: true },
+            ),
+          );
+          return recording ? [{ type: 'browser_recording' as const, recording }] : [];
+        } catch {
+          return [];
+        }
+      }
       if (item.type === 'browser_annotation') {
         const annotation = coerceBrowserAnnotation(item.annotation);
         return annotation ? [{ type: 'browser_annotation' as const, annotation }] : [];

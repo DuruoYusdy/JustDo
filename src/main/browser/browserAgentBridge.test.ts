@@ -14,6 +14,9 @@ const electron = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   ipcMain: {
+    handle: (channel: string, handler: (event: unknown, value: unknown) => void) =>
+      electron.handlers.set(channel, handler),
+    removeHandler: (channel: string) => electron.handlers.delete(channel),
     on: (channel: string, handler: (event: unknown, value: unknown) => void) =>
       electron.handlers.set(channel, handler),
   },
@@ -29,23 +32,113 @@ vi.mock('electron', () => ({
     },
   },
   session: {
-    fromPartition: (partition: string) =>
-      electron.partitions.get(partition) ?? electron.partition,
+    fromPartition: (partition: string) => electron.partitions.get(partition) ?? electron.partition,
   },
   webContents: { fromId: (id: number) => electron.guests.get(id) ?? null },
 }));
 
 import { BROWSER_AGENT_PANEL_TARGET_ID, BrowserIpc } from '../../shared/browser/browser';
+import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
 import { BrowserAgentBridge } from './browserAgentBridge';
 import { claimBrowserAgentDownload } from './browserAgentDownloadCoordinator';
 
 let bridge: BrowserAgentBridge | null = null;
+test('protects all tabs in a recording profile and ignores releases from a different recording', async () => {
+  bridge = new BrowserAgentBridge(vi.fn(), () => true);
+  bridge.registerIpc();
+  const loadURL = vi.fn().mockResolvedValue(undefined);
+  electron.guests.set(7, {
+    id: 7,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    session: electron.partition,
+    hostWebContents: { id: 10 },
+    getTitle: () => 'Example',
+    getURL: () => 'https://example.com/',
+    loadURL,
+    executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({
+      title: 'Example',
+      url: 'https://example.com/next',
+      text: '',
+      elements: [],
+    }),
+  });
+  registerGuest(7);
+  const lease = electron.handlers.get(BrowserRecordingChannel.Lease)!;
+  const request = {
+    recordingId: 'recording-1',
+    sessionId: 'session-1',
+    profile: 'embedded',
+    acquire: true,
+  };
+  expect(lease(trustedEvent(), request)).toBe(true);
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'navigate',
+      url: 'https://example.com/next',
+    }),
+  ).rejects.toThrow('recording');
+  lease(trustedEvent(), { ...request, recordingId: 'stale-recording', acquire: false });
+  await expect(
+    bridge.executeCommand('justdo:session-1', { action: 'open', url: 'https://example.com/new' }),
+  ).rejects.toThrow('recording');
+  expect(loadURL).not.toHaveBeenCalled();
+  lease(trustedEvent(), { ...request, acquire: false });
+  await expect(
+    bridge.executeCommand('justdo:session-1', {
+      action: 'navigate',
+      url: 'https://example.com/next',
+    }),
+  ).resolves.toMatchObject({ details: { ok: true } });
+  expect(loadURL).toHaveBeenCalled();
+});
 const temporaryRoots: string[] = [];
+
+test.each(['destroyed', 'render-process-gone', 'did-start-navigation'])(
+  'releases a recording lease when its owner emits %s',
+  eventName => {
+    bridge = new BrowserAgentBridge(vi.fn(), () => true);
+    bridge.registerIpc();
+    electron.guests.set(7, {
+      id: 7,
+      getType: () => 'webview',
+      isDestroyed: () => false,
+      session: electron.partition,
+      hostWebContents: { id: 10 },
+      getTitle: () => 'Example',
+      getURL: () => 'https://example.com/',
+    });
+    registerGuest(7);
+    const event = trustedEvent();
+    const lease = electron.handlers.get(BrowserRecordingChannel.Lease)!;
+    const request = {
+      recordingId: 'first',
+      sessionId: 'session-1',
+      profile: 'embedded',
+      acquire: true,
+    };
+    expect(lease(event, request)).toBe(true);
+    expect(lease(event, { ...request, recordingId: 'next' })).toBe(false);
+    expect(lease(trustedEvent(11), request)).toBe(false);
+    lease(event, { ...request, sessionId: 'wrong-session', acquire: false });
+    expect(lease(event, { ...request, recordingId: 'next' })).toBe(false);
+    const release = event.sender.once.mock.calls.find(([name]) => name === eventName)?.[1];
+    expect(release).toBeTypeOf('function');
+    release();
+    expect(lease(event, { ...request, recordingId: 'next' })).toBe(true);
+  },
+);
 
 const trustedEvent = (senderId = 10) => {
   const mainFrame = { processId: 20, routingId: 30 };
   return {
-    sender: { id: senderId, getType: () => 'window', mainFrame },
+    sender: {
+      id: senderId,
+      getType: () => 'window',
+      mainFrame,
+      once: vi.fn(),
+      removeListener: vi.fn(),
+    },
     // Electron can return different WebFrameMain wrappers for the same
     // underlying frame, so the bridge must compare stable frame identifiers.
     senderFrame: { processId: 20, routingId: 30 },

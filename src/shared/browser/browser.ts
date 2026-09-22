@@ -1,4 +1,10 @@
 import { matchesShortcut, type ShortcutInput } from '../app/shortcuts';
+import {
+  type BrowserRecordingDraft,
+  parseRecordingContext,
+  RECORDING_LIMITS,
+  serializeRecording,
+} from './browserRecording';
 
 export const BrowserIpc = {
   GetStatus: 'browser:getStatus',
@@ -714,6 +720,7 @@ const BROWSER_CONTEXT_LENGTH_PREFIX = 'content-length:';
 const BROWSER_DISPLAY_LENGTH_PREFIX = 'display-metadata-length:';
 
 export type ParsedBrowserAnnotationPrompt = {
+  recording?: BrowserRecordingDraft;
   userText: string;
   annotations: BrowserAnnotationDisplay[];
   modelContext: string;
@@ -809,11 +816,16 @@ export function serializeBrowserAnnotationContext(
 export function composeBrowserGatewayPrompt(
   userText: string,
   annotations: readonly BrowserAnnotationDraft[],
+  recording?: BrowserRecordingDraft,
 ): string {
-  if (!annotations.length) return userText;
-  const context = serializeBrowserAnnotationContext(annotations);
+  if (!annotations.length && !recording) return userText;
+  let context = serializeBrowserAnnotationContext(annotations);
   if (context.length > BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH) {
     throw new RangeError('Browser annotation context exceeds the supported length.');
+  }
+  if (recording) {
+    const serialized = serializeRecording(recording);
+    context = `recording-data-length:${serialized.length}\n${serialized}\n${context}`;
   }
   const boundaryId = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
   return `<<<${EXTERNAL_BROWSER_CONTEXT_START} id="${boundaryId}">>>\n${EXTERNAL_BROWSER_CONTEXT_SOURCE}\n---\n${BROWSER_CONTEXT_LENGTH_PREFIX}${context.length}\n${context}\n<<<${EXTERNAL_BROWSER_CONTEXT_END} id="${boundaryId}">>>\n\n${userText}`;
@@ -835,8 +847,28 @@ function parseLengthDelimitedBrowserContext(params: {
     const end = headerEnd + 1 + contextLength;
     const userTextStart = endBoundary(end);
     if (userTextStart === null) return null;
-    if (value.slice(userTextStart, userTextStart + 2) !== '\n\n') return null;
-    const context = value.slice(headerEnd + 1, end);
+    // Gateway/history normalization trims trailing whitespace for submissions
+    // without user text. The exact length and matching boundary above still
+    // validate the envelope; EOF after that boundary is a valid empty prompt.
+    if (userTextStart !== value.length && value.slice(userTextStart, userTextStart + 2) !== '\n\n')
+      return null;
+    let context = value.slice(headerEnd + 1, end);
+    let recording: BrowserRecordingDraft | undefined;
+    if (context.startsWith('recording-data-length:')) {
+      const lineEnd = context.indexOf('\n');
+      const length = Number(context.slice('recording-data-length:'.length, lineEnd));
+      if (
+        lineEnd < 0 ||
+        !Number.isSafeInteger(length) ||
+        length < 0 ||
+        length > RECORDING_LIMITS.textLength
+      )
+        return null;
+      recording =
+        parseRecordingContext(context.slice(lineEnd + 1, lineEnd + 1 + length)) ?? undefined;
+      if (!recording || context[lineEnd + 1 + length] !== '\n') return null;
+      context = context.slice(lineEnd + 2 + length);
+    }
     let annotations: BrowserAnnotationDisplay[] = [];
     let modelContext = context;
     if (context.startsWith(BROWSER_DISPLAY_LENGTH_PREFIX)) {
@@ -861,7 +893,12 @@ function parseLengthDelimitedBrowserContext(params: {
         }
       }
     }
-    return { userText: value.slice(userTextStart + 2), annotations, modelContext };
+    return {
+      userText: value.slice(userTextStart + 2),
+      annotations,
+      modelContext,
+      ...(recording ? { recording } : {}),
+    };
   }
 
   return null;
@@ -873,7 +910,7 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
   ).exec(value);
   if (externalStart?.[1]) {
     const boundaryId = externalStart[1];
-    return parseLengthDelimitedBrowserContext({
+    const parsed = parseLengthDelimitedBrowserContext({
       value,
       contentStart: externalStart[0].length,
       endBoundary: contextEnd => {
@@ -883,6 +920,34 @@ export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnota
           : null;
       },
     });
+    if (parsed) return parsed;
+    // Persisted recording-only envelopes can have stale lengths after Gateway
+    // text sanitization. Recover only the exact compact-JSON grammar, never by
+    // searching page text for a closing marker. Annotation contexts remain
+    // strictly length-delimited because they can contain arbitrary newlines.
+    const tail = value.slice(externalStart[0].length);
+    const recovered =
+      /^content-length:(\d+)\nrecording-data-length:(\d+)\n([^\n]+)\ndisplay-metadata-length:2\n\[\]\n\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="([a-f0-9]{16})">>>(?:\n\n([\s\S]*))?$/.exec(
+        tail,
+      );
+    if (!recovered || recovered[4] !== boundaryId) return null;
+    const declaredContext = Number(recovered[1]);
+    const declaredRecording = Number(recovered[2]);
+    const json = recovered[3];
+    const actualContext =
+      `recording-data-length:${recovered[2]}\n${json}\ndisplay-metadata-length:2\n[]\n`.length;
+    if (
+      !Number.isSafeInteger(declaredContext) ||
+      !Number.isSafeInteger(declaredRecording) ||
+      declaredRecording > RECORDING_LIMITS.textLength ||
+      declaredRecording <= json.length ||
+      declaredContext - actualContext !== declaredRecording - json.length
+    )
+      return null;
+    const recording = parseRecordingContext(json);
+    return recording
+      ? { userText: recovered[5] ?? '', annotations: [], modelContext: '', recording }
+      : null;
   }
   return null;
 }

@@ -32,6 +32,8 @@ import type {
 } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
+import { renderBrowserRecording } from './browser-recording-message';
+
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
 
 type MessageRenderOptions = {
@@ -665,6 +667,7 @@ function resolveImageSourceUrl(url: string, workingDirectory?: string): string {
 type BubbleContentItem =
   | { type: 'text'; text?: string; name?: string; args?: unknown }
   | Extract<MessageContentItem, { type: 'browser_annotation' }>
+  | Extract<MessageContentItem, { type: 'browser_recording' }>
   | Extract<MessageContentItem, { type: 'attachment' | 'attachment_error' }>;
 
 const BROWSER_ANNOTATION_ICON = html`
@@ -806,6 +809,9 @@ function renderOrderedBubble(
           }
           if (item.type === 'attachment_error') {
             return renderAttachmentError(item);
+          }
+          if (item.type === 'browser_recording') {
+            return renderBrowserRecording(item.recording);
           }
           if (item.type === 'browser_annotation') {
             return renderBrowserAnnotation(item);
@@ -973,6 +979,7 @@ function renderUserMessage(
   const content = msg.content.flatMap<BubbleContentItem>(item => {
     if (item.type === 'attachment') return [item];
     if (item.type === 'browser_annotation') return [item];
+    if (item.type === 'browser_recording') return [item];
     if (item.type !== 'text') return [];
     if (hasImage && item.text?.trim() === '[User sent media without caption]') return [];
     return [{ type: 'text', text: item.text }];

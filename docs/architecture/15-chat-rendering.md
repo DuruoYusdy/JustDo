@@ -1,5 +1,11 @@
 # Chat 渲染架构
 
+操作演示作为独立 Composer 草稿保存在 cowork slice 的 `draftBrowserRecordings`，一份草稿包含多个步骤和有限关键截图。发送时在浏览器不可信上下文中增加长度前缀演示 JSON，图像使用原生附件；历史归一化生成 `browser_recording` 折叠展示块，不新增 transcript cache。文本与图像能力、编辑恢复和数据上限见[浏览器操作演示](../features/browser-operation-recording.md)。
+
+操作演示编辑使用右侧显示区的独立 Tab，不使用模态弹窗。`useRecordingReviewTabs` 接收 Renderer 内的编辑宿主注册事件，按来源会话显示标签；编辑表单通过 portal 挂载到 Tab 内容区域，切换标签不卸载表单。关闭来源或编辑 Tab 时注销宿主，不创建浏览器 guest，也不增加 transcript 状态。
+
+元素详情通过同一展示辅助函数呈现候选定位器及匹配数量、作用域、属性、状态、容器和观察结果；React 与 Lit 均使用转义文本。长演示可以用 targets/targetRef 去重，历史解析先还原目标再展示。发送预算造成的可选详情省略必须显示限制提示，不能把缺失片段当作完整快照。修改输入值会同步当前目标状态并移除旧截图和旧观察证据，避免新旧值互相矛盾。
+
 已完成的 assistant 消息组在所选朗读服务可用时显示右下角朗读入口。本地模式使用按需下载的 sherpa-onnx 模型；在线模式通过 Gateway 原生 `tts.status` 与 `tts.speak` 使用配置好的内网语音服务，Renderer 只接收内联音频，不接触服务凭据。
 组件通过 OpenClaw Gateway 的 `tts.speak` 获取音频，播放状态只保存在自定义元素内，
 不会把生成的音频写入 transcript 或 Redux。资源和 provider 生命周期见
@@ -330,6 +336,8 @@ Streaming 更新不应抢走键盘焦点或反复触发 screen reader 整页朗�
 | Gateway transport  | `gateway/client.ts`、`gateway/chat-controller.ts` 及测试          |
 
 ## 26. Chat 变更完成条件
+
+浏览器操作演示的 `browser_recording` item 使用独立 `browser-recording-message` 卡片：默认摘要、展开时间线、每步独立的页面/元素 disclosure。历史图像数量来自截图引用，不要求 Renderer 重建图像或消息缓存。HTML 片段只通过 Lit 文本绑定展示，禁止作为网页 HTML 注入；密码步骤不展示值或目标详情。编辑页与 Lit shadow DOM 共享录制展示辅助函数和 CSS，通过各自主题变量映射保持浅/深色一致；不改变 Gateway 的 transcript 所有权。
 
 新增 item/event 必须同时说明 live 与 history 表达、identity、session/run admission、terminal/takeover、渲染清洗、性能上限、搜索/导出和失败 fallback。至少测试乱序、重复、session 切换、分页、重连和危险内容；只截图证明视觉正常不构成数据流验收。
 

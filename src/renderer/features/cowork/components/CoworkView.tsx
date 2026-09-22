@@ -22,8 +22,10 @@ import {
   BROWSER_ANNOTATION_CONTEXT_MAX_LENGTH,
   type BrowserAgentInteractionState,
   type BrowserAnnotationDraft,
+  composeBrowserGatewayPrompt,
   serializeBrowserAnnotationContext,
 } from '@shared/browser/browser';
+import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
@@ -67,6 +69,7 @@ import {
   promotePendingBrowserPanelItems,
   takeAvailableBrowserAgentPanelStates,
 } from '@/features/browser/browserPanelRetention';
+import { recordingSubmissionIssue } from '@/features/browser/browserRecordingSubmission';
 import JustDoChatWrapper, {
   type JustDoChatWrapperRef,
 } from '@/features/cowork/components/chat/JustDoChatWrapper';
@@ -99,6 +102,7 @@ import {
 import TerminalPanel from '@/features/cowork/components/preview/TerminalPanel';
 import UnsupportedFilePreview from '@/features/cowork/components/preview/UnsupportedFilePreview';
 import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFilePreviewEvents';
+import { useRecordingReviewTabs } from '@/features/cowork/components/preview/useRecordingReviewTabs';
 import {
   HOME_DISPLAY_SESSION_KEY,
   useSessionDisplayState,
@@ -131,6 +135,7 @@ import {
   selectSessionRunTimings,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
+import { setDraftBrowserRecording } from '@/features/cowork/coworkSlice';
 import {
   addDraftBrowserAnnotation,
   clearDraftBrowserAnnotations,
@@ -500,6 +505,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     visiblePlanInteraction !== null &&
     (planInteraction === null ||
       retainedPlanInteraction?.requestId === visiblePlanInteraction.requestId);
+  const recordingReviewTabs = useRecordingReviewTabs(
+    displaySessionKey,
+    id => {
+      setIsWorkspaceFilesOpen(false);
+      setPreferredDisplayTabId(id);
+    },
+    () => setIsDisplayPanelOpen(true),
+  );
   const availableDisplayTabIds = useMemo(
     () => [
       ...(isBrowserPanelOpen ? browserTabs.map(tab => browserDisplayTabId(tab.targetId)) : []),
@@ -512,6 +525,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         ? [COLLABORATION_DISPLAY_TAB_ID]
         : []),
       ...sideChatTabs.map(tab => tab.id),
+      ...recordingReviewTabs.tabs.map(tab => tab.id),
     ],
     [
       collaborationSessionId,
@@ -524,6 +538,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       terminalTabs,
       unsupportedFilePreviews,
       visiblePlanInteraction,
+      recordingReviewTabs.tabs,
     ],
   );
   const activeDisplayTabId =
@@ -881,6 +896,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // Immediately show the session detail page with user message
       promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, tempSessionId);
       promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+      browserPanelRefs.current.forEach(panel =>
+        panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, tempSessionId),
+      );
       promotePendingBrowserTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
       dispatch(setCurrentSession(tempSession));
       dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
@@ -921,6 +939,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               pendingStartRef.current.canonicalSessionId = session.id;
             promoteDisplaySession(tempSessionId, session.id);
             promoteBrowserPanelTabs(tempSessionId, session.id);
+            browserPanelRefs.current.forEach(panel =>
+              panel.promoteRecordingSession(tempSessionId, session.id),
+            );
             promotePendingBrowserTabs(tempSessionId, session.id);
             const sourceAgentId = currentAgentId?.trim() || 'main';
             const targetAgentId = session.agentId?.trim() || sourceAgentId;
@@ -2114,7 +2135,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 }}
                 key={`browser-runtime:${displayState.runtimeId}`}
                 draftKey={sessionKey}
-                isOpen={browserVisible && !sessionKey.startsWith('temp-')}
+                isOpen={isDisplayPanelOpen && browserVisible && !sessionKey.startsWith('temp-')}
                 width={displayState.browserPanelWidth}
                 activeTargetId={displayState.browserPanelTargetId}
                 onClose={() => {
@@ -2134,6 +2155,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   );
                 }}
                 onTabsChange={tabs => setSessionField(sessionKey, 'browserTabs', tabs)}
+                onRecordingRetentionChange={retained =>
+                  setSessionField(sessionKey, 'hasBrowserRecording', retained)
+                }
                 initialTabs={displayState.browserTabs}
                 retainedTargetIds={displayState.browserTabs.map(tab => tab.targetId)}
                 agentInteractionStates={[
@@ -2306,6 +2330,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         for (const annotation of forked.draft.browserAnnotations ?? []) {
           dispatch(addDraftBrowserAnnotation({ draftKey: forked.session.id, annotation }));
         }
+        if (forked.draft.browserRecording)
+          dispatch(
+            setDraftBrowserRecording({
+              draftKey: forked.session.id,
+              recording: { ...forked.draft.browserRecording, sessionId: forked.session.id },
+            }),
+          );
         if (store.getState().cowork.currentSession?.id === forked.session.id) {
           requestAnimationFrame(() => {
             promptInputRef.current?.setValue(forked.draft.text);
@@ -2378,15 +2409,48 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           );
           return false;
         }
+        if (action === 'edit' && store.getState().cowork.draftBrowserRecordings[sourceSessionId]) {
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', { detail: i18nService.t('recordingExisting') }),
+          );
+          return false;
+        }
         const draft = await chatWrapperRef.current?.rewindToUserMessage(entryId);
         if (!draft) throw new Error('Chat controller is not ready');
         if (action === 'edit') {
           const nextText = editedText ?? draft.text;
-          const sent = await handleSendMessage(
-            nextText,
-            draft.attachments,
-            appendMediaDirectiveLines(nextText, draft.filePaths),
+          const attachments = [
+            ...draft.attachments,
+            ...(draft.browserRecording
+              ? recordingImagesInStepOrder(draft.browserRecording)
+              : []
+            ).flatMap(image => {
+              const match = /^data:(image\/[^;]+);base64,(.+)$/.exec(image.dataUrl);
+              return match
+                ? [{ name: image.fileName, mimeType: match[1], base64Data: match[2] }]
+                : [];
+            }),
+          ];
+          const recordingIssue = recordingSubmissionIssue(
+            draft.browserRecording,
+            attachments,
+            !!promptInputRef.current?.supportsImages(),
           );
+          if (recordingIssue)
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', { detail: i18nService.t(recordingIssue) }),
+            );
+          const sent = recordingIssue
+            ? false
+            : await handleSendMessage(
+                nextText,
+                attachments,
+                composeBrowserGatewayPrompt(
+                  appendMediaDirectiveLines(nextText, draft.filePaths),
+                  [],
+                  draft.browserRecording,
+                ),
+              );
           if (sent === false) {
             dispatch(setDraftPrompt({ sessionId: sourceSessionId, draft: nextText }));
             dispatch(
@@ -2396,6 +2460,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               }),
             );
             dispatch(clearDraftBrowserAnnotations({ draftKey: sourceSessionId }));
+            if (draft.browserRecording)
+              dispatch(
+                setDraftBrowserRecording({
+                  draftKey: sourceSessionId,
+                  recording: { ...draft.browserRecording, sessionId: sourceSessionId },
+                }),
+              );
             if (currentSessionIdRef.current === sourceSessionId) {
               promptInputRef.current?.setValue(nextText);
               requestAnimationFrame(() => promptInputRef.current?.focus());
@@ -2501,6 +2572,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         : i18nService.t('planReviewTitle')
       : '';
     const displayTabs: CoworkDisplayTab[] = [
+      ...recordingReviewTabs.tabs,
       ...(isBrowserPanelOpen
         ? browserTabs.map(tab => ({
             id: browserDisplayTabId(tab.targetId),
@@ -3139,6 +3211,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               }
             >
               {retainedRuntimePanels}
+              {recordingReviewTabs.panels(activeDisplayTabId)}
               {collaborationSessionId === currentSession.id &&
                 activeDisplayTabId === COLLABORATION_DISPLAY_TAB_ID && (
                   <CollaborationPanel
@@ -3273,6 +3346,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   }
 
   const homeDisplayTabs: CoworkDisplayTab[] = [
+    ...recordingReviewTabs.tabs,
     ...(isBrowserPanelOpen
       ? browserTabs.map(tab => ({
           id: browserDisplayTabId(tab.targetId),
@@ -3382,6 +3456,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           terminalTabs.length > 0 ||
           filePreviews.length > 0 ||
           unsupportedFilePreviews.length > 0 ||
+          recordingReviewTabs.tabs.length > 0 ||
           hasRetainedRuntimePanels) && (
           <CoworkDisplayPanel
             key="cowork-display-panel"
@@ -3450,6 +3525,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             }
           >
             {retainedRuntimePanels}
+            {recordingReviewTabs.panels(activeDisplayTabId)}
             {filePreviews.map(preview => (
               <FilePreviewDrawer
                 key={fileDisplayTabId(preview.filePath)}

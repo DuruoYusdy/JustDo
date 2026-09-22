@@ -1,4 +1,5 @@
 import { type BrowserAnnotationDraft, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
+import { type BrowserRecordingDraft, recordingImageFingerprint } from '@shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 
@@ -9,6 +10,7 @@ export interface EditorDraftPayload {
   attachments: CoworkAttachmentPayload[];
   filePaths: string[];
   browserAnnotations?: BrowserAnnotationDraft[];
+  browserRecording?: BrowserRecordingDraft;
 }
 
 export function parseEditorDraftPayload(
@@ -80,13 +82,49 @@ export function parseEditorDraftPayload(
           ];
         })
       : [];
-  const attachments = browserAnnotations.length
+  let attachments = browserAnnotations.length
     ? rawAttachments.slice(0, browserAttachmentStart)
     : rawAttachments;
+  let browserRecording: BrowserRecordingDraft | undefined;
+  if (browserPrompt?.recording) {
+    const parsed = browserPrompt.recording;
+    const files = parsed.steps.flatMap(step =>
+      (step.screenshotFiles ?? []).map((fileName, index) => ({
+        stepId: step.id,
+        fileName,
+        fingerprint: step.screenshotFingerprints?.[index],
+      })),
+    );
+    const imageEnd = Math.max(0, rawAttachments.length - browserPrompt.annotations.length);
+    const fingerprints = rawAttachments.map((payload, index) =>
+      index < imageEnd && payload.mimeType.startsWith('image/')
+        ? recordingImageFingerprint(payload.mimeType, payload.base64Data)
+        : '',
+    );
+    const matched = new Set<number>();
+    const images = files.flatMap(({ fingerprint, ...file }) => {
+      if (!fingerprint) return [];
+      const index = fingerprints.findIndex(
+        (candidate, index) => !matched.has(index) && candidate === fingerprint,
+      );
+      if (index < 0) return [];
+      matched.add(index);
+      const payload = rawAttachments[index];
+      return [{ ...file, dataUrl: `data:${payload.mimeType};base64,${payload.base64Data}` }];
+    });
+    browserRecording = {
+      ...parsed,
+      id: crypto.randomUUID(),
+      incomplete: parsed.incomplete || images.length !== files.length,
+      images,
+    };
+    attachments = attachments.filter((_item, index) => !matched.has(index));
+  }
   return {
     text,
     attachments,
     filePaths,
+    ...(browserRecording ? { browserRecording } : {}),
     ...(options.restoreBrowserAnnotations ? { browserAnnotations } : {}),
   };
 }
