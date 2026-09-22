@@ -39,6 +39,10 @@ type MessageRenderOptions = {
   showFooter?: boolean;
   showAvatar?: boolean;
   assistantName?: string;
+  assistantAvatar?: TemplateResult;
+  peerColors?: Readonly<Record<string, string>>;
+  peerNames?: Readonly<Record<string, string>>;
+  peerPerspective?: boolean;
   workingDirectory?: string;
   speechState?: 'idle' | 'loading' | 'playing';
   onSpeak?: (groupKey: string, text: string) => void;
@@ -63,7 +67,7 @@ type MessageRenderOptions = {
 
 type AssistantTimelineContentOptions = Pick<
   MessageRenderOptions,
-  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory'
+  'onSpeak' | 'showAvatar' | 'speechState' | 'workingDirectory' | 'assistantAvatar'
 > & {
   key: string;
   timestamp: number;
@@ -837,8 +841,23 @@ export function renderMessageBlock(
   const msg = group.messages[0];
   if (!msg) return nothing;
 
-  const avatar = renderChatAvatar(role);
-  const isContinuation = opts?.showAvatar === false;
+  const peerLabel = group.senderId
+    ? opts?.peerNames?.[group.senderId] || group.senderLabel || group.senderId
+    : '';
+  const localAssistant =
+    opts?.peerPerspective && role === 'assistant' && opts.assistantName
+      ? { id: `local:${opts.assistantName}`, label: opts.assistantName }
+      : undefined;
+  const avatar =
+    (role === 'assistant' && !group.senderId ? opts?.assistantAvatar : undefined) ??
+    renderChatAvatar(
+      role,
+      group.senderId
+        ? { id: group.senderId, label: peerLabel, color: opts?.peerColors?.[group.senderId] }
+        : localAssistant,
+    );
+  const showAvatar = opts?.showAvatar ?? true;
+  const isContinuation = !showAvatar;
   const speechText =
     group.role === 'assistant'
       ? group.messages
@@ -859,7 +878,7 @@ export function renderMessageBlock(
       }`}
       data-group-key=${group.key}
     >
-      <div class="chat-group__avatar">${(opts?.showAvatar ?? true) ? avatar : nothing}</div>
+      <div class="chat-group__avatar">${showAvatar ? avatar : nothing}</div>
       <div class="chat-group__content">
         ${
           opts?.userMessageActions?.editor
@@ -1033,6 +1052,7 @@ export function renderAssistantTimelineContent(
   if (opts.streaming) {
     return renderStreamingGroup(text, opts.timestamp, null, {
       showAvatar: opts.showAvatar,
+      assistantAvatar: opts.assistantAvatar,
     });
   }
 
@@ -1056,6 +1076,7 @@ export function renderAssistantTimelineContent(
     },
     {
       showAvatar: opts.showAvatar,
+      assistantAvatar: opts.assistantAvatar,
       showFooter: false,
       speechState: opts.speechState,
       onSpeak: opts.onSpeak,
@@ -1078,7 +1099,9 @@ function renderGroupFooter(
   if ((!ts || !showMetadata) && !userMessageActions && !assistantMessageFork) return nothing;
   const date = new Date(ts);
   const time = ts && showMetadata ? formatGroupTimestamp(date) : '';
-  const roleName = showMetadata ? getGroupFooterLabel(group, opts?.assistantName) : '';
+  const roleName = showMetadata
+    ? getGroupFooterLabel(group, opts?.assistantName, opts?.peerNames, opts?.peerPerspective)
+    : '';
   const duration =
     group.role === 'assistant' &&
     typeof group.durationMs === 'number' &&
@@ -1111,9 +1134,15 @@ function renderGroupFooter(
   `;
 }
 
-export function getGroupFooterLabel(group: MessageGroup, assistantName?: string): string {
+export function getGroupFooterLabel(
+  group: MessageGroup,
+  assistantName?: string,
+  peerNames?: Readonly<Record<string, string>>,
+  peerPerspective = false,
+): string {
+  if (group.senderId) return peerNames?.[group.senderId] || group.senderLabel || group.senderId;
   if (group.role === 'assistant') {
-    void assistantName;
+    if (peerPerspective && assistantName) return assistantName;
     const modelName = group.modelName?.trim() ?? '';
     const senderLabel = group.senderLabel?.trim() ?? '';
     if (isGatewayInjectedModelRef(modelName) || isGatewayInjectedModelRef(senderLabel)) {
@@ -1122,7 +1151,7 @@ export function getGroupFooterLabel(group: MessageGroup, assistantName?: string)
     return modelName || senderLabel || i18nService.t('coworkAssistantLabel');
   }
   if (group.role === 'user') {
-    return i18nService.t('coworkYouLabel');
+    return group.senderLabel?.trim() || i18nService.t('coworkYouLabel');
   }
   return group.senderLabel?.trim() ?? '';
 }
@@ -1178,7 +1207,7 @@ export function shouldRenderGroupAvatarByPrevItem(
  */
 export function renderStreamingThinkingGroup(
   text: string,
-  opts?: { showAvatar?: boolean },
+  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult },
 ): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
@@ -1188,7 +1217,7 @@ export function renderStreamingThinkingGroup(
       }`}
     >
       <div class="chat-group__avatar">
-        ${(opts?.showAvatar ?? true) ? renderChatAvatar('assistant') : nothing}
+        ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
       </div>
       <div class="chat-group__content">${renderStreamingThinkingBlock(text)}</div>
     </div>
@@ -1199,7 +1228,7 @@ export function renderStreamingGroup(
   text: string,
   _startedAt: number,
   thinkingText: string | null = null,
-  opts?: { showAvatar?: boolean },
+  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult },
 ): TemplateResult {
   const hasText = text.trim().length > 0;
   const isContinuation = opts?.showAvatar === false;
@@ -1210,7 +1239,7 @@ export function renderStreamingGroup(
       }`}
     >
       <div class="chat-group__avatar">
-        ${(opts?.showAvatar ?? true) ? renderChatAvatar('assistant') : nothing}
+        ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
       </div>
       <div class="chat-group__content">
         ${thinkingText ? renderStreamingThinkingBlock(thinkingText) : nothing}
@@ -1253,7 +1282,10 @@ function renderStreamingThinkingBlock(text: string): TemplateResult {
   `;
 }
 
-export function renderReadingIndicatorGroup(opts?: { showAvatar?: boolean }): TemplateResult {
+export function renderReadingIndicatorGroup(opts?: {
+  showAvatar?: boolean;
+  assistantAvatar?: TemplateResult;
+}): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
     <div
@@ -1262,7 +1294,7 @@ export function renderReadingIndicatorGroup(opts?: { showAvatar?: boolean }): Te
       }`}
     >
       <div class="chat-group__avatar">
-        ${(opts?.showAvatar ?? true) ? renderChatAvatar('assistant') : nothing}
+        ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
       </div>
       <div class="chat-group__content">
         <div class="chat-reading-indicator" aria-hidden="true">

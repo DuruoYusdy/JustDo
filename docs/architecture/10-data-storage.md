@@ -285,6 +285,85 @@ SQLite transaction 只能保护本数据库，不能回滚 Gateway、文件系�
 
 提供幂等 DDL、旧用户迁移、真实查询索引、事务边界、坏值 fallback、备份/失败策略和测试。更新表数量/字段/权威文档，并验证重复启动与强制中断后可恢复。任何会触发 destructive legacy detection 的规则调整都必须单独审查其误判与数据丢失风险。
 
+## Independent Agent profiles
+
+The existing agents table now supports product profile creation and editing.
+Default selection is changed in a transaction. Empty model strings mean inherited
+application defaults and are not backfilled at startup. Disabled records and their
+native roster entries are retained for history; no transcript table is added.
+See [independent agents](../features/multi-agent.md) for configuration rollback and
+role-file authority.
+
+### Independent-agent handoff provenance
+
+`cowork_sessions` adds nullable `handoff_from_session_id` (self-reference with
+ON DELETE SET NULL), `handoff_from_session_title` (creation-time fallback), and
+`handoff_request_id`. Existing databases receive these through ensureColumn.
+A partial unique index on non-null request ids makes retries return the same
+idle session. Creation and provenance insertion are one transaction. A live
+source title is resolved with a left join. Summary/task remain an unsent composer
+draft until normal Gateway submission; no transcript or role files are copied.
+
+## Peer collaboration metadata
+
+Task deletion adds `collaboration_deletions` (persistent freeze) and
+`collaboration_deleted_members` (confirmed native cleanup progress), both cascading with
+the room. Deletion freezes sends, stops members, deletes each native session, and only then
+transactionally removes product sessions. Partial failure keeps the visible task for retry;
+confirmed native deletions are not repeated. Assistant profiles and workspaces are retained.
+
+The additive schema introduces `collaboration_rooms`, `collaboration_members`,
+`collaboration_rounds`, and `collaboration_deliveries`. Existing conversations
+are not automatically converted to rooms. A native session belongs to at most
+one room, and an Agent appears at most once in a room. The anchor is a product
+navigation identity; it creates no native parent/child execution relationship.
+
+Delivery rows contain routing identifiers, a payload digest for retry conflict
+checks, native run receipts, and timestamps. They contain no message bodies,
+model output, or copied transcript. Idempotency is scoped by room, sender,
+source native run, and tool call. A changed retry is rejected. Round budgets
+are durable and include failed delivery attempts; only an explicit user turn
+may create a new budget through the execution coordinator. Replies inherit the original round.
+`collaboration_rounds.stopped_at` freezes stopped rounds, including late first sends;
+the additive column is installed for databases created with the foundation schema.
+
+State updates compare the expected state atomically. Acceptance requires a
+native run identifier. Interrupted dispatch is recovered as unknown, never
+returned automatically to the queue. Queued metadata without a recovered
+native payload is marked failed. Deleting the anchor removes room metadata;
+deleting another member invalidates its route. Other member sessions survive
+room deletion. No automatic retransmission or transcript recovery is claimed
+by this metadata layer.
+
+See [the detailed collaboration design](../features/multi-agent-collaboration.md).
+
+
+协作成员可在主会话运行中按实际发送请求追加：原生会话准备成功后事务写入 collaboration_members，唯一约束与成员数量校验阻止重复关联；首次创建允许运行中的 anchor，但不放宽普通手动建房的空闲校验。未新增消息正文表。
+
+### 助手创建一致性记录
+
+模型创建长期助手复用 agents 档案及 kv，不新增表。kv 的 assistantCreation:<agentId> 仅保存参数 SHA-256 摘要与 preparing/ready 阶段；稳定 agentId 由可信原生 session/run/toolCall 身份派生。准备档案停用，原生配置和 AGENTS.md 读回核验后以事务启用并标记 ready。中断不自动重放或派发任务；相同参数的显式重试复核原生状态后继续，同名已完成助手不覆盖。指令仍存 OpenClaw 的独立受管配置空间，消息仍由原生 transcript 持久化。
+
+
+### Assistant deletion and retained history
+
+`agents.deleted_at` is a nullable deletion timestamp, added in place for existing
+product databases. Deletion atomically sets it and clears `enabled`; the profile
+row, name and all session/collaboration foreign keys remain intact. Reads include
+tombstones for historical identity rendering; Settings excludes them, and all
+product task admission continues to require an enabled profile. Profile and file
+mutations reject deleted identities, and model-driven same-name creation receives
+a fresh ID instead of reviving the historical owner. Startup model migration
+skips deleted profiles.
+
+The UI confirms that role files and history are retained. Deletion rejects main,
+the default profile, and observed active native work (including subagents), with
+an additional local running-session check inside the metadata transaction.
+`agents.delete` is intentionally not called: the locked upstream implementation
+purges session indexes even when `deleteFiles` is false. Native roster and role
+workspaces therefore remain available for historical access, like disabled
+profiles. This is product deletion, not native credential revocation or a disk
+cleanup operation. No transcript copy or secondary message store is introduced.
 ## 24. LiteLLM EndUser 活动记录
 
 `src/config/activityReporting.ts` 的 `ACTIVITY_REPORTING_CONFIG.enabled` 控制客户端活动上报，默认开启。

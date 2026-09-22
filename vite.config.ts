@@ -167,6 +167,7 @@ export default defineConfig({
     },
     watch: {
       usePolling: false,
+      ignored: ['**/.work/**', '**/vendor/**'],
     },
   },
   optimizeDeps: {

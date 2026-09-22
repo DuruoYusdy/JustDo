@@ -15,6 +15,34 @@ afterEach(() => {
 });
 
 describe('CoworkSessionDetailsModal', () => {
+  it('keeps returning to the assistant list separate from closing details', () => {
+    vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
+    const onBack = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <CoworkSessionDetailsModal
+        memberView
+        sessionSummary={{
+          id: 'peer',
+          title: 'Reviewer',
+          status: 'completed',
+          pinned: false,
+          createdAt: 1,
+          updatedAt: 2,
+        }}
+        groups={[]}
+        isRuntimeRunning={false}
+        onBack={onBack}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('back') }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('close') }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a waiting animation while details are loading', () => {
     i18nService.setLanguage('zh', { persist: false });
     vi.spyOn(coworkService, 'getSessionDetails').mockReturnValue(new Promise(() => undefined));
@@ -117,13 +145,12 @@ describe('CoworkSessionDetailsModal', () => {
     i18nService.setLanguage('en', { persist: false });
     vi.useFakeTimers();
     let resolveDetails:
-      | ((value: Awaited<ReturnType<typeof coworkService.getSessionDetails>>) => void)
-      | undefined;
-    const pendingDetails = new Promise<
-      Awaited<ReturnType<typeof coworkService.getSessionDetails>>
-    >(resolve => {
-      resolveDetails = resolve;
-    });
+      ((value: Awaited<ReturnType<typeof coworkService.getSessionDetails>>) => void) | undefined;
+    const pendingDetails = new Promise<Awaited<ReturnType<typeof coworkService.getSessionDetails>>>(
+      resolve => {
+        resolveDetails = resolve;
+      },
+    );
     const details = {
       session: {
         id: 'local-session-id',

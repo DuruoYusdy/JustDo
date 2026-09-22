@@ -1,11 +1,17 @@
 import { BookOpenIcon, ExclamationTriangleIcon, Squares2X2Icon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useState } from 'react';
+import { MAIN_USER_AGENT_ID } from '@shared/agents';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import { useCollaborationRooms } from '@/features/cowork/components/chat/CollaborationPanel';
 import {
   type FilePreviewNavigationOptions,
   runGuardedFilePreviewNavigation,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
+import {
+  resolveCollaborationNavigation,
+  toggleVisibleSessionSelection,
+} from '@/features/cowork/components/sessions/collaborationNavigation';
 import CoworkSearchModal from '@/features/cowork/components/sessions/CoworkSearchModal';
 import CoworkSessionList from '@/features/cowork/components/sessions/CoworkSessionList';
 import {
@@ -61,6 +67,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   developerModeAvailable,
 }) => {
+  const sessionNavigationRequestRef = useRef(0);
   const sessions = useSelector(selectCoworkSessions);
   const currentSessionId = useSelector(selectCurrentSessionId);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
@@ -107,11 +114,22 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   const handleSelectSession = async (sessionId: string) => {
+    const requestId = ++sessionNavigationRequestRef.current;
     await runGuardedFilePreviewNavigation(
       onBeforeCoworkNavigation,
       async () => {
+        if (requestId !== sessionNavigationRequestRef.current) return;
         onShowCowork();
-        await coworkService.loadSession(sessionId);
+        const target = resolveCollaborationNavigation(sessionId, collaborationRooms);
+        const loaded = await coworkService.loadSession(target.sessionId);
+        if (
+          requestId === sessionNavigationRequestRef.current &&
+          loaded &&
+          target.memberSessionId &&
+          store.getState().cowork.currentSession?.id === target.sessionId
+        ) {
+          requestCoworkSessionListAction({ action: 'collaboration', ...target });
+        }
       },
       { preserveTabs: true },
     );
@@ -130,16 +148,32 @@ const Sidebar: React.FC<SidebarProps> = ({
     await coworkService.renameSession(sessionId, title);
   };
 
-  const handleSessionListAction = async (
-    sessionId: string,
-    action: CoworkSessionListAction,
-  ) => {
+  const collaborationRooms = useCollaborationRooms();
+  const collaborationAnchors = new Map(
+    collaborationRooms.flatMap(room =>
+      room.members.map(member => [member.sessionId, room.anchorSessionId] as const),
+    ),
+  );
+  const visibleSessions = sessions.filter(session => {
+    const anchor = collaborationAnchors.get(session.id);
+    if (anchor && anchor !== session.id) return false;
+    return (
+      Boolean(session.external) || (session.agentId || MAIN_USER_AGENT_ID) === MAIN_USER_AGENT_ID
+    );
+  });
+  const handleSessionListAction = async (sessionId: string, action: CoworkSessionListAction) => {
+    const requestId = ++sessionNavigationRequestRef.current;
     await runGuardedFilePreviewNavigation(
       onBeforeCoworkNavigation,
       async () => {
+        if (requestId !== sessionNavigationRequestRef.current) return;
         onShowCowork();
         const session = await coworkService.loadSession(sessionId);
-        if (session && store.getState().cowork.currentSession?.id === sessionId) {
+        if (
+          requestId === sessionNavigationRequestRef.current &&
+          session &&
+          store.getState().cowork.currentSession?.id === sessionId
+        ) {
           requestCoworkSessionListAction({ action, sessionId });
         }
       },
@@ -170,33 +204,29 @@ const Sidebar: React.FC<SidebarProps> = ({
     });
   }, []);
 
-  const handleSelectAll = useCallback(() => {
-    setSelectedIds(prev => {
-      if (prev.size === sessions.length) {
-        return new Set();
-      }
-      return new Set(sessions.map(s => s.id));
-    });
-  }, [sessions]);
+  const visibleSessionIds = visibleSessions.map(session => session.id);
+  const visibleSelection = new Set([...selectedIds].filter(id => visibleSessionIds.includes(id)));
+  const handleSelectAll = () =>
+    setSelectedIds(previous => toggleVisibleSessionSelection(previous, visibleSessionIds));
 
   const handleBatchDeleteClick = useCallback(() => {
     if (selectedIds.size === 0) return;
     setShowBatchDeleteConfirm(true);
   }, [selectedIds.size]);
 
-  const handleBatchDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds);
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedIds).filter(id => visibleSessionIds.includes(id));
+    if (ids.length === 0) return;
     const deleteSessions = async () => {
       await coworkService.deleteSessions(ids);
       handleExitBatchMode();
     };
-    if (currentSessionId && selectedIds.has(currentSessionId)) {
+    if (currentSessionId && ids.includes(currentSessionId)) {
       await runGuardedFilePreviewNavigation(onBeforeCoworkNavigation, deleteSessions);
       return;
     }
     await deleteSessions();
-  }, [currentSessionId, handleExitBatchMode, onBeforeCoworkNavigation, selectedIds]);
+  };
 
   const handleOpenChatWeb = async () => {
     try {
@@ -373,19 +403,23 @@ const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
       </div>
+
       <div className="flex-1 overflow-y-auto px-2.5 pb-4">
         <CoworkSessionList
           groupRecentSessionsByDate
-          sessions={sessions}
+          sessions={visibleSessions}
           isLoading={false}
-          currentSessionId={currentSessionId}
+          currentSessionId={collaborationAnchors.get(currentSessionId || '') || currentSessionId}
           isBatchMode={isBatchMode}
-          selectedIds={selectedIds}
+          selectedIds={visibleSelection}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
           onExportSession={sessionId => void handleSessionListAction(sessionId, 'export')}
           onCopySession={sessionId => void handleSessionListAction(sessionId, 'copy')}
+          onCollaborationSession={sessionId =>
+            void handleSessionListAction(sessionId, 'collaboration')
+          }
           onToggleSelection={handleToggleSelection}
           onEnterBatchMode={handleEnterBatchMode}
         />
@@ -393,7 +427,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       <CoworkSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        sessions={sessions}
+        sessions={visibleSessions}
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
       />
@@ -402,7 +436,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           <label className="flex items-center gap-2 cursor-pointer text-sm text-secondary">
             <input
               type="checkbox"
-              checked={selectedIds.size === sessions.length && sessions.length > 0}
+              checked={
+                visibleSessionIds.length > 0 && visibleSessionIds.every(id => selectedIds.has(id))
+              }
               onChange={handleSelectAll}
               className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-primary cursor-pointer"
             />
@@ -412,15 +448,15 @@ const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={handleBatchDeleteClick}
-              disabled={selectedIds.size === 0}
+              disabled={visibleSelection.size === 0}
               className={`inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                selectedIds.size > 0
+                visibleSelection.size > 0
                   ? 'bg-red-500 hover:bg-red-600 text-white'
                   : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
               }`}
             >
               <TrashIcon className="h-3.5 w-3.5" />
-              {selectedIds.size > 0 ? `${selectedIds.size}` : ''}
+              {visibleSelection.size > 0 ? `${visibleSelection.size}` : ''}
             </button>
             <button
               type="button"
@@ -478,7 +514,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-sm text-secondary">
               {i18nService
                 .t('batchDeleteConfirmMessage')
-                .replace('{count}', String(selectedIds.size))}
+                .replace('{count}', String(visibleSelection.size))}
             </p>
           </div>
           <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-border">
@@ -492,7 +528,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClick={handleBatchDelete}
               className="px-4 py-2 text-sm font-medium rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
             >
-              {i18nService.t('batchDelete')} ({selectedIds.size})
+              {i18nService.t('batchDelete')} ({visibleSelection.size})
             </button>
           </div>
         </Modal>

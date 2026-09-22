@@ -41,7 +41,26 @@ describe('syncDefaultModelSelectionState', () => {
 
     syncDefaultModelSelectionState(store.dispatch, 'main', nextModel);
 
-    expect(store.getState().agent.agents[0].model).toBe('openai/gpt-5');
+    expect(store.getState().agent.agents[0].model).toBe('');
     expect(store.getState().model.selectedModel).toEqual(nextModel);
   });
+});
+
+test('a specialist selection leaves the inherited application model unchanged', () => {
+  const dispatch = <T>(action: T): T => {
+    actions.push(action);
+    return action;
+  };
+  const actions: unknown[] = [];
+  syncDefaultModelSelectionState(dispatch, 'review', {
+    id: 'review-model',
+    name: 'Review',
+    providerKey: 'openai',
+  });
+  expect(actions).toEqual([
+    expect.objectContaining({
+      type: 'agent/updateAgent',
+      payload: { id: 'review', updates: { model: 'openai/review-model' } },
+    }),
+  ]);
 });

@@ -38,6 +38,8 @@ export type MessageGroup = {
   key: string;
   role: string;
   senderLabel?: string | null;
+  /** Stable native peer identity used to resolve collaboration sender presentation. */
+  senderId?: string | null;
   modelName?: string | null;
   messages: Array<{ message: unknown; key: string; duplicateCount?: number }>;
   timestamp: number;
@@ -104,6 +106,8 @@ export type NormalizedMessage = {
   timestamp: number;
   id?: string;
   senderLabel?: string | null;
+  /** Stable native peer identity. Present only for trusted inter-session messages. */
+  senderId?: string | null;
   modelName?: string | null;
   audioAsVoice?: boolean;
   replyTarget?: { kind: 'current' } | { kind: 'id'; id: string } | null;

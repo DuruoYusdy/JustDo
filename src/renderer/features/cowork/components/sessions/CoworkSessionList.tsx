@@ -44,6 +44,8 @@ import {
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
+import { useCollaborationRooms } from '../chat/CollaborationPanel';
+
 interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
   unreadSessionIdSet: Set<string>;
@@ -58,6 +60,7 @@ interface UngroupedDroppableZoneProps {
   onRenameSession: (sessionId: string, title: string) => void;
   onExportSession: (sessionId: string) => void;
   onCopySession: (sessionId: string) => void;
+  onCollaborationSession?: (sessionId: string) => void;
   onTogglePinned: (sessionId: string, pinned: boolean) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
@@ -88,6 +91,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   onRenameSession,
   onExportSession,
   onCopySession,
+  onCollaborationSession,
   onTogglePinned,
   onToggleSelection,
   onEnterBatchMode,
@@ -164,6 +168,9 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
       onRename={title => onRenameSession(session.id, title)}
       onExport={() => onExportSession(session.id)}
       onCopy={() => onCopySession(session.id)}
+      onCollaboration={
+        onCollaborationSession ? () => onCollaborationSession(session.id) : undefined
+      }
       onTogglePinned={() => onTogglePinned(session.id, !session.pinned)}
       onToggleSelection={() => onToggleSelection(session.id)}
       onEnterBatchMode={() => onEnterBatchMode(session.id)}
@@ -227,13 +234,14 @@ interface UngroupedSessionListProps {
   onRenameSession: (sessionId: string, title: string) => void;
   onExportSession: (sessionId: string) => void;
   onCopySession: (sessionId: string) => void;
+  onCollaborationSession?: (sessionId: string) => void;
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   groupRecentSessionsByDate?: boolean;
 }
 
 const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
-  sessions,
+  sessions: inputSessions,
   isLoading = false,
   currentSessionId,
   isBatchMode,
@@ -245,24 +253,52 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   onRenameSession,
   onExportSession,
   onCopySession,
+  onCollaborationSession,
   onToggleSelection,
   onEnterBatchMode,
   groupRecentSessionsByDate = false,
 }) => {
   const dispatch = useDispatch();
+  const rooms = useCollaborationRooms();
+  const allSessions = useSelector((state: RootState) => state.cowork.sessions);
   const unreadSessionIds = useSelector(selectUnreadSessionIds);
   const sessionRuntimeActivity = useSelector(
     (state: RootState) => state.cowork.sessionRuntimeActivity,
   );
+  const sessions = useMemo(
+    () =>
+      inputSessions.map(session => {
+        const room = rooms.find(room => room.anchorSessionId === session.id);
+        if (!room) return session;
+        const members = allSessions.filter(item =>
+          room.members.some(member => member.sessionId === item.id),
+        );
+        const running =
+          room.members.some(member => sessionRuntimeActivity[member.sessionId]) ||
+          members.some(item => item.status === 'running');
+        return {
+          ...session,
+          status: room.deleting
+            ? ('error' as const)
+            : running
+              ? ('running' as const)
+              : session.status,
+          updatedAt: Math.max(session.updatedAt, ...members.map(item => item.updatedAt)),
+          collaboration: { memberCount: room.members.length, deleting: Boolean(room.deleting) },
+        };
+      }),
+    [inputSessions, rooms, allSessions, sessionRuntimeActivity],
+  );
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
   const runtimeRunningSessionIds = useMemo(
     () =>
-      new Set(
-        Object.entries(sessionRuntimeActivity)
+      new Set([
+        ...Object.entries(sessionRuntimeActivity)
           .filter(([, running]) => running)
           .map(([sessionId]) => sessionId),
-      ),
-    [sessionRuntimeActivity],
+        ...sessions.filter(session => session.status === 'running').map(session => session.id),
+      ]),
+    [sessionRuntimeActivity, sessions],
   );
   const groups = useSelector(selectGroups);
   const expandedGroupIds = useSelector(selectExpandedGroupIds);
@@ -513,6 +549,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
               onRename={onRenameSession}
               onExportSession={onExportSession}
               onCopySession={onCopySession}
+              onCollaborationSession={onCollaborationSession}
               onTogglePinned={handleTogglePinned}
               onToggleSelection={onToggleSelection}
               onEnterBatchMode={onEnterBatchMode}
@@ -553,6 +590,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     onRename={onRenameSession}
                     onExportSession={onExportSession}
                     onCopySession={onCopySession}
+                    onCollaborationSession={onCollaborationSession}
                     onTogglePinned={handleTogglePinned}
                     onToggleSelection={onToggleSelection}
                     onEnterBatchMode={onEnterBatchMode}
@@ -589,6 +627,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             onRenameSession={onRenameSession}
             onExportSession={onExportSession}
             onCopySession={onCopySession}
+            onCollaborationSession={onCollaborationSession}
             onTogglePinned={handleTogglePinned}
             onToggleSelection={onToggleSelection}
             onEnterBatchMode={onEnterBatchMode}

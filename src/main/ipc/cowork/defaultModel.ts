@@ -46,13 +46,14 @@ export const registerDefaultModelHandlers = ({
             defaultModelProvider: options.providerKey || currentConfig.model?.defaultModelProvider,
           },
         };
-        getStore().set('app_config', updatedConfig);
+        if (agentId === 'main') getStore().set('app_config', updatedConfig);
 
-        // Keep the selected agent in sync so the newly-created session resolves
-        // to the same model after the prompt input remounts.
+        // Main follows the application default; only specialists have profile overrides.
         const modelRef =
-          options.modelRef?.trim() ||
-          (options.providerKey ? `${options.providerKey}/${options.modelId}` : options.modelId);
+          agentId === 'main'
+            ? ''
+            : options.modelRef?.trim() ||
+              (options.providerKey ? `${options.providerKey}/${options.modelId}` : options.modelId);
         const shouldUpdateAgent = !!selectedAgent && selectedAgent.model !== modelRef;
         let applyError: string | null = null;
         try {
@@ -80,7 +81,7 @@ export const registerDefaultModelHandlers = ({
           }
           const rollbackErrors: string[] = [];
           try {
-            getStore().set('app_config', rollbackConfig);
+            if (agentId === 'main') getStore().set('app_config', rollbackConfig);
           } catch (error) {
             rollbackErrors.push(error instanceof Error ? error.message : String(error));
           }

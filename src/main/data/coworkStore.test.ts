@@ -42,6 +42,9 @@ function setupDb(): void {
       forked_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
       forked_from_session_title TEXT,
       forked_from_entry_id TEXT,
+      handoff_from_session_id TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL,
+      handoff_from_session_title TEXT,
+      handoff_request_id TEXT UNIQUE,
       active_skill_ids TEXT,
       agent_id TEXT NOT NULL DEFAULT 'main',
       created_at INTEGER NOT NULL,
@@ -175,9 +178,7 @@ test('copies terminal run metadata with stable transcript run ids', () => {
       endedAt: 1_700_000_002_000,
     }),
   ]);
-  expect(store.getSessionRuns(target.id)[0]?.clientTurnId).not.toBe(
-    'justdo-1700000000000-source',
-  );
+  expect(store.getSessionRuns(target.id)[0]?.clientTurnId).not.toBe('justdo-1700000000000-source');
 });
 
 test('session metadata updates do not change recent activity time', () => {
@@ -331,4 +332,77 @@ test('renames current provider refs across agents, sessions, and runtime setting
   expect(store.getSessionModelRef('session-rename')).toBe('newproxy/model-b');
   expect(store.getSession('session-rename')?.modelRef).toBe('newproxy/model-b');
   expect(store.getAgentRuntimeSettings().subagents.model).toBe('newproxy/model-c');
+});
+
+test('agent profiles keep exactly one default and preserve inherited models and role files', () => {
+  const base = {
+    name: 'Research',
+    description: '',
+    icon: '',
+    model: '',
+    enabled: true,
+    isDefault: true,
+  };
+  store.saveAgentProfile({ ...base, id: 'research' });
+  store.updateAgent('research', { systemPrompt: 'legacy rules' });
+  store.saveAgentProfile({ ...base, id: 'review' });
+  expect(
+    store
+      .listAgents()
+      .filter(agent => agent.isDefault)
+      .map(agent => agent.id),
+  ).toEqual(['review']);
+  expect(store.getAgent('research')).toMatchObject({
+    model: '',
+    systemPrompt: 'legacy rules',
+    isDefault: false,
+  });
+  store.saveAgentProfile({ ...base, id: 'research', enabled: false, isDefault: false });
+  expect(store.getAgent('research')?.enabled).toBe(false);
+});
+
+test('deleting an assistant retains identity and sessions but prevents reactivation', () => {
+  db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
+  const profile = {
+    id: 'review',
+    name: 'Reviewer',
+    description: 'Review code',
+    icon: '',
+    model: '',
+    enabled: true,
+    isDefault: false,
+  };
+  store.saveAgentProfile(profile);
+  const session = store.createSession('Review history', '/tmp', 'local', [], 'review');
+  store.deleteAgent('review');
+  expect(store.getAgent('review')).toMatchObject({
+    name: 'Reviewer',
+    enabled: false,
+    deletedAt: expect.any(Number),
+  });
+  expect(store.getSession(session.id)?.agentId).toBe('review');
+  expect(store.listAgents().find(agent => agent.id === 'review')?.name).toBe('Reviewer');
+  expect(() => store.saveAgentProfile(profile)).toThrow('agentUnavailable');
+  expect(() => store.updateAgent('review', { enabled: true })).toThrow('agentUnavailable');
+  expect(() => store.deleteAgent('review')).not.toThrow();
+});
+
+test('assistant deletion refuses a running local session and main', () => {
+  db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
+  const profile = {
+    id: 'review',
+    name: 'Reviewer',
+    description: '',
+    icon: '',
+    model: '',
+    enabled: true,
+    isDefault: false,
+  };
+  store.saveAgentProfile(profile);
+  store.saveAgentProfile({ ...profile, id: 'main', isDefault: true });
+  const session = store.createSession('Running', '/tmp', 'local', [], 'review');
+  store.updateSession(session.id, { status: 'running' });
+  expect(() => store.deleteAgent('review')).toThrow('agentBusy');
+  expect(() => store.deleteAgent('main')).toThrow('agentMainRequired');
+  expect(store.getAgent('review')?.enabled).toBe(true);
 });

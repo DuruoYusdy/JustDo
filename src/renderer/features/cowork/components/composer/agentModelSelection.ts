@@ -3,6 +3,8 @@ import { resolveOpenClawModelRef } from '@/features/models/openclawModelRef';
 
 type ResolveAgentModelSelectionInput = {
   agentModel: string;
+  agentId?: string;
+  sessionModel?: string;
   availableModels: Model[];
   fallbackModel: Model | null;
 };
@@ -15,6 +17,8 @@ type ResolveAgentModelSelectionResult = {
 
 export function resolveAgentModelSelection({
   agentModel,
+  agentId,
+  sessionModel,
   availableModels,
   fallbackModel,
 }: ResolveAgentModelSelectionInput): ResolveAgentModelSelectionResult {
@@ -22,7 +26,8 @@ export function resolveAgentModelSelection({
     availableModels.find(model => isSameModelIdentity(model, fallbackModel ?? undefined)) ??
     availableModels[0] ??
     null;
-  const normalizedAgentModel = agentModel.trim();
+  const normalizedAgentModel =
+    sessionModel?.trim() || (agentId === 'main' ? '' : agentModel.trim());
   if (normalizedAgentModel) {
     const explicitModel = resolveOpenClawModelRef(normalizedAgentModel, availableModels) ?? null;
     if (explicitModel) {

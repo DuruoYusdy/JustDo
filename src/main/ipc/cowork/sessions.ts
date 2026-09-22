@@ -34,8 +34,10 @@ import {
   DEFAULT_MANAGED_AGENT_ID,
 } from '../../openclaw/sessions/openclawSessionKeys';
 import { searchCoworkSessionMessages } from '../../openclaw/sessions/openclawSessionSearch';
+import type { CollaborationCoordinator } from './collaboration';
 
 interface SessionHandlerDependencies {
+  getCollaboration?: () => CollaborationCoordinator;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
   setSessionPermissionMode: (
@@ -93,7 +95,10 @@ const clearInheritedSessionGoal = async (
     'sessions.describe',
     { key: options.sessionKey },
   );
-  if (!verified.session || (verified.session.goal !== undefined && verified.session.goal !== null)) {
+  if (
+    !verified.session ||
+    (verified.session.goal !== undefined && verified.session.goal !== null)
+  ) {
     throw new Error('OpenClaw did not clear Goal metadata from the copied session.');
   }
 };
@@ -108,6 +113,7 @@ export const registerCoworkSessionHandlers = ({
   getCoworkEngineRouter,
   setSessionPermissionMode,
   requestGateway,
+  getCollaboration,
 }: SessionHandlerDependencies): void => {
   const unknownAdmissions = new Map<string, { id: string; runId: string; cancelled: boolean }>();
   const stoppingSessions = new Map<string, Promise<{ success: boolean; error?: string }>>();
@@ -500,6 +506,8 @@ export const registerCoworkSessionHandlers = ({
   });
 
   ipcMain.handle('cowork:session:run:begin', async (_event, input: BeginSessionRunInput) => {
+    if (getCollaboration?.().read(input.sessionId).room?.deleting)
+      return { success: false, error: 'collaborationDeletePending' };
     try {
       if (stoppingSessions.has(input.sessionId) || unknownAdmissions.has(input.sessionId)) {
         return {
@@ -509,6 +517,9 @@ export const registerCoworkSessionHandlers = ({
         };
       }
       const store = getCoworkStore();
+      const owner = store.getSession(input.sessionId)?.agentId;
+      if (owner && !store.getAgent(owner)?.enabled)
+        return { success: false, error: 'agentUnavailable' };
       if (isRestartCheckpoint(store.getLatestSessionRun(input.sessionId))) {
         const raw = await getCoworkEngineRouter().getSessionRuntimeStatus(input.sessionId, {
           includeSubagents: true,
@@ -675,6 +686,7 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
     try {
+      if (await getCollaboration?.().deleteTask(sessionId)) return { success: true };
       await getCoworkEngineRouter().stopSession(sessionId, { bestEffort: true });
       const store = getCoworkStore();
       idleConfirmations.delete(sessionId);
@@ -691,12 +703,7 @@ export const registerCoworkSessionHandlers = ({
       if (persistedSession?.cwd) planWorkspaceRoots.push(persistedSession.cwd);
       store.deleteSession(sessionId);
       try {
-        getCoworkEngineRouter().onSessionDeleted(
-          sessionId,
-          agentId,
-          [],
-          planWorkspaceRoots,
-        );
+        getCoworkEngineRouter().onSessionDeleted(sessionId, agentId, [], planWorkspaceRoots);
       } catch {
         // The persisted deletion succeeded; cache cleanup is best effort.
       }
@@ -720,6 +727,8 @@ export const registerCoworkSessionHandlers = ({
     const router = getCoworkEngineRouter();
     const source = store.getSession(sourceSessionId);
     if (!source) return { success: false, error: 'Source session not found.' };
+    if (getCollaboration?.().read(sourceSessionId).room)
+      return { success: false, error: 'collaborationCopyUnavailable' };
     if (!requestGateway) {
       return { success: false, error: 'OpenClaw Gateway session copy is unavailable.' };
     }
@@ -746,6 +755,8 @@ export const registerCoworkSessionHandlers = ({
         sourceSessionId,
         source.agentId || DEFAULT_MANAGED_AGENT_ID,
       );
+      if (getCollaboration?.().read(sourceSessionId).room)
+        throw new Error('collaborationCopyUnavailable');
       const described = await requestGateway<{ session?: { pluginExtensions?: unknown } }>(
         'sessions.describe',
         { key: parentSessionKey },
@@ -816,6 +827,8 @@ export const registerCoworkSessionHandlers = ({
         gatewaySessionId: prepared.gatewaySessionId || gatewaySessionId,
         agentId: copiedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       });
+      if (getCollaboration?.().read(sourceSessionId).room)
+        throw new Error('collaborationCopyUnavailable');
       store.copyTerminalSessionRuns(source.id, copiedSession.id);
       return { success: true, session: copiedSession, planModeEnabled: copyPlanMode };
     } catch (error) {
@@ -861,6 +874,8 @@ export const registerCoworkSessionHandlers = ({
     if (!requestGateway) {
       return { success: false, error: 'OpenClaw Gateway session fork is unavailable.' };
     }
+    if (getCollaboration?.().read(sourceSessionId).room)
+      return { success: false, error: 'collaborationCopyUnavailable' };
 
     const sourceSessionKey = buildManagedSessionKey(
       sourceSessionId,
@@ -917,6 +932,8 @@ export const registerCoworkSessionHandlers = ({
         gatewaySessionId: prepared.gatewaySessionId,
         agentId: forkedSession.agentId || DEFAULT_MANAGED_AGENT_ID,
       });
+      if (getCollaboration?.().read(sourceSessionId).room)
+        throw new Error('collaborationCopyUnavailable');
       store.copyTerminalSessionRuns(source.id, forkedSession.id);
       return { success: true, session: forkedSession };
     } catch (error) {
@@ -945,7 +962,32 @@ export const registerCoworkSessionHandlers = ({
   });
 
   ipcMain.handle('cowork:session:deleteBatch', async (_event, sessionIds: string[]) => {
+    const deletedSessionIds: string[] = [];
+    const errors: string[] = [];
     try {
+      const standalone: string[] = [];
+      const processed = new Set<string>();
+      for (const id of sessionIds) {
+        const room = getCollaboration?.().read(id).room;
+        if (room) {
+          if (!processed.has(room.id)) {
+            processed.add(room.id);
+            try {
+              await getCollaboration!().deleteTask(id);
+              deletedSessionIds.push(...room.members.map(member => member.sessionId));
+            } catch (error) {
+              errors.push(error instanceof Error ? error.message : 'collaborationDeletePending');
+            }
+          }
+        } else standalone.push(id);
+      }
+      sessionIds = standalone;
+      if (!sessionIds.length)
+        return {
+          success: errors.length === 0,
+          deletedSessionIds,
+          ...(errors.length ? { error: errors[0] } : {}),
+        };
       const router = getCoworkEngineRouter();
       const store = getCoworkStore();
       const agentIds = new Map(
@@ -967,6 +1009,7 @@ export const registerCoworkSessionHandlers = ({
         sessionIds.map(sessionId => router.stopSession(sessionId, { bestEffort: true })),
       );
       store.deleteSessions(sessionIds);
+      deletedSessionIds.push(...sessionIds);
       sessionIds.forEach(sessionId => {
         unknownAdmissions.delete(sessionId);
         try {
@@ -980,11 +1023,16 @@ export const registerCoworkSessionHandlers = ({
           // The persisted deletion succeeded; cache cleanup is best effort.
         }
       });
-      return { success: true };
+      return {
+        success: errors.length === 0,
+        deletedSessionIds,
+        ...(errors.length ? { error: errors[0] } : {}),
+      };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to batch delete sessions',
+        deletedSessionIds,
       };
     }
   });

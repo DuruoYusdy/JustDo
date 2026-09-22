@@ -214,10 +214,11 @@ describe('BrowserExtensionChatController', () => {
     expect(runtime.listenerCount('gatewayEvent')).toBe(0);
     expect(runtime.listenerCount('gatewayReady')).toBe(0);
   });
-  it('falls back to stored agent models and the effective composer permission', async () => {
+  it('uses the application default instead of a legacy main profile model', async () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () => null,
       getStore: () =>
         ({
@@ -225,7 +226,7 @@ describe('BrowserExtensionChatController', () => {
           getConfig: () => ({ permissionMode: 'auto' }),
           getSession: () => undefined,
           listAgents: () => [
-            { enabled: true, model: 'provider/default' },
+            { id: 'main', enabled: true, model: 'provider/legacy' },
             { enabled: true, model: 'provider/alternate' },
           ],
           listSessions: () => [],
@@ -235,8 +236,8 @@ describe('BrowserExtensionChatController', () => {
     await expect(controller.getComposerOptions()).resolves.toEqual({
       modelRef: 'provider/default',
       models: [
-        { id: 'provider/default', name: 'default' },
         { id: 'provider/alternate', name: 'alternate' },
+        { id: 'provider/default', name: 'default' },
       ],
       permissionMode: 'auto',
     });
@@ -253,13 +254,14 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () => ({ requestGateway }) as never,
       getStore: () =>
         ({
           getAgent: () => ({ model: 'provider/default' }),
           getConfig: () => ({ permissionMode: 'auto' }),
           getSession: () => undefined,
-          listAgents: () => [{ enabled: true, model: 'provider/default' }],
+          listAgents: () => [{ id: 'main', enabled: true, model: 'provider/legacy' }],
           listSessions: () => [],
         }) as never,
     });
@@ -285,6 +287,7 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () =>
         ({
           ensureReady,
@@ -307,6 +310,7 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () =>
         ({
           ensureReady: vi.fn(async () => undefined),
@@ -330,6 +334,7 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () =>
         ({
           ensureReady: vi.fn(async () => undefined),
@@ -366,6 +371,7 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () =>
         ({
           ensureReady: vi.fn(async () => undefined),
@@ -394,6 +400,7 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () =>
         ({
           ensureReady: vi.fn(async () => undefined),
@@ -412,6 +419,7 @@ describe('BrowserExtensionChatController', () => {
     const controller = new BrowserExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
+      getDefaultModelRef: () => 'provider/default',
       getRuntime: () =>
         ({
           ensureReady: vi.fn(async () => undefined),
@@ -649,4 +657,29 @@ describe('BrowserExtensionChatController', () => {
       }),
     );
   });
+});
+
+it('creates main threads without persisting the obsolete profile model', async () => {
+  const createSession = vi.fn(() => ({ id: 'new-thread' }));
+  const controller = new BrowserExtensionChatController({
+    ensureEngineRunning: vi.fn(),
+    getRouter: vi.fn(),
+    getRuntime: () => null,
+    getStore: () =>
+      ({
+        getConfig: () => ({ workingDirectory: process.cwd(), permissionMode: 'auto' }),
+        getAgent: () => ({ id: 'main', model: 'provider/legacy' }),
+        createSession,
+      }) as never,
+  });
+  await controller.startThread('New thread');
+  expect(createSession).toHaveBeenCalledWith(
+    'New thread',
+    process.cwd(),
+    'local',
+    [],
+    'main',
+    'auto',
+    undefined,
+  );
 });

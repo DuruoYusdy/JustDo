@@ -80,6 +80,7 @@ import {
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
 import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import AgentManager from '@/features/agents/AgentManager';
 import { updateConfig as updateCoworkConfig } from '@/features/cowork/coworkSlice';
 import {
   BUILTIN_MODELS_UPDATED_EVENT,
@@ -139,6 +140,7 @@ import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 import appLogoUrl from '../../../../resources/logo.png';
 
 type TabType =
+  | 'agents'
   | 'general'
   | 'appearance'
   | 'usage'
@@ -414,6 +416,7 @@ const Settings: React.FC<SettingsProps> = ({
 }) => {
   const dispatch = useDispatch();
   // 状态
+  const agentLeaveGuard = useRef<(() => boolean) | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
   const [activeModelKind, setActiveModelKind] = useState<ModelKind>('language');
   const [activeIntegrationView, setActiveIntegrationView] = useState<IntegrationSettingsViewId>(
@@ -504,6 +507,7 @@ const Settings: React.FC<SettingsProps> = ({
   }, [cancelConnectionTest]);
 
   const handleCloseSettings = useCallback(() => {
+    if (agentLeaveGuard.current && !agentLeaveGuard.current()) return;
     cancelConnectionTest();
     onClose();
   }, [cancelConnectionTest, onClose]);
@@ -940,6 +944,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   useEffect(() => {
     if (initialTab) {
+      if (agentLeaveGuard.current && !agentLeaveGuard.current()) return;
       setActiveTab(getEnabledSettingsTab(initialTab));
     }
   }, [initialTab]);
@@ -1590,6 +1595,8 @@ const Settings: React.FC<SettingsProps> = ({
 
   // 标签页切换处理
   const handleTabChange = (tab: TabType) => {
+    if (tab === activeTab) return;
+    if (agentLeaveGuard.current && !agentLeaveGuard.current()) return;
     if (tab !== 'model') {
       setIsAddingModel(false);
       setIsEditingModel(false);
@@ -2166,6 +2173,11 @@ const Settings: React.FC<SettingsProps> = ({
       icon: <CubeIcon className="h-5 w-5" />,
     },
     {
+      key: 'agents',
+      label: i18nService.t('agentManager'),
+      icon: <CpuChipIcon className="h-5 w-5" />,
+    },
+    {
       key: 'runtime',
       label: i18nService.t('agentRuntimeTab'),
       icon: <CpuChipIcon className="h-5 w-5" />,
@@ -2274,6 +2286,8 @@ const Settings: React.FC<SettingsProps> = ({
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'agents':
+        return <AgentManager leaveGuard={agentLeaveGuard} />;
       case 'general':
         return (
           <div className="space-y-8">
@@ -3170,7 +3184,13 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <form
+            onSubmit={event => {
+              if (activeTab === 'agents') event.preventDefault();
+              else void handleSubmit(event);
+            }}
+            className="flex flex-col flex-1 overflow-hidden"
+          >
             {/* Tab content */}
             <div
               ref={contentRef}
@@ -3181,7 +3201,13 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
 
             {/* Footer buttons */}
-            <div className="flex shrink-0 justify-end gap-2 border-t border-border-subtle px-5 py-3">
+            <div
+              className={
+                activeTab === 'agents'
+                  ? 'hidden'
+                  : 'flex shrink-0 justify-end gap-2 border-t border-border-subtle px-5 py-3'
+              }
+            >
               <button
                 type="button"
                 onClick={handleCloseSettings}

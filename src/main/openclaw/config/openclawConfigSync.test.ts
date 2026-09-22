@@ -33,6 +33,7 @@ import {
   buildManagedOpenClawHeartbeatConfig,
   buildManagedOpenClawModelCatalogConfig,
   buildManagedOpenClawSandboxConfig,
+  buildManagedOpenClawSandboxToolConfig,
   buildManagedOpenClawSessionConfig,
   buildManagedOpenClawSubagentConfig,
   buildManagedOpenClawTtsPluginEntries,
@@ -74,6 +75,15 @@ describe('Windows native sandbox config', () => {
     expect(resolveOpenClawExecHost('local')).toBe('gateway');
     expect(buildManagedOpenClawSandboxConfig('auto')).toEqual({ mode: 'off' });
     expect(resolveOpenClawExecHost('auto')).toBe('gateway');
+  });
+
+  test('keeps trusted collaboration tools available inside the sandbox', () => {
+    expect(buildManagedOpenClawSandboxToolConfig('sandbox')).toEqual({
+      tools: { alsoAllow: ['task_assistants', 'assistants_create'] },
+    });
+    expect(buildManagedOpenClawSandboxToolConfig('local')).toEqual({
+      tools: { alsoAllow: ['task_assistants', 'assistants_create', 'bundle-mcp'] },
+    });
   });
 });
 const stripChatCompletionsSuffix = (rawBaseUrl: string): string => {
@@ -1328,5 +1338,24 @@ describe('OpenClaw skill config merging', () => {
     ).toMatchObject({
       allow: ['installed-extension', 'automation-permission', 'workboard'],
     });
+  });
+});
+
+
+describe('optional agent-team configuration', () => {
+  test.each([true, false])('preserves the user enabled=%s choice during config sync', enabled => {
+    const result = mergeOpenClawPluginConfig(
+      applyDefaultOpenClawPluginEntries({ entries: { 'agent-team': { enabled } } },
+        { 'agent-team': { enabled: false } }),
+      { 'runtime-services': { enabled: true } }, ['agent-team'],
+    );
+    expect(result.entries).toMatchObject({ 'agent-team': { enabled } });
+  });
+  test('defaults to disabled without affecting the required history service', () => {
+    const result = mergeOpenClawPluginConfig(
+      applyDefaultOpenClawPluginEntries({}, { 'agent-team': { enabled: false } }),
+      { 'runtime-services': { enabled: true } }, ['agent-team'],
+    );
+    expect(result.entries).toEqual({ 'agent-team': { enabled: false }, 'runtime-services': { enabled: true } });
   });
 });

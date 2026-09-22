@@ -458,3 +458,52 @@ test('rebuilds the obsolete unique implementation-session Plan table', () => {
   expect(implementationIndexes).toEqual([]);
   reopened.close();
 });
+
+test('keeps legacy handoff provenance readable after upgrading existing sessions', () => {
+  const dir = createTempDir();
+  const original = SqliteStore.create(dir);
+  const initialDb = original.getDatabase();
+  initialDb.exec('DROP INDEX idx_cowork_handoff_request');
+  initialDb.exec('ALTER TABLE cowork_sessions DROP COLUMN handoff_request_id');
+  initialDb.exec('ALTER TABLE cowork_sessions DROP COLUMN handoff_from_session_id');
+  initialDb.exec('ALTER TABLE cowork_sessions DROP COLUMN handoff_from_session_title');
+  const before = new CoworkStore(initialDb).createSession('Existing', '/project');
+  original.close();
+  const reopened = SqliteStore.create(dir);
+  try {
+    const store = new CoworkStore(reopened.getDatabase());
+    expect(store.getSession(before.id)?.title).toBe('Existing');
+    const session = store.createSession('Review', '/project');
+    reopened
+      .getDatabase()
+      .prepare(
+        'UPDATE cowork_sessions SET handoff_from_session_id = ?, handoff_from_session_title = ?, handoff_request_id = ? WHERE id = ?',
+      )
+      .run(before.id, before.title, 'legacy-retry', session.id);
+    expect(store.getSession(session.id)?.handoffSource).toEqual({
+      sessionId: before.id,
+      title: 'Existing',
+    });
+    store.deleteSession(before.id);
+    expect(store.getSession(session.id)?.handoffSource).toEqual({ title: 'Existing' });
+  } finally { reopened.close(); }
+});
+
+
+test('upgrades assistant deletion metadata and keeps tombstones across restart', () => {
+  const directory = createTempDir();
+  const initial = SqliteStore.create(directory);
+  const profile = { id: 'review', name: 'Reviewer', description: '', icon: '', model: '', enabled: true, isDefault: false };
+  new CoworkStore(initial.getDatabase()).saveAgentProfile(profile);
+  initial.getDatabase().exec('ALTER TABLE agents DROP COLUMN deleted_at');
+  initial.close();
+  const migrated = SqliteStore.create(directory);
+  const store = new CoworkStore(migrated.getDatabase());
+  expect(store.getAgent('review')?.enabled).toBe(true);
+  store.deleteAgent('review');
+  migrated.close();
+  const reopened = SqliteStore.create(directory);
+  try {
+    expect(new CoworkStore(reopened.getDatabase()).getAgent('review')).toMatchObject({ name: 'Reviewer', enabled: false, deletedAt: expect.any(Number) });
+  } finally { reopened.close(); }
+});

@@ -29,6 +29,7 @@ import {
 
 interface SubtaskListPanelProps {
   sessionId: string;
+  panelId?: string;
   isOpen: boolean;
   parentRunning?: boolean;
   anchorRef?: React.RefObject<HTMLElement>;
@@ -50,6 +51,7 @@ const formatDuration = (value?: number): string => {
 
 const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   sessionId,
+  panelId = 'cowork-subtask-list',
   isOpen,
   parentRunning = false,
   anchorRef,
@@ -501,7 +503,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       {isOpen && (
         <aside
           ref={panelRef}
-          id="cowork-subtask-list"
+          id={panelId}
           className="absolute right-0 top-full z-[90] mt-2 flex h-[min(32rem,calc(100vh-4.5rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-border bg-surface/95 shadow-popover backdrop-blur-xl"
           aria-label={i18nService.t('subtasks')}
         >

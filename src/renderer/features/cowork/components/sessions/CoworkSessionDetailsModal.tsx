@@ -1,4 +1,5 @@
 import {
+  ArrowLeftIcon,
   ArrowPathIcon,
   DocumentDuplicateIcon,
   InformationCircleIcon,
@@ -18,16 +19,20 @@ import type { SessionDetailStats } from '@/features/cowork/sessionPresentation';
 import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/common/Modal';
 
+import { useCollaborationRooms } from '../chat/CollaborationPanel';
 import QueryingIndicator from '../shared/QueryingIndicator';
 import { useDraggableModal } from '../shared/useDraggableModal';
 import SessionTotalTokenUsageModal from '../status/SessionTotalTokenUsageModal';
+import CollaborationTaskDetails from './CollaborationTaskDetails';
 
 interface CoworkSessionDetailsModalProps {
+  memberView?: boolean;
   sessionSummary: CoworkSessionSummary;
   groups: SessionGroup[];
   isRuntimeRunning: boolean;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
   onClose: () => void;
+  onBack?: () => void;
 }
 
 const statusLabels: Record<CoworkSessionStatus, string> = {
@@ -60,7 +65,14 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   isRuntimeRunning,
   returnFocusRef,
   onClose,
+  onBack,
+  memberView = false,
 }) => {
+  const rooms = useCollaborationRooms();
+  const room = !memberView
+    ? rooms.find(room => room.anchorSessionId === sessionSummary.id)
+    : undefined;
+  const [selectedMember, setSelectedMember] = useState<CoworkSessionSummary>();
   const [session, setSession] = useState<CoworkSession | null>(null);
   const [stats, setStats] = useState<SessionDetailStats | null>(null);
   const [gatewaySessionId, setGatewaySessionId] = useState<string | null>(null);
@@ -144,6 +156,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   }, [isRuntimeRunning, reloadKey, sessionSummary.id, sessionSummary.updatedAt]);
 
   useEffect(() => {
+    if (selectedMember) return;
     const returnFocusTarget = returnFocusRef?.current;
     previouslyFocusedRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -193,7 +206,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
         if (focusTarget?.isConnected) focusTarget.focus();
       });
     };
-  }, [returnFocusRef]);
+  }, [returnFocusRef, selectedMember]);
 
   const retry = useCallback(() => setReloadKey(value => value + 1), []);
   const copySessionId = useCallback(async () => {
@@ -243,6 +256,18 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
       ]
     : [];
 
+  if (selectedMember)
+    return (
+      <CoworkSessionDetailsModal
+        key={selectedMember.id}
+        memberView
+        sessionSummary={selectedMember}
+        groups={groups}
+        isRuntimeRunning={selectedMember.status === 'running'}
+        onBack={() => setSelectedMember(undefined)}
+        onClose={onClose}
+      />
+    );
   return (
     <Modal
       onClose={onClose}
@@ -263,6 +288,16 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
             isDragging ? 'cursor-grabbing' : ''
           }`}
         >
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="mt-0.5 flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-secondary hover:bg-surface-raised hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              <ArrowLeftIcon aria-hidden="true" className="h-4 w-4" />
+              {i18nService.t('back')}
+            </button>
+          )}
           <div className="mt-0.5 rounded-xl bg-primary/10 p-2 text-primary">
             <InformationCircleIcon className="h-5 w-5" />
           </div>
@@ -300,13 +335,14 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
         </div>
 
         <div className="max-h-[calc(84vh-73px)] overflow-y-auto px-5 py-5">
-          {isLoading && (
+          {room && <CollaborationTaskDetails room={room} onSelect={setSelectedMember} />}
+          {!room && isLoading && (
             <div className="flex min-h-52 items-center justify-center">
               <QueryingIndicator size="md" />
             </div>
           )}
 
-          {!isLoading && loadFailed && (
+          {!room && !isLoading && loadFailed && (
             <div className="flex min-h-52 flex-col items-center justify-center text-center">
               <p className="text-sm text-secondary">{i18nService.t('sessionDetailsLoadFailed')}</p>
               <button
@@ -320,7 +356,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
             </div>
           )}
 
-          {!isLoading && session && stats && (
+          {!room && !isLoading && session && stats && (
             <div className="space-y-5">
               {refreshFailed && (
                 <div

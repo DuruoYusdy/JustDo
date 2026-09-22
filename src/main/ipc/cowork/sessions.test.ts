@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
   },
 }));
 
+import type { CollaborationCoordinator } from './collaboration';
 import { registerCoworkSessionHandlers } from './sessions';
 
 type IpcHandler = (...args: unknown[]) => Promise<unknown>;
@@ -38,6 +39,34 @@ const registerHandlers = (stopSession: ReturnType<typeof vi.fn>): IpcHandler => 
 
 beforeEach(() => {
   mocks.handle.mockReset();
+});
+
+test('reports successful task deletions even when another task needs a retry', async () => {
+  const deleteTask = vi.fn(async (id: string) => {
+    if (id === 'failed') throw new Error('collaborationDeletePending');
+    return true;
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    getCollaboration: () =>
+      ({
+        read: (id: string) => ({
+          room: { id, members: [{ sessionId: id }, { sessionId: `${id}-peer` }] },
+        }),
+        deleteTask,
+      }) as unknown as CollaborationCoordinator,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([channel]) => channel === 'cowork:session:deleteBatch',
+  )![1] as IpcHandler;
+  await expect(handler({}, ['failed', 'done'])).resolves.toEqual({
+    success: false,
+    deletedSessionIds: ['done', 'done-peer'],
+    error: 'collaborationDeletePending',
+  });
+  expect(deleteTask).toHaveBeenCalledTimes(2);
 });
 
 afterEach(() => {
@@ -152,9 +181,11 @@ test('copies an idle session from its canonical transcript', async () => {
     ([channel]) => channel === CoworkSessionCopyIpc.Copy,
   )?.[1] as IpcHandler;
 
-  await expect(
-    handler({}, { sessionId: source.id, title: copied.title }),
-  ).resolves.toEqual({ success: true, session: copied, planModeEnabled: false });
+  await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
+    success: true,
+    session: copied,
+    planModeEnabled: false,
+  });
   expect(store.createSession).toHaveBeenCalledWith(
     copied.title,
     source.cwd,
@@ -297,9 +328,10 @@ test('rolls back a copied local session when Gateway creation fails', async () =
     ([channel]) => channel === CoworkSessionCopyIpc.Copy,
   )?.[1] as IpcHandler;
 
-  await expect(
-    handler({}, { sessionId: source.id, title: copied.title }),
-  ).resolves.toEqual({ success: false, error: 'fork failed' });
+  await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
+    success: false,
+    error: 'fork failed',
+  });
   expect(store.deleteSession).toHaveBeenCalledWith(copied.id);
   expect(router.onSessionDeleted).toHaveBeenCalledWith(
     copied.id,
@@ -384,9 +416,10 @@ test('preserves the copy error when rollback cleanup also fails', async () => {
     ([channel]) => channel === CoworkSessionCopyIpc.Copy,
   )?.[1] as IpcHandler;
 
-  await expect(
-    handler({}, { sessionId: source.id, title: copied.title }),
-  ).resolves.toEqual({ success: false, error: 'adoption failed' });
+  await expect(handler({}, { sessionId: source.id, title: copied.title })).resolves.toEqual({
+    success: false,
+    error: 'adoption failed',
+  });
   expect(store.deleteSession).toHaveBeenCalledWith(copied.id);
   expect(router.onSessionDeleted).toHaveBeenCalled();
 });
@@ -1005,6 +1038,8 @@ test('reopens a restart checkpoint while an active Gateway run has no root id ye
   const reopenSessionRun = vi.fn().mockReturnValue(reopenedTiming);
   const beginSessionRun = vi.fn();
   const store = {
+    getSession: vi.fn().mockReturnValue({ agentId: 'main' }),
+    getAgent: vi.fn().mockReturnValue({ enabled: true }),
     getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
     reopenSessionRun,
     beginSessionRun,
@@ -1054,6 +1089,8 @@ test('rejects a new run when startup reconciliation finds the checkpoint still a
   const reopenSessionRun = vi.fn().mockReturnValue(reopenedTiming);
   const beginSessionRun = vi.fn();
   const store = {
+    getSession: vi.fn().mockReturnValue({ agentId: 'main' }),
+    getAgent: vi.fn().mockReturnValue({ enabled: true }),
     getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
     reopenSessionRun,
     beginSessionRun,
@@ -1102,6 +1139,8 @@ test('fails closed when a restart checkpoint cannot be confirmed idle', async ()
   };
   const beginSessionRun = vi.fn();
   const store = {
+    getSession: vi.fn().mockReturnValue({ agentId: 'main' }),
+    getAgent: vi.fn().mockReturnValue({ enabled: true }),
     getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
     beginSessionRun,
   } as unknown as CoworkStore;
@@ -1155,6 +1194,8 @@ test('allows a new run after a restart checkpoint is confirmed idle', async () =
   };
   const beginSessionRun = vi.fn().mockReturnValue(newTiming);
   const store = {
+    getSession: vi.fn().mockReturnValue({ agentId: 'main' }),
+    getAgent: vi.fn().mockReturnValue({ enabled: true }),
     getLatestSessionRun: vi.fn().mockReturnValue(checkpointTiming),
     beginSessionRun,
   } as unknown as CoworkStore;

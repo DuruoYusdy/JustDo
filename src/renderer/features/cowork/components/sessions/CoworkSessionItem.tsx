@@ -36,6 +36,7 @@ interface CoworkSessionItemProps {
   onRename: (title: string) => void;
   onExport: () => void;
   onCopy: () => void;
+  onCollaboration?: () => void;
   onTogglePinned: () => void;
   onToggleSelection: () => void;
   onEnterBatchMode: () => void;
@@ -221,7 +222,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     [closeMenu, onEnterBatchMode],
   );
 
-  const handleCopySessionId = useCallback(
+  const handleCopyMainSessionId = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
       closeMenu();
@@ -233,13 +234,13 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         await navigator.clipboard.writeText(result.sessionId);
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
-            detail: { message: i18nService.t('copySessionIdSuccess'), tone: 'success' },
+            detail: { message: i18nService.t('copyMainSessionIdSuccess'), tone: 'success' },
           }),
         );
       } catch {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
-            detail: { message: i18nService.t('copySessionIdFailed'), tone: 'error' },
+            detail: { message: i18nService.t('copyMainSessionIdFailed'), tone: 'error' },
           }),
         );
       }
@@ -380,7 +381,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const batchLabel = i18nService.t('batchOperations');
   const moveToGroupLabel = i18nService.t('moveToGroup');
-  const copySessionIdLabel = i18nService.t('copySessionId');
+  const copyMainSessionIdLabel = i18nService.t('copyMainSessionId');
   const sessionDetailsLabel = i18nService.t('sessionDetailsMenu');
   const togglePinnedLabel = i18nService.t(session.pinned ? 'unpinConversation' : 'pinConversation');
 
@@ -413,28 +414,30 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       { key: 'rename', label: renameLabel, onClick: handleRenameClick, tone: 'neutral' as const },
       {
         key: 'copySessionId',
-        label: copySessionIdLabel,
-        onClick: handleCopySessionId,
+        label: copyMainSessionIdLabel,
+        onClick: handleCopyMainSessionId,
         tone: 'neutral' as const,
       },
       {
         key: 'export',
-        label: i18nService.t('coworkExportSession'),
+        label: i18nService.t('collaborationExportMain'),
         onClick: handleExportClick,
         tone: 'neutral' as const,
-        disabled: isRuntimeRunning,
-        title: isRuntimeRunning
-          ? i18nService.t('coworkExportWaitForCompletion')
-          : undefined,
+        disabled: isRuntimeRunning || session.collaboration?.deleting,
+        title: isRuntimeRunning ? i18nService.t('coworkExportWaitForCompletion') : undefined,
       },
-      {
-        key: 'copy',
-        label: i18nService.t('coworkCopySession'),
-        onClick: handleCopyClick,
-        tone: 'neutral' as const,
-        disabled: isRuntimeRunning,
-        title: isRuntimeRunning ? i18nService.t('coworkCopyWaitForCompletion') : undefined,
-      },
+      ...(!session.collaboration
+        ? [
+            {
+              key: 'copy',
+              label: i18nService.t('coworkCopySession'),
+              onClick: handleCopyClick,
+              tone: 'neutral' as const,
+              disabled: isRuntimeRunning,
+              title: isRuntimeRunning ? i18nService.t('coworkCopyWaitForCompletion') : undefined,
+            },
+          ]
+        : []),
     ];
     if (showBatchOption) {
       items.unshift({
@@ -463,11 +466,12 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     });
     return items;
   }, [
+    session.collaboration,
     batchLabel,
-    copySessionIdLabel,
+    copyMainSessionIdLabel,
     deleteLabel,
     handleBatchClick,
-    handleCopySessionId,
+    handleCopyMainSessionId,
     handleDeleteClick,
     handleExportClick,
     handleCopyClick,
@@ -596,7 +600,11 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                     </span>
                   )}
                   <Tooltip
-                    content={session.title}
+                    content={
+                      session.collaboration?.deleting
+                        ? `${session.title} · ${i18nService.t('collaborationDeletePending')}`
+                        : session.title
+                    }
                     position="top"
                     delay={500}
                     className="flex-1 min-w-0"
@@ -608,6 +616,11 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                     >
                       {session.title}
                     </h3>
+                    {session.collaboration?.deleting && (
+                      <p className="truncate text-[10px] text-red-500">
+                        {i18nService.t('collaborationDeletePending')}
+                      </p>
+                    )}
                   </Tooltip>
                 </div>
               )}
@@ -760,7 +773,11 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 
             {/* Content */}
             <div className="px-5 pb-4">
-              <p className="text-sm text-secondary">{i18nService.t('deleteTaskConfirmMessage')}</p>
+              <p className="text-sm text-secondary">
+                {i18nService.t(
+                  session.collaboration ? 'collaborationDeleteConfirm' : 'deleteTaskConfirmMessage',
+                )}
+              </p>
             </div>
 
             {/* Footer */}

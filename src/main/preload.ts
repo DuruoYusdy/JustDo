@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import {
+  type AgentFileName,
+  type AgentFileSnapshot,
+  AgentIpc,
+  type AgentProfileInput,
+} from '../shared/agents';
+import {
   type AppReleaseHistoryResult,
   type AppUpdateCheckFrequency,
   AppUpdateIpc,
@@ -59,6 +65,7 @@ import {
   normalizeBrowserPanelPdfDetectedEvent,
 } from '../shared/browser/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
+import { CollaborationIpc } from '../shared/cowork/collaboration';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
@@ -583,9 +590,28 @@ contextBridge.exposeInMainWorld('electron', {
       getDaily: (options: UsageStatsOptions) => ipcRenderer.invoke(UsageStatsIpc.GetDaily, options),
     },
   },
+  collaboration: {
+    read: (sessionId: string) => ipcRenderer.invoke(CollaborationIpc.Read, sessionId),
+    readMessages: (sessionId: string, deliveryIds: string[]) =>
+      ipcRenderer.invoke(CollaborationIpc.ReadMessages, { sessionId, deliveryIds }),
+    list: () => ipcRenderer.invoke(CollaborationIpc.List),
+    create: (sessionId: string, agentIds: string[]) =>
+      ipcRenderer.invoke(CollaborationIpc.Create, { sessionId, agentIds }),
+    stop: (sessionId: string) => ipcRenderer.invoke(CollaborationIpc.Stop, sessionId),
+  },
   agents: {
+    delete: (agentId: string) => ipcRenderer.invoke(AgentIpc.Delete, agentId),
+    save: (input: AgentProfileInput) => ipcRenderer.invoke(AgentIpc.Save, input),
+    readFile: (agentId: string, name: AgentFileName) =>
+      ipcRenderer.invoke(AgentIpc.ReadFile, { agentId, name }),
+    writeFile: (
+      agentId: string,
+      name: AgentFileName,
+      content: string,
+      expected: AgentFileSnapshot,
+    ) => ipcRenderer.invoke(AgentIpc.WriteFile, { agentId, name, content, expected }),
     list: async () => {
-      const result = await ipcRenderer.invoke('agents:list');
+      const result = await ipcRenderer.invoke(AgentIpc.List);
       return result?.success ? result.agents : [];
     },
   },

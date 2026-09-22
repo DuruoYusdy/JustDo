@@ -91,6 +91,7 @@ import {
 import { isEntryAfterLatestPlanImplementationReset } from '@/libs/openclaw-chat/model/transcript-identity';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
+import { isTrustedPeerInput } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type {
   ChatItem,
   GatewayMessage,
@@ -100,6 +101,7 @@ import type {
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
+import { renderChatAvatar } from './chat-avatar';
 import { EditDiffMonacoController } from './edit-diff-monaco';
 import { renderMermaidSvg } from './mermaidRenderer';
 
@@ -179,6 +181,30 @@ export class JustDoChatElement extends LitElement {
   @property({ type: String, attribute: false })
   declare assistantName: string;
 
+  @property({ attribute: false })
+  declare assistantId: string;
+
+  @property({ attribute: false })
+  declare peerColors: Readonly<Record<string, string>>;
+
+  private get assistantAvatar(): TemplateResult | undefined {
+    return this.peerPerspective && this.assistantName
+      ? renderChatAvatar('assistant', {
+          id: this.assistantId || `local:${this.assistantName}`,
+          label: this.assistantName,
+          color: this.peerColors[this.assistantId],
+        })
+      : undefined;
+  }
+
+  /** Display names for trusted inter-session senders, keyed by native agent id. */
+  @property({ attribute: false })
+  declare peerNames: Readonly<Record<string, string>>;
+
+  /** Show a selected agent on the left and its trusted peer inputs on the right. */
+  @property({ type: Boolean, attribute: false })
+  declare peerPerspective: boolean;
+
   @property({ type: String, attribute: false })
   declare workingDirectory: string;
 
@@ -204,8 +230,7 @@ export class JustDoChatElement extends LitElement {
     | undefined;
 
   @property({ attribute: false })
-  declare onAssistantMessageFork:
-    ((entryId: string) => boolean | Promise<boolean>) | undefined;
+  declare onAssistantMessageFork: ((entryId: string) => boolean | Promise<boolean>) | undefined;
 
   @state()
   declare private userMessageEditor: { entryId: string; value: string; submitting: boolean } | null;
@@ -247,6 +272,9 @@ export class JustDoChatElement extends LitElement {
   private projectedActiveHistorySource: GatewayMessage[] | null = null;
   private projectedActiveTurnKey = '';
   private projectedActiveMessages: GatewayMessage[] = [];
+  private peerFilteredHistorySource: GatewayMessage[] | null = null;
+  private peerFilteredHistory: GatewayMessage[] = [];
+  private peerPerspectiveHistory = new WeakMap<GatewayMessage[], GatewayMessage[]>();
   private readonly persistedTimelineRenderCache = new PersistedTimelineRenderCache();
   private readonly processSummaryTakeoverTracker = new ProcessSummaryTakeoverTracker();
   private readonly collapsedProcessSummaryTakeoverTracker = new ProcessSummaryTakeoverSetTracker();
@@ -280,6 +308,10 @@ export class JustDoChatElement extends LitElement {
     this.streamStartedAt = null;
     this.isStreaming = false;
     this.assistantName = '';
+    this.assistantId = '';
+    this.peerColors = {};
+    this.peerNames = {};
+    this.peerPerspective = false;
     this.workingDirectory = '';
     this.searchQuery = '';
     this.searchCaseSensitive = false;
@@ -3158,6 +3190,29 @@ export class JustDoChatElement extends LitElement {
 
   // ─── Rendering ──────────────────────────────────────────────────────────
 
+  private messagesForPerspective(messages: GatewayMessage[]): GatewayMessage[] {
+    if (this.peerPerspective) {
+      let projected = this.peerPerspectiveHistory.get(messages);
+      if (!projected) {
+        // Incoming peer messages can carry the native assistant role. Project
+        // their display side before timeline grouping, not only inside bubbles,
+        // so they reset the local assistant's consecutive-message avatar slot.
+        projected = messages.map(message =>
+          isTrustedPeerInput(message) && message.role === 'assistant'
+            ? { ...message, role: 'user' }
+            : message,
+        );
+        this.peerPerspectiveHistory.set(messages, projected);
+      }
+      return projected;
+    }
+    if (this.peerFilteredHistorySource !== messages) {
+      this.peerFilteredHistorySource = messages;
+      this.peerFilteredHistory = messages.filter(message => !isTrustedPeerInput(message));
+    }
+    return this.peerFilteredHistory;
+  }
+
   render(): TemplateResult {
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
@@ -3168,10 +3223,12 @@ export class JustDoChatElement extends LitElement {
       this.pacedTerminalProjection?.sessionIdentity === this.assistantStreamSessionIdentityFor(ctrl)
         ? this.pacedTerminalProjection
         : null;
-    const activePersistedMessages = ctrl
-      ? (terminalProjection?.persistedMessages ??
-        (ctrl.state.visibleChatMessages as GatewayMessage[]))
-      : this.messages;
+    const activePersistedMessages = this.messagesForPerspective(
+      ctrl
+        ? (terminalProjection?.persistedMessages ??
+            (ctrl.state.visibleChatMessages as GatewayMessage[]))
+        : this.messages,
+    );
     const pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
     const activeTurnHistoryKey = activeTurn
       ? `${activeTurn.runId}:${activeTurn.status}:${[...activeTurn.toolById.keys()].join(
@@ -3193,7 +3250,7 @@ export class JustDoChatElement extends LitElement {
     let messages = this.projectedActiveMessages;
     const persistedMessages = messages;
     this.forkEligibilityMessages = ctrl
-      ? (ctrl.getLoadedMessages() as GatewayMessage[])
+      ? this.messagesForPerspective(ctrl.getLoadedMessages() as GatewayMessage[])
       : persistedMessages;
     const isStreaming = ctrl ? ctrl.state.chatSending : this.isStreaming;
     this.userMessageHistoryActionsAvailable = Boolean(
@@ -3206,7 +3263,9 @@ export class JustDoChatElement extends LitElement {
       ctrl.state.pendingUserMessage === null,
     );
     this.actionableUserEntryId = this.userMessageHistoryActionsAvailable
-      ? latestPersistedUserEntryId(ctrl!.getLoadedMessages() as GatewayMessage[])
+      ? latestPersistedUserEntryId(
+          this.messagesForPerspective(ctrl!.getLoadedMessages() as GatewayMessage[]),
+        )
       : null;
 
     // Merge the optimistic prompt in turn order during session transitions.
@@ -4103,6 +4162,7 @@ export class JustDoChatElement extends LitElement {
         streamSegments: streamSegments ?? [],
         queue: [],
         showToolCalls: true,
+        peerPerspective: this.peerPerspective,
       });
       return result ?? [];
     } catch (err) {
@@ -4142,11 +4202,13 @@ export class JustDoChatElement extends LitElement {
           ].filter((value): value is string => typeof value === 'string' && value.length > 0)
         : [],
     );
-    const matchingAssistant = [...this.forkEligibilityMessages].reverse().find(
-      message =>
-        message.role?.toLowerCase() === 'assistant' &&
-        timingRunIds.has(gatewayMessageRunId(message) ?? ''),
-    );
+    const matchingAssistant = [...this.forkEligibilityMessages]
+      .reverse()
+      .find(
+        message =>
+          message.role?.toLowerCase() === 'assistant' &&
+          timingRunIds.has(gatewayMessageRunId(message) ?? ''),
+      );
     const forkPoint =
       footer.status === 'completed' &&
       !footer.running &&
@@ -4180,9 +4242,7 @@ export class JustDoChatElement extends LitElement {
    * Allows only entries on the implementation side of the latest Plan reset.
    * The Gateway validates and includes the selected assistant entry atomically.
    */
-  private assistantForkPoint(
-    entryId: string | null,
-  ): { entryId: string } | null {
+  private assistantForkPoint(entryId: string | null): { entryId: string } | null {
     if (
       !entryId ||
       !isEntryAfterLatestPlanImplementationReset(this.forkEligibilityMessages, entryId)
@@ -4428,6 +4488,7 @@ export class JustDoChatElement extends LitElement {
             onSpeak: this.handleSpeak,
           }
         : undefined,
+      this.assistantAvatar,
     );
   }
 
@@ -4677,6 +4738,10 @@ export class JustDoChatElement extends LitElement {
           searchQuery: this.searchQuery,
           showAvatar,
           assistantName: this.assistantName,
+          assistantAvatar: this.assistantAvatar,
+          peerColors: this.peerColors,
+          peerNames: this.peerNames,
+          peerPerspective: this.peerPerspective,
           workingDirectory: this.workingDirectory,
           speechState: this.getSpeechState(item.key),
           onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
@@ -4760,6 +4825,11 @@ export class JustDoChatElement extends LitElement {
             searchQuery: this.searchQuery,
             showAvatar: shouldRenderGroupAvatarByPrevItem(item as MessageGroup, prev),
             workingDirectory: this.workingDirectory,
+            assistantName: this.assistantName,
+            assistantAvatar: this.assistantAvatar,
+            peerColors: this.peerColors,
+            peerNames: this.peerNames,
+            peerPerspective: this.peerPerspective,
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,
           }),
@@ -4781,6 +4851,10 @@ export class JustDoChatElement extends LitElement {
               allowFooter && shouldRenderGroupFooterByNextItem(item as MessageGroup, next),
             showAvatar,
             assistantName: this.assistantName,
+            assistantAvatar: this.assistantAvatar,
+            peerColors: this.peerColors,
+            peerNames: this.peerNames,
+            peerPerspective: this.peerPerspective,
             workingDirectory: this.workingDirectory,
             speechState: this.getSpeechState(item.key),
             onSpeak: this.localTtsAvailable ? this.handleSpeak : undefined,

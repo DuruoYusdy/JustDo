@@ -161,7 +161,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the twenty-two retained capability patches', () => {
+  test('contains exactly the twenty-three retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -185,6 +185,8 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '024-acp-allowed-agents-hot-reload.cjs',
       '025-mxc-external-skill-paths.cjs',
       '026-private-untrusted-context.cjs',
+      '027-shared-session-access-registry.cjs',
+      '028-admin-session-cwd.cjs',
     ]);
   });
 

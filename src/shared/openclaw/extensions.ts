@@ -5,6 +5,7 @@ export const OpenClawExtensionId = {
   RUNTIME_SERVICES: 'runtime-services',
   WORKBOARD: 'workboard',
   PLAN_MODE: 'plan-mode',
+  AGENT_TEAM: 'agent-team',
   EMBEDDED_BROWSER: 'embedded-browser',
   ACPX: 'acpx',
   WINDOWS_NATIVE_SANDBOX: 'mxc',

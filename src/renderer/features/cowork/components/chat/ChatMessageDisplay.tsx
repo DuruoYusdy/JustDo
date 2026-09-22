@@ -16,6 +16,10 @@ interface ChatMessageDisplayProps {
   activeTurn?: AssistantTurn | null;
   fullWidth?: boolean;
   assistantName?: string;
+  assistantId?: string;
+  peerColors?: Readonly<Record<string, string>>;
+  peerNames?: Readonly<Record<string, string>>;
+  peerPerspective?: boolean;
   workingDirectory?: string;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
@@ -33,6 +37,8 @@ interface ChatMessageDisplayProps {
   onChatElementChange?: (element: JustDoChatElement | null) => void;
 }
 
+const EMPTY_PEER_NAMES: Readonly<Record<string, string>> = {};
+
 /**
  * Shared message surface for both the primary agent and subagents.
  * It keeps the OpenClaw message pipeline, shadow-DOM theme and scrolling
@@ -46,6 +52,10 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   activeTurn = null,
   fullWidth = false,
   assistantName,
+  assistantId = '',
+  peerColors = EMPTY_PEER_NAMES,
+  peerNames = EMPTY_PEER_NAMES,
+  peerPerspective = false,
   workingDirectory = '',
   searchQuery = '',
   searchCaseSensitive = false,
@@ -110,6 +120,10 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       chat.activeTurn = activeTurn;
     }
     chat.assistantName = assistantName ?? '';
+    chat.assistantId = assistantId;
+    chat.peerColors = peerColors;
+    chat.peerNames = peerNames;
+    chat.peerPerspective = peerPerspective;
     chat.workingDirectory = workingDirectory;
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
@@ -117,6 +131,10 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.onAssistantMessageFork = onAssistantMessageFork;
   }, [
     assistantName,
+    assistantId,
+    peerColors,
+    peerNames,
+    peerPerspective,
     controller,
     gatewayMessages,
     isStreaming,

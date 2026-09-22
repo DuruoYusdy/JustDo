@@ -14,6 +14,7 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
+import { MAIN_USER_AGENT_ID } from '@shared/agents';
 import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
 import {
   BROWSER_AGENT_INTERACTION_ACK_TIMEOUT_MS,
@@ -177,6 +178,10 @@ import { type RootState, store } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
 
 import logoUrl from '../../../../../resources/logo.png';
+import CollaborationPanel, {
+  CollaborationMemberLinks,
+  useCollaborationRooms,
+} from './chat/CollaborationPanel';
 import {
   createSessionSubmission,
   getSessionStopOperationKey,
@@ -198,6 +203,7 @@ const FILE_DISPLAY_TAB_PREFIX = 'file:';
 const TERMINAL_DISPLAY_TAB_PREFIX = 'terminal:';
 const PLAN_DISPLAY_TAB_ID = 'plan';
 const SUBAGENT_DISPLAY_TAB_ID = 'subagent';
+const COLLABORATION_DISPLAY_TAB_ID = 'collaboration';
 const SIDE_CHAT_DISPLAY_TAB_PREFIX = 'side-chat:';
 const MAX_BROWSER_TABS = 8;
 const MAX_TERMINAL_TABS = 16;
@@ -304,8 +310,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const dispatch = useDispatch();
   const currentSession = useSelector(selectCurrentSession);
   const currentSessionId = currentSession?.id ?? null;
+  const collaborationRooms = useCollaborationRooms({
+    activeSessionId: currentSessionId,
+    onFirstCollaboration: sessionId => {
+      setCollaborationSessionId(sessionId);
+      setCollaborationMemberId(undefined);
+      setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+      setIsDisplayPanelOpen(true);
+      setIsWorkspaceFilesOpen(false);
+    },
+  });
   const sessions = useSelector(selectCoworkSessions);
   const config = useSelector(selectCoworkConfig);
+  const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
+  const [collaborationMemberId, setCollaborationMemberId] = useState<string | undefined>();
   const [isInitialized, setIsInitialized] = useState(false);
   const [greetingPeriod, setGreetingPeriod] = useState(() =>
     getGreetingPeriod(new Date().getHours()),
@@ -490,9 +508,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       ...unsupportedFilePreviews.map(fileDisplayTabId),
       ...(visiblePlanInteraction ? [PLAN_DISPLAY_TAB_ID] : []),
       ...(selectedSubagent ? [SUBAGENT_DISPLAY_TAB_ID] : []),
+      ...(collaborationSessionId && collaborationSessionId === currentSessionId
+        ? [COLLABORATION_DISPLAY_TAB_ID]
+        : []),
       ...sideChatTabs.map(tab => tab.id),
     ],
     [
+      collaborationSessionId,
+      currentSessionId,
       browserTabs,
       filePreviews,
       isBrowserPanelOpen,
@@ -646,7 +669,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
 
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
-  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
+  const currentAgentId = MAIN_USER_AGENT_ID;
   const currentSessionRuntimeRunning = currentSession
     ? currentSession.id.startsWith('temp-')
       ? currentSession.status === 'running'
@@ -714,7 +737,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     ? (agentState.agents.find(agent => agent.id === currentSession.agentId) ?? null)
     : null;
   const { selectedModel: sessionSelectedModel } = resolveAgentModelSelection({
-    agentModel: currentSession?.modelRef || currentSessionAgent?.model || '',
+    agentId: currentSession?.agentId ?? 'main',
+    agentModel: currentSessionAgent?.model || '',
+    sessionModel: currentSession?.modelRef,
     availableModels,
     fallbackModel: globalSelectedModel,
   });
@@ -1000,10 +1025,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setSubtasks(nextSubtasks);
       setSelectedSubagent(current => {
         if (!current) return null;
+        if (current.parentSessionId && current.parentSessionId !== currentSessionId) return current;
         return nextSubtasks.find(subtask => subtask.id === current.id) ?? null;
       });
     },
-    [setSelectedSubagent],
+    [setSelectedSubagent, currentSessionId],
   );
 
   const closeSubtaskList = useCallback((restoreFocus = true) => {
@@ -1031,14 +1057,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   );
 
   const openSubtask = useCallback(
-    (subtask: Subtask) => {
-      setSelectedSubagent(subtask);
+    (subtask: Subtask, parentSessionId = currentSessionId ?? undefined) => {
+      setSelectedSubagent({ ...subtask, parentSessionId });
       setIsWorkspaceFilesOpen(false);
       setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
       setIsDisplayPanelOpen(true);
       setIsSubtaskListOpen(false);
     },
-    [setIsDisplayPanelOpen, setIsWorkspaceFilesOpen, setPreferredDisplayTabId, setSelectedSubagent],
+    [
+      currentSessionId,
+      setIsDisplayPanelOpen,
+      setIsWorkspaceFilesOpen,
+      setPreferredDisplayTabId,
+      setSelectedSubagent,
+    ],
   );
 
   const openDisplayPanel = useCallback(() => {
@@ -1456,10 +1488,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         pendingBrowserAgentPanelStatesRef.current.delete(operationKey);
       }
       if (
-        !isAgentBrowserSessionAvailable(
-          availableAgentBrowserSessionIdsRef.current,
-          event.sessionId,
-        )
+        !isAgentBrowserSessionAvailable(availableAgentBrowserSessionIdsRef.current, event.sessionId)
       ) {
         if (event.busy) {
           const timeoutId = window.setTimeout(() => {
@@ -1869,7 +1898,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   useEffect(() => {
     const handleSessionListAction = (event: Event) => {
       const detail = (event as CustomEvent<CoworkSessionListActionDetail>).detail;
-      if (!detail?.sessionId || !['copy', 'export'].includes(detail.action)) return;
+      if (!detail?.sessionId || !['copy', 'export', 'collaboration'].includes(detail.action))
+        return;
       setPendingSessionListAction(detail);
     };
     window.addEventListener(COWORK_SESSION_LIST_ACTION_EVENT, handleSessionListAction);
@@ -1884,7 +1914,31 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setPendingSessionListAction(null);
       return;
     }
-    if (currentSessionRuntimeRunning) {
+    if (pendingSessionListAction.action === 'collaboration') {
+      if (!currentSession.external) {
+        setCollaborationSessionId(currentSession.id);
+        const requestedMemberId = pendingSessionListAction.memberSessionId;
+        const room = collaborationRooms.find(item => item.anchorSessionId === currentSession.id);
+        setCollaborationMemberId(
+          room?.members.some(member => member.sessionId === requestedMemberId)
+            ? requestedMemberId
+            : undefined,
+        );
+        setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+        setIsDisplayPanelOpen(true);
+        setIsWorkspaceFilesOpen(false);
+      }
+      setPendingSessionListAction(null);
+      return;
+    }
+    if (
+      currentSessionRuntimeRunning ||
+      collaborationRooms
+        .find(room => room.anchorSessionId === currentSession.id)
+        ?.members.some(member =>
+          sessions.some(session => session.id === member.sessionId && session.status === 'running'),
+        )
+    ) {
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
           detail: i18nService.t(
@@ -1966,6 +2020,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     currentSession,
     currentSessionRuntimeRunning,
     pendingSessionListAction,
+    collaborationRooms,
+    sessions,
+    setIsDisplayPanelOpen,
+    setIsWorkspaceFilesOpen,
+    setPreferredDisplayTabId,
     sessionTranscriptMutation,
   ]);
 
@@ -2404,9 +2463,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           includeRawData,
         });
         const result = await window.electron.dialog.saveTextFile({
-          title: i18nService.t('coworkExportSession'),
+          title: i18nService.t('collaborationExportMain'),
           defaultFileName: buildSessionExportFileName(currentSession.title),
-          content: `${JSON.stringify(document, null, 2)}\n`,
+          content: `${JSON.stringify({ ...document, scope: 'main', exportedAt: new Date().toISOString() }, null, 2)}\n`,
           filters: [{ name: 'JSON', extensions: ['json'] }],
         });
         if (!result.success) {
@@ -2540,6 +2599,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
           ]
         : []),
+      ...(collaborationSessionId === currentSession.id
+        ? [
+            {
+              id: COLLABORATION_DISPLAY_TAB_ID,
+              label: i18nService.t('collaborationTab'),
+              icon: <ChatBubbleLeftEllipsisIcon className="h-4 w-4" />,
+              onSelect: () => setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID),
+              onClose: () => {
+                setCollaborationSessionId(null);
+                selectAdjacentDisplayTabAfterClose(COLLABORATION_DISPLAY_TAB_ID);
+              },
+            },
+          ]
+        : []),
       ...sideChatTabs.map(tab => ({
         id: tab.id,
         label: tab.label,
@@ -2555,7 +2628,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         <div className="cowork-display-host relative flex min-h-0 flex-1">
           <div className="relative flex min-w-0 flex-1 flex-col">
             <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
-              <div className="non-draggable flex h-7 items-center">
+              <div className="non-draggable flex h-7 min-w-0 flex-1 items-center overflow-hidden">
                 {isSidebarCollapsed && (
                   <div className="mr-2 flex items-center gap-1">
                     <button
@@ -2580,6 +2653,24 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   {currentSession.title}
                 </h1>
+                {currentSession.handoffSource && (
+                  <button
+                    type="button"
+                    className="ml-2 max-w-48 truncate text-xs text-secondary"
+                    disabled={!currentSession.handoffSource.sessionId}
+                    onClick={() =>
+                      void (async () => {
+                        const sourceId = currentSession.handoffSource?.sessionId;
+                        if (sourceId && (await requestFilePreviewTransition()))
+                          await coworkService.loadSession(sourceId);
+                      })()
+                    }
+                  >
+                    {i18nService
+                      .t('agentHandoffFrom')
+                      .replace('{title}', currentSession.handoffSource.title)}
+                  </button>
+                )}
                 {currentSession.forkSource &&
                   (currentSession.forkSource.sessionId ? (
                     <button
@@ -2614,7 +2705,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     </span>
                   ))}
               </div>
-              <div className="non-draggable flex min-w-0 items-center gap-1">
+              <div className="non-draggable flex shrink-0 items-center gap-1">
                 {currentSessionFolderPath && currentSessionFolderName && (
                   <button
                     type="button"
@@ -2727,6 +2818,17 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     )}
                   </button>
                 )}
+                <CollaborationMemberLinks
+                  sessionId={currentSession.id}
+                  onOpen={() => {
+                    setIsSubtaskListOpen(false);
+                    setCollaborationMemberId(undefined);
+                    setCollaborationSessionId(currentSession.id);
+                    setPreferredDisplayTabId(COLLABORATION_DISPLAY_TAB_ID);
+                    setIsDisplayPanelOpen(true);
+                    setIsWorkspaceFilesOpen(false);
+                  }}
+                />
                 <div className="relative">
                   <button
                     ref={subtaskListToggleRef}
@@ -2866,6 +2968,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               }
               onAssistantMessageFork={
                 sessionTranscriptMutation === null &&
+                !collaborationRooms.some(room =>
+                  room.members.some(member => member.sessionId === currentSession.id),
+                ) &&
                 !currentSessionRuntimeRunning &&
                 !currentSession.id.startsWith('temp-')
                   ? handleAssistantMessageFork
@@ -2892,8 +2997,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           pendingStartRef.current,
                         )}
                         isStreaming={currentSessionRuntimeRunning}
-                        disabled={!isEngineReady || isQuestionInputBlocked}
-                        placeholder={i18nService.t('coworkContinuePlaceholder')}
+                        disabled={
+                          !isEngineReady ||
+                          isQuestionInputBlocked ||
+                          currentSessionAgent?.enabled === false
+                        }
+                        placeholder={i18nService.t(
+                          currentSessionAgent?.enabled === false
+                            ? 'agentUnavailable'
+                            : 'coworkContinuePlaceholder',
+                        )}
                         size="large"
                         showModelSelector={true}
                         sessionId={currentSession.id}
@@ -3026,8 +3139,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               }
             >
               {retainedRuntimePanels}
+              {collaborationSessionId === currentSession.id &&
+                activeDisplayTabId === COLLABORATION_DISPLAY_TAB_ID && (
+                  <CollaborationPanel
+                    key={currentSession.id}
+                    source={currentSession}
+                    selectedMemberId={collaborationMemberId}
+                    onSelect={setCollaborationMemberId}
+                    onOpenSubtask={openSubtask}
+                  />
+                )}
               <SubagentMessageDrawer
-                parentSessionId={currentSession.id}
+                parentSessionId={selectedSubagent?.parentSessionId ?? currentSession.id}
                 subagent={selectedSubagent}
                 onClose={() => {
                   setSelectedSubagent(null);

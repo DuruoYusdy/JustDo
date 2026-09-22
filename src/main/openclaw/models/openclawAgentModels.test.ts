@@ -9,7 +9,7 @@ import {
 } from './openclawAgentModels';
 
 describe('buildAgentEntry', () => {
-  test('emits explicit model.primary for the main agent', () => {
+  test('ignores legacy main model overrides and uses the application default', () => {
     const result = buildAgentEntry(
       {
         id: 'main',
@@ -31,7 +31,7 @@ describe('buildAgentEntry', () => {
     expect(result).toMatchObject({
       id: 'main',
       default: true,
-      model: { primary: 'justdo-server/deepseek-v3.2' },
+      model: { primary: 'anthropic/claude-sonnet-4' },
     });
   });
 
@@ -63,7 +63,7 @@ describe('buildAgentEntry', () => {
   test('rewrites a legacy custom provider key to its validated display name', () => {
     const result = buildAgentEntry(
       {
-        id: 'main',
+        id: 'review',
         name: 'main',
         description: '',
         systemPrompt: '',
@@ -81,7 +81,7 @@ describe('buildAgentEntry', () => {
     );
 
     expect(result).toMatchObject({
-      id: 'main',
+      id: 'review',
       model: { primary: 'acmeproxy/mimo-v2.5' },
     });
   });

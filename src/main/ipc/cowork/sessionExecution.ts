@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron';
 
+import { MAIN_USER_AGENT_ID } from '../../../shared/agents';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
@@ -64,6 +65,9 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (options.agentId && normalizeOpenClawAgentId(options.agentId) === ScheduledTaskAgentId) {
         return { success: false, error: 'The scheduler agent is reserved for scheduled tasks.' };
       }
+      if (options.agentId && options.agentId !== MAIN_USER_AGENT_ID) {
+        return { success: false, error: 'agentUnavailable' };
+      }
       await waitForConfigUpdates();
       const store = getCoworkStore();
       const existingTiming = options.clientTurnId
@@ -71,7 +75,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         : undefined;
       if (existingTiming) {
         const existingSession = store.getSession(existingTiming.sessionId);
-        if (existingSession) {
+        if (existingSession?.agentId === MAIN_USER_AGENT_ID) {
           return { success: true, session: existingSession, timing: existingTiming };
         }
       }
@@ -88,8 +92,10 @@ export const registerCoworkSessionExecutionHandlers = ({
       }
 
       const fallbackTitle = options.prompt.split('\n')[0].slice(0, 50) || 'New Session';
-      const agentId = options.agentId || 'main';
-      const initialModelRef = store.getAgent(agentId)?.model.trim() || undefined;
+      const agentId = MAIN_USER_AGENT_ID;
+      const agent = store.getAgent(agentId);
+      if (!agent || !agent.enabled) return { success: false, error: 'agentUnavailable' };
+      const initialModelRef = agentId === 'main' ? undefined : agent.model.trim() || undefined;
       const resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
       const session = store.createSession(
         options.title?.trim() || fallbackTitle,
@@ -125,7 +131,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           workspaceRoot: resolvedWorkspaceRoot,
           confirmationMode: 'modal',
           attachments: options.attachments,
-          agentId: options.agentId,
+          agentId,
           clientTurnId: options.clientTurnId,
           planMode: options.planMode === true,
           onAccepted: () => {

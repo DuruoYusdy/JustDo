@@ -57,6 +57,79 @@ function groups(items: ReturnType<typeof buildChatItems>): MessageGroup[] {
   return items.filter((item): item is MessageGroup => item.kind === 'group');
 }
 
+test('keeps identical messages from different collaborating agents separate and attributed', () => {
+  const items = build({
+    peerPerspective: true,
+    messages: ['review', 'writer'].map((agentId, index) => ({
+      role: 'user',
+      timestamp: index + 1,
+      content: 'Done.',
+      provenance: {
+        kind: 'inter_session',
+        sourceSessionKey: `agent:${agentId}:justdo:peer-${index}`,
+        sourceTool: 'collaboration_send',
+      },
+    })),
+  });
+
+  const result = groups(items);
+  expect(result).toHaveLength(2);
+  expect(result[0].senderLabel).toContain('review');
+  expect(result[1].senderLabel).toContain('writer');
+  expect(result.map(group => group.senderId)).toEqual(['review', 'writer']);
+  expect(result.map(group => group.messages.length)).toEqual([1, 1]);
+  expect(result.every(group => !group.messages[0].duplicateCount)).toBe(true);
+});
+
+test('places every collaborating sender on the input side regardless of its native role', () => {
+  const result = groups(
+    build({
+      peerPerspective: true,
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 1,
+          content: 'Please incorporate this review.',
+          provenance: {
+            kind: 'inter_session',
+            sourceSessionKey: 'agent:review:justdo:peer',
+            sourceTool: 'sessions_send',
+          },
+        },
+        { role: 'assistant', timestamp: 2, content: 'I incorporated the review.' },
+      ],
+    }),
+  );
+
+  expect(result.map(group => [group.role, group.senderId])).toEqual([
+    ['user', 'review'],
+    ['assistant', null],
+  ]);
+});
+
+test('hides trusted peer transport messages outside member-history perspective', () => {
+  const result = groups(
+    build({
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 1,
+          content: 'Internal peer result.',
+          provenance: {
+            kind: 'inter_session',
+            sourceSessionKey: 'agent:review:justdo:peer',
+            sourceTool: 'sessions_send',
+          },
+        },
+        { role: 'assistant', timestamp: 2, content: 'User-facing synthesis.' },
+      ],
+    }),
+  );
+
+  expect(result).toHaveLength(1);
+  expect(result[0].messages[0].message).toMatchObject({ content: 'User-facing synthesis.' });
+});
+
 function streams(
   items: ReturnType<typeof buildChatItems>,
 ): Extract<ChatItem, { kind: 'stream' }>[] {

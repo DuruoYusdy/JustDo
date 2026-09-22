@@ -27,6 +27,10 @@ vi.mock('electron', () => ({
 
 const temporaryDirectories: string[] = [];
 
+test('allows users to toggle agent-team independently of required extensions', () => {
+  expect(listManagedOpenClawPluginIds()).not.toContain('agent-team');
+});
+
 const setActiveJwt = (): string => {
   const nowSeconds = Math.floor(Date.now() / 1_000);
   const encode = (value: unknown): string =>
@@ -226,7 +230,7 @@ const writeMinimalConfig = (
       permissionMode,
     }),
     getBrowserMode: () => browserMode,
-    getAgents: () => agents,
+    getAgents: () => agents.map(agent => ({ model: '', ...agent })),
     getAgentRuntimeSettings: () => runtimeSettings,
     getLocalTtsConfig: () => localTtsConfig,
     getSpeechOutputState: () => ({
@@ -287,7 +291,30 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.tools.exec.host).toBe('sandbox');
     expect(config.tools.fs.workspaceOnly).toBe(true);
-    expect(config.tools.sandbox).toBeUndefined();
+    expect(config.tools.sandbox).toEqual({
+      tools: { alsoAllow: ['task_assistants', 'assistants_create'] },
+    });
+  });
+
+  test('creates and updates independent roles before model setup', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-agents-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const agents = [
+      { id: 'main', enabled: true, name: 'Main', isDefault: true },
+      { id: 'research', enabled: true, name: 'Research', isDefault: false },
+    ];
+    expect(writeMinimalConfig(configPath, 'agent-profile-change', 'ask', BrowserMode.Isolated, agents).ok).toBe(true);
+    let config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.entries.research.workspace).toBe(path.join(directory, 'agent-workspaces', 'research'));
+    expect(config.agents.entries.research.model).toBeUndefined();
+    agents[0].isDefault = false;
+    agents[1].isDefault = true;
+    agents[1].name = 'Reviewer';
+    expect(writeMinimalConfig(configPath, 'agent-profile-change', 'ask', BrowserMode.Isolated, agents).ok).toBe(true);
+    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.entries.research).toMatchObject({ identity: { name: 'Reviewer' } });
+    expect(config.agents.entries.main.identity.name).toBe('Main');
   });
 
   test('writes the managed safeguard compaction policy before model setup', () => {
@@ -591,6 +618,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.allow).toEqual([
       'ask-user-question',
       'workboard',
+      'agent-team',
       'browser',
       'acpx',
       'automation-permission',
@@ -687,6 +715,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workspace-plugin',
       'agent-workspace-plugin',
       'workboard',
+      'agent-team',
       'browser',
       'acpx',
       'ask-user-question',
@@ -832,6 +861,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.allow).toEqual([
       'justdo-skill-only-example',
       'workboard',
+      'agent-team',
       'browser',
       'acpx',
       'ask-user-question',
@@ -1416,4 +1446,18 @@ describe('OpenClaw auth logout config sync', () => {
       JSON.parse(fs.readFileSync(path.join(stateDir, 'model-provider-secrets.json'), 'utf8')),
     ).toEqual({});
   });
+});
+
+
+test.each([true, false])('keeps the optional agent-team enabled=%s across full minimal config synchronization', enabled => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-agent-team-config-'));
+  temporaryDirectories.push(directory);
+  const configPath = path.join(directory, 'openclaw.json');
+  expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(config.plugins.entries['agent-team']).toEqual({ enabled: false });
+  config.plugins.entries['agent-team'] = { enabled };
+  fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+  expect(writeMinimalConfig(configPath, 'cowork-config-change').ok).toBe(true);
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries['agent-team']).toEqual({ enabled });
 });

@@ -355,7 +355,11 @@ function progressReceiptSteps(input: unknown): Array<{ step: string; status: str
   });
 }
 
-function renderProgressReceipt(tool: ToolItem, showAvatar: boolean): TemplateResult {
+function renderProgressReceipt(
+  tool: ToolItem,
+  showAvatar: boolean,
+  assistantAvatar?: TemplateResult,
+): TemplateResult {
   const steps = progressReceiptSteps(tool.input);
   const input =
     tool.input && typeof tool.input === 'object' && !Array.isArray(tool.input)
@@ -403,10 +407,16 @@ function renderProgressReceipt(tool: ToolItem, showAvatar: boolean): TemplateRes
     `,
     showAvatar,
     'chat-group--progress-receipt',
+    'assistant',
+    assistantAvatar,
   );
 }
 
-function renderPlanPresentation(tool: ToolItem, showAvatar: boolean): TemplateResult {
+function renderPlanPresentation(
+  tool: ToolItem,
+  showAvatar: boolean,
+  assistantAvatar?: TemplateResult,
+): TemplateResult {
   const preview = extractPresentPlanPreview(tool.name, tool.input, tool.id);
   const title = preview?.title || i18nService.t('planReviewTitle');
   return renderAssistantTimelineRow(
@@ -428,7 +438,9 @@ function renderPlanPresentation(tool: ToolItem, showAvatar: boolean): TemplateRe
       >
         <span class="plan-presentation-card__icon" aria-hidden="true">
           <svg viewBox="0 0 20 20" fill="none">
-            <path d="M6 4.75h8a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 14 16.75H6a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 6 4.75Z" />
+            <path
+              d="M6 4.75h8a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 14 16.75H6a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 6 4.75Z"
+            />
             <path d="M8 4.75v-1.5h4v1.5M7.25 9.25l.75.75 1.5-1.75M11.25 9.25h2M7.25 13h6" />
           </svg>
         </span>
@@ -444,6 +456,8 @@ function renderPlanPresentation(tool: ToolItem, showAvatar: boolean): TemplateRe
     `,
     showAvatar,
     'chat-group--plan-presentation',
+    'assistant',
+    assistantAvatar,
   );
 }
 
@@ -452,6 +466,7 @@ function renderAssistantTimelineRow(
   showAvatar: boolean,
   rowClass = '',
   avatarRole: 'assistant' | 'error' = 'assistant',
+  assistantAvatar?: TemplateResult,
 ): TemplateResult {
   return html`
     <div
@@ -459,7 +474,9 @@ function renderAssistantTimelineRow(
         showAvatar ? '' : ' chat-group--continuation'
       }${rowClass ? ` ${rowClass}` : ''}`}
     >
-      <div class="chat-group__avatar">${showAvatar ? renderChatAvatar(avatarRole) : nothing}</div>
+      <div class="chat-group__avatar">
+        ${showAvatar ? (avatarRole === 'assistant' && assistantAvatar ? assistantAvatar : renderChatAvatar(avatarRole)) : nothing}
+      </div>
       <div class="chat-group__content">${content}</div>
     </div>
   `;
@@ -470,6 +487,7 @@ export function renderTerminalTimelineMessage(
   status: 'aborted' | 'error',
   showAvatar = true,
   footer: TemplateResult | typeof nothing = nothing,
+  assistantAvatar?: TemplateResult,
 ): TemplateResult {
   return renderAssistantTimelineRow(
     html`
@@ -486,6 +504,7 @@ export function renderTerminalTimelineMessage(
     showAvatar,
     '',
     status === 'error' ? 'error' : 'assistant',
+    assistantAvatar,
   );
 }
 
@@ -497,9 +516,10 @@ export function renderTimelineItem(
   editDiffModes: ReadonlyMap<string, EditDiffMode> = new Map(),
   onEditDiffModeChange?: EditDiffModeChangeHandler,
   speech?: TimelineSpeechOptions,
+  assistantAvatar?: TemplateResult,
 ): TemplateResult {
   if (item.kind === 'waiting') {
-    return renderReadingIndicatorGroup({ showAvatar });
+    return renderReadingIndicatorGroup({ showAvatar, assistantAvatar });
   }
   if (item.kind === 'waiting-status') {
     const key =
@@ -531,14 +551,14 @@ export function renderTimelineItem(
     `;
   }
   if (item.kind === 'progress-receipt') {
-    return renderProgressReceipt(item.item, showAvatar);
+    return renderProgressReceipt(item.item, showAvatar, assistantAvatar);
   }
   if (item.kind === 'plan-presentation') {
-    return renderPlanPresentation(item.item, showAvatar);
+    return renderPlanPresentation(item.item, showAvatar, assistantAvatar);
   }
   if (item.kind === 'live-process') {
     if (item.item.type === 'thinking') {
-      return renderStreamingThinkingGroup(item.item.text, { showAvatar });
+      return renderStreamingThinkingGroup(item.item.text, { showAvatar, assistantAvatar });
     }
     const tool = item.item;
     const isEditDiff = parseEditToolDiff(tool.name, tool.input) !== null;
@@ -567,6 +587,9 @@ export function renderTimelineItem(
         </section>
       `,
       showAvatar,
+      '',
+      'assistant',
+      assistantAvatar,
     );
   }
   if (item.kind === 'process-summary') {
@@ -659,6 +682,9 @@ export function renderTimelineItem(
         </section>
       `,
       showAvatar,
+      '',
+      'assistant',
+      assistantAvatar,
     );
   }
   if (item.kind === 'content') {
@@ -669,6 +695,7 @@ export function renderTimelineItem(
         timestamp: item.item.startedAt,
         streaming: item.item.status === 'streaming',
         showAvatar,
+        assistantAvatar,
         speechState: speech?.state,
         onSpeak: speech?.onSpeak,
       },
@@ -678,7 +705,13 @@ export function renderTimelineItem(
     item.item.status === 'aborted'
       ? i18nService.t('coworkRunInterruptedMessage')
       : item.item.message;
-  return renderTerminalTimelineMessage(terminalMessage, item.item.status, showAvatar);
+  return renderTerminalTimelineMessage(
+    terminalMessage,
+    item.item.status,
+    showAvatar,
+    nothing,
+    assistantAvatar,
+  );
 }
 
 export function renderActiveTurnTimeline(

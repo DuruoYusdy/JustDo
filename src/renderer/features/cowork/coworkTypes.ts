@@ -64,6 +64,7 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  handoffSource?: import('../../../shared/agents').AgentHandoffSource;
   forkSource?: {
     sessionId?: string;
     title: string;
@@ -151,6 +152,7 @@ export interface CoworkInteractionResponse {
 
 // Session summary for list display (without full messages)
 export interface CoworkSessionSummary {
+  collaboration?: { memberCount: number; deleting: boolean };
   id: string;
   title: string;
   status: CoworkSessionStatus;

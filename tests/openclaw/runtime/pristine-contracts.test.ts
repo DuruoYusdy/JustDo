@@ -41,6 +41,8 @@ const EXPECTED_PATCH_FILES = [
   '024-acp-allowed-agents-hot-reload.cjs',
   '025-mxc-external-skill-paths.cjs',
   '026-private-untrusted-context.cjs',
+  '027-shared-session-access-registry.cjs',
+  '028-admin-session-cwd.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

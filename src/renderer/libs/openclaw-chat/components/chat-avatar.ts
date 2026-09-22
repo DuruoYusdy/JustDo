@@ -51,7 +51,30 @@ const OTHER_SVG = html`
   </svg>
 `;
 
-export function renderChatAvatar(role: string): TemplateResult {
+function peerInitial(label: string): string {
+  return Array.from(label.trim())[0]?.toLocaleUpperCase() || '?';
+}
+
+function peerColor(identity: string): string {
+  let hash = 0;
+  for (const char of identity) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  return `hsl(${hash % 360} 62% 42%)`;
+}
+
+export function renderChatAvatar(
+  role: string,
+  peer?: { id: string; label: string; color?: string },
+): TemplateResult {
+  if (peer?.id) {
+    return html`<div
+      class="chat-avatar peer"
+      style=${`background-color:${peer.color || peerColor(peer.id)};color:#fff`}
+      title=${peer.label}
+      aria-label=${peer.label}
+    >
+      ${peerInitial(peer.label)}
+    </div>`;
+  }
   const normalized =
     role.trim().toLowerCase() === 'error' ? 'error' : normalizeRoleForGrouping(role);
   const className =

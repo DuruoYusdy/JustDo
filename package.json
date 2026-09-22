@@ -47,6 +47,7 @@
     "rebuild:electron-native": "node scripts/rebuild-electron-native.cjs",
     "prestart:electron": "npm run rebuild:electron-native && npm run browser-extension:prepare",
     "start:electron": "node scripts/launch-electron.cjs",
+    "electron:dev:isolated": "node scripts/rebuild-electron-native.cjs && node scripts/run-isolated-dev.cjs",
     "electron:dev": "rimraf dist-electron && npm run compile:electron && node scripts/run-electron-dev.cjs",
     "preelectron:dev": "npm run browser-extension:prepare && npm run setup:local-tts",
     "electron:dev:openclaw": "npm run openclaw:runtime:host && npm run electron:dev",
@@ -93,6 +94,7 @@
     "fix:mac-icon": "bash scripts/mac-icon.sh fix-display"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -144,8 +146,8 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@types/uuid": "^10.0.0",
-    "@types/yauzl": "^3.4.0",
     "@types/ws": "^8.18.1",
+    "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.0",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",

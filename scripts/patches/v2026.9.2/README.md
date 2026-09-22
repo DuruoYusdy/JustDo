@@ -4,7 +4,7 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.9.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to twenty-two product-specific gaps. Live Thinking emission,
+The previous 49-patch integration has been reduced to twenty-four product-specific gaps. Live Thinking emission,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
@@ -57,6 +57,9 @@ workspace while leaving Docker and SSH path projection unchanged.
 Patch 026 lets the authenticated local JustDo backend provide bounded untrusted browser state to
 the agent-only turn body while OpenClaw persists the original user text unchanged. Other clients
 cannot activate this private context channel.
+Patch 028 lets the authenticated local admin client prepare an assistant session in the task's
+existing project directory while retaining the assistant's independent bootstrap workspace. The
+existing non-admin containment check and runtime sandbox policy remain unchanged.
 
 | Patch                                                | Retained capability                                                                                                                                                        | Remove when upstream provides                                                                                                            |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -82,6 +85,8 @@ cannot activate this private context channel.
 | `024-acp-allowed-agents-hot-reload.cjs`              | Applies external-agent allowlist changes through native hot reload instead of restarting the Gateway.                                                                      | Upstream classifies `acp.allowedAgents` as hot-reloadable.                                                                               |
 | `025-mxc-external-skill-paths.cjs`                   | Uses MXC's external materialized skills directory as the prompt/tool read path instead of a nested path under the writable workspace.                                      | Upstream exposes backend-owned skill prompt/read path mapping for ProcessContainer backends.                                             |
 | `026-private-untrusted-context.cjs`                  | Adds bounded, authenticated local per-turn context to the agent body without storing it as the visible user message.                                                       | Upstream exposes a trusted-client per-turn context field with separate transcript and model projections.                                 |
+| `027-shared-session-access-registry.cjs`             | Shares the native scoped-session access registry between the Gateway bundle and dynamically loaded SDK modules; preserves exact grant checks.                              | Upstream packaging gives both module instances the same scoped-access registry.                                                          |
+| `028-admin-session-cwd.cjs`                          | Honors the documented `operator.admin` explicit cwd contract for sandboxed sessions while preserving separate agent bootstrap workspaces.                                  | Upstream admits an admin-authorized task directory after global workspace authorization.                                                 |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.9.2 marker shape. `verify-openclaw-pristine-contracts`
@@ -95,3 +100,5 @@ The installer also applies one audited packaging-only transform from
 source-loader fallback with a static dist import so esbuild includes that runtime in the packaged
 Gateway. It has an exact-version marker plus portable and built-runtime shape tests, and is not
 counted as a product capability patch because it does not change the OpenClaw API or agent behavior.
+
+Patch 024 recognizes its exact current marker in both source formatting and the newline formatting emitted by a fresh esbuild bundle. This is formatting idempotency, not support for historical or partially applied patch revisions.

@@ -261,6 +261,10 @@ const App: React.FC = () => {
     void initializeApp();
   }, [dispatch, waitWithTimeout]);
 
+  useEffect(() => window.electron?.cowork?.onSessionsChanged(() => {
+    void agentService.loadAgents();
+  }), []);
+
   useEffect(() => {
     const unsubscribe = i18nService.subscribe(() => {
       forceLanguageRefresh(prev => prev + 1);

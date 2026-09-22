@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { MAIN_USER_AGENT_ID } from '@shared/agents';
 
 interface AgentSummary {
   id: string;
@@ -7,6 +8,7 @@ interface AgentSummary {
   icon: string;
   model: string;
   enabled: boolean;
+  deletedAt?: number;
   isDefault: boolean;
   skillIds: string[];
 }
@@ -19,7 +21,7 @@ interface AgentState {
 
 const initialState: AgentState = {
   agents: [],
-  currentAgentId: 'main',
+  currentAgentId: MAIN_USER_AGENT_ID,
   loading: false,
 };
 
@@ -29,6 +31,11 @@ const agentSlice = createSlice({
   reducers: {
     setAgents(state, action: PayloadAction<AgentSummary[]>) {
       state.agents = action.payload;
+      state.currentAgentId = MAIN_USER_AGENT_ID;
+    },
+
+    setCurrentAgentId(state, _action: PayloadAction<string>) {
+      state.currentAgentId = MAIN_USER_AGENT_ID;
     },
 
     setLoading(state, action: PayloadAction<boolean>) {
@@ -36,19 +43,14 @@ const agentSlice = createSlice({
     },
 
     updateAgent(state, action: PayloadAction<{ id: string; updates: Partial<AgentSummary> }>) {
-      const index = state.agents.findIndex((a) => a.id === action.payload.id);
+      const index = state.agents.findIndex(a => a.id === action.payload.id);
       if (index !== -1) {
         state.agents[index] = { ...state.agents[index], ...action.payload.updates };
       }
     },
-
   },
 });
 
-export const {
-  setAgents,
-  setLoading,
-  updateAgent,
-} = agentSlice.actions;
+export const { setAgents, setCurrentAgentId, setLoading, updateAgent } = agentSlice.actions;
 
 export default agentSlice.reducer;

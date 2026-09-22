@@ -99,3 +99,29 @@ describe('resolveAgentModelSelection', () => {
     expect(result.hasInvalidExplicitModel).toBe(true);
   });
 });
+
+test.each(['anthropic/claude-sonnet-4', 'deleted-provider/deleted-model'])(
+  'ignores legacy main profile model %s without an unresolved-model warning',
+  agentModel => {
+    const result = resolveAgentModelSelection({
+      agentId: 'main',
+      agentModel,
+      availableModels: models,
+      fallbackModel: models[0],
+    });
+    expect(result.selectedModel).toBe(models[0]);
+    expect(result.hasInvalidExplicitModel).toBe(false);
+  },
+);
+
+test('retains an existing main session model ahead of application defaults', () => {
+  const result = resolveAgentModelSelection({
+    agentId: 'main',
+    agentModel: 'deleted-model',
+    sessionModel: 'anthropic/claude-sonnet-4',
+    availableModels: models,
+    fallbackModel: models[0],
+  });
+  expect(result.selectedModel).toBe(models[1]);
+  expect(result.usesFallback).toBe(false);
+});

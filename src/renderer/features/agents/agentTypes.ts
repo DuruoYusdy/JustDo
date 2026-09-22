@@ -8,6 +8,7 @@ export interface Agent {
   icon: string;
   skillIds: string[];
   enabled: boolean;
+  deletedAt?: number;
   isDefault: boolean;
   createdAt: number;
   updatedAt: number;

@@ -334,7 +334,7 @@ export class MulticaCommandService {
         [],
         agent.id,
         config.permissionMode,
-        agent.model.trim() || undefined,
+        agent.id === 'main' ? undefined : agent.model.trim() || undefined,
       );
       try {
         external = externalStore.create({
@@ -361,7 +361,7 @@ export class MulticaCommandService {
         sessionId: external.coworkSessionId,
         clientTurnId,
         startedAt,
-        modelRef: agent.model.trim() || undefined,
+        modelRef: agent.id === 'main' ? undefined : agent.model.trim() || undefined,
       });
     } catch (error) {
       externalStore.setStatus(invocation.sessionKey, 'error');

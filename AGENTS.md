@@ -122,7 +122,9 @@ Do not document/use unmounted slices as active state.
 SQLite core tables in `src/main/data/sqliteStore.ts`:
 `kv`, `cowork_sessions`, `cowork_external_sessions`, `cowork_external_session_tombstones`,
 `cowork_session_runs`, `cowork_plan_handoffs`, `cowork_config`, `agents`, `mcp_servers`,
-`openclaw_hooks`, `session_groups`, `scheduled_task_run_receipts`,
+`openclaw_hooks`, `session_groups`, `collaboration_rooms`, `collaboration_members`,
+`collaboration_rounds`, `collaboration_deliveries`, `collaboration_deletions`,
+`collaboration_deleted_members`, `scheduled_task_run_receipts`,
 `scheduled_task_result_cleanup`, `scheduled_task_result_tombstones`.
 
 OpenClaw owns durable message transcripts in its native SQLite store. JustDo
@@ -284,3 +286,24 @@ Before PR:
 - Compare with release base when appropriate: `git diff release_20260625...HEAD`.
 - Use `.github/PULL_REQUEST_TEMPLATE.md`.
 - Push new branches with `-u`.
+
+Independent Agent profiles are managed in Settings → Assistants. Keep the managed
+roster under the application config synchronizer. Manual profile saves apply the managed config synchronizer; model-driven creation
+uses Gateway agents.create/update. The application stores product-facing profile
+mappings, and user conversations always belong to main. Native agents.files APIs own role-file text.
+Empty profile models inherit the application default. Disable is an application
+chat-entry restriction, not native authorization revocation. See
+`docs/features/multi-agent.md` for the current P0/P1 scope and limitations.
+
+Deleted assistant profiles retain `agents.deleted_at`, disabled identity rows and
+native ownership for historical transcripts. Hide them from Settings and reject
+profile mutations; do not call native agents.delete for this history-preserving
+flow because it purges session indexes even with deleteFiles:false.
+
+
+Persistent peer collaboration is the optional `openclaw-extensions/agent-team`
+extension, disabled by default and user-toggleable. Keep its tools, native-send
+hooks and skill together; do not inject a roster or collaboration instructions
+on every turn. Runtime Services owns receipt history reads and blocks managed
+peer sends when the extension is disabled. Config sync must preserve the user's
+explicit extension state.

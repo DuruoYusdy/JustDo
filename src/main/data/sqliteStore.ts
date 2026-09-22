@@ -6,6 +6,7 @@ import path from 'path';
 
 import { DB_FILENAME } from '../core/appConstants';
 import { transformAppConfigCredentials } from './appConfigCredentials';
+import { initializeCollaborationTables } from './collaborationStore';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -158,6 +159,17 @@ export class SqliteStore {
     `);
     this.ensureColumn('cowork_sessions', 'permission_mode', 'TEXT');
     this.ensureColumn('cowork_sessions', 'model_ref', 'TEXT');
+    this.ensureColumn(
+      'cowork_sessions',
+      'handoff_from_session_id',
+      'TEXT REFERENCES cowork_sessions(id) ON DELETE SET NULL',
+    );
+    this.ensureColumn('cowork_sessions', 'handoff_from_session_title', 'TEXT');
+    this.ensureColumn('cowork_sessions', 'handoff_request_id', 'TEXT');
+    this.db.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_cowork_handoff_request ON cowork_sessions(handoff_request_id) WHERE handoff_request_id IS NOT NULL',
+    );
+
     this.ensureColumn(
       'cowork_sessions',
       'forked_from_session_id',
@@ -323,6 +335,12 @@ export class SqliteStore {
         updated_at INTEGER NOT NULL
       );
     `);
+
+    const agentColumns = this.db.pragma('table_info(agents)') as Array<{ name: string }>;
+    if (!agentColumns.some(column => column.name === 'deleted_at'))
+      this.db.exec('ALTER TABLE agents ADD COLUMN deleted_at INTEGER');
+
+    initializeCollaborationTables(this.db);
 
     // Create MCP servers table
     this.db.exec(`

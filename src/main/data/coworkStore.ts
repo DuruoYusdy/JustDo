@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+import type { AgentProfileInput } from '../../shared/agents';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
@@ -45,6 +46,9 @@ import { rewriteOpenClawModelProviderId } from '../../shared/providers';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
+  const developmentWorkspace =
+    process.env.NODE_ENV === 'development' ? process.env.JUSTDO_DEV_WORKSPACE_DIR : undefined;
+  if (developmentWorkspace && path.isAbsolute(developmentWorkspace)) return developmentWorkspace;
   return path.join(os.homedir(), DEFAULT_WORKSPACE_DIRECTORY_NAME, 'project');
 };
 
@@ -72,6 +76,7 @@ const normalizeCoworkExecutionModeValue = (value: unknown): CoworkExecutionMode 
 export type CoworkAgentEngine = 'openclaw';
 
 export interface Agent {
+  deletedAt?: number;
   id: string;
   name: string;
   description: string;
@@ -123,6 +128,7 @@ export interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  handoffSource?: import('../../shared/agents').AgentHandoffSource;
   forkSource?: CoworkSessionForkSource;
   external?: ExternalSessionMetadata;
   createdAt: number;
@@ -661,6 +667,9 @@ export class CoworkStore {
       forked_from_session_id?: string | null;
       forked_from_session_title?: string | null;
       forked_from_entry_id?: string | null;
+      handoff_from_session_title?: string | null;
+      live_handoff_source_id?: string | null;
+      live_handoff_source_title?: string | null;
       live_fork_source_id?: string | null;
       live_fork_source_title?: string | null;
       created_at: number;
@@ -674,10 +683,13 @@ export class CoworkStore {
         session.execution_mode, session.permission_mode, session.active_skill_ids,
         session.agent_id, session.model_ref, session.forked_from_session_id,
         session.forked_from_session_title, session.forked_from_entry_id,
+        session.handoff_from_session_title,
+        handoff.id AS live_handoff_source_id, handoff.title AS live_handoff_source_title,
         source.id AS live_fork_source_id, source.title AS live_fork_source_title,
         session.created_at, session.updated_at
       FROM cowork_sessions AS session
       LEFT JOIN cowork_sessions AS source ON source.id = session.forked_from_session_id
+      LEFT JOIN cowork_sessions AS handoff ON handoff.id = session.handoff_from_session_id
       WHERE session.id = ?
     `,
       [id],
@@ -717,6 +729,14 @@ export class CoworkStore {
                 : {}),
               title: forkSourceTitle,
               entryId: row.forked_from_entry_id.trim(),
+            },
+          }
+        : {}),
+      ...(row.handoff_from_session_title
+        ? {
+            handoffSource: {
+              ...(row.live_handoff_source_id ? { sessionId: row.live_handoff_source_id } : {}),
+              title: row.live_handoff_source_title || row.handoff_from_session_title,
             },
           }
         : {}),
@@ -1282,6 +1302,66 @@ export class CoworkStore {
 
   // ========== Agent state ==========
 
+  saveAgentProfile(input: AgentProfileInput & { id: string }): Agent {
+    return this.db.transaction(() => {
+      const existing = this.getAgent(input.id);
+      if (existing?.deletedAt) throw new Error('agentUnavailable');
+      if (input.isDefault) this.db.prepare('UPDATE agents SET is_default = 0').run();
+      if (!existing) {
+        this.db
+          .prepare(
+            `INSERT INTO agents
+          (id, name, description, icon, model, enabled, is_default, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            input.id,
+            input.name,
+            input.description,
+            input.icon,
+            input.model,
+            Number(input.enabled),
+            Number(input.isDefault),
+            Date.now(),
+            Date.now(),
+          );
+      } else {
+        this.updateAgent(input.id, input);
+        this.db
+          .prepare('UPDATE agents SET is_default = ? WHERE id = ?')
+          .run(Number(input.isDefault), input.id);
+      }
+      return this.getAgent(input.id)!;
+    })();
+  }
+
+  /** Remove from product availability while retaining native history ownership. */
+  deleteAgent(id: string): void {
+    this.db.transaction(() => {
+      const agent = this.getAgent(id);
+      if (!agent) throw new Error('agentUnavailable');
+      if (id === 'main' || agent.isDefault) throw new Error('agentMainRequired');
+      if (agent.deletedAt) return;
+      const running = this.db
+        .prepare("SELECT 1 FROM cowork_sessions WHERE agent_id = ? AND status = 'running' LIMIT 1")
+        .get(id);
+      if (running) throw new Error('agentBusy');
+      const now = Date.now();
+      this.db
+        .prepare('UPDATE agents SET enabled = 0, deleted_at = ?, updated_at = ? WHERE id = ?')
+        .run(now, now, id);
+    })();
+  }
+
+  removeUnstartedAgent(id: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM agents WHERE id = ? AND NOT EXISTS
+      (SELECT 1 FROM cowork_sessions WHERE agent_id = ?)`,
+      )
+      .run(id, id);
+  }
+
   listAgents(): Agent[] {
     interface AgentRow {
       id: string;
@@ -1340,6 +1420,7 @@ export class CoworkStore {
   updateAgent(id: string, updates: UpdateAgentRequest): Agent | null {
     const existing = this.getAgent(id);
     if (!existing) return null;
+    if (existing.deletedAt) throw new Error('agentUnavailable');
 
     const now = Date.now();
     const setClauses: string[] = ['updated_at = ?'];
@@ -1384,6 +1465,7 @@ export class CoworkStore {
   }
 
   private mapAgentRow(row: {
+    deleted_at?: number | null;
     id: string;
     name: string;
     description: string;
@@ -1405,6 +1487,7 @@ export class CoworkStore {
     }
     return {
       id: row.id,
+      ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
       name: row.name,
       description: row.description,
       systemPrompt: row.system_prompt,

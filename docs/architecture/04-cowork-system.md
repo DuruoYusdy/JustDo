@@ -273,3 +273,42 @@ SQLite `session.status` 是产品快照，不是完整状态机权威。Gateway 
 ## 21. 变更清单
 
 新增 session 字段时同步 DDL/compatibility、store mapping、IPC/shared、Renderer selector/form 和 config projection（若影响 Gateway）。新增 lifecycle event 时同步 adapter、domain admission、reducer、history counterpart 和 terminal cleanup。任何“仅修 UI running”的改动都要先证明 Gateway、run receipt 与 subagent 状态没有分歧。
+
+## Independent Agent conversations
+
+New user conversations persist main as their owner. Model-prepared peers retain
+their own Agent identities inside the task collaboration space. The sidebar shows
+the anchor conversation; specialist model changes do not change the global model
+default. Profile management is independent of Subagent execution details.
+See [independent agents](../features/multi-agent.md).
+
+## 平级协作的实施边界
+
+协作模型已与 Subagent 树分离：空间关联独立成员 session，投递元数据记录
+发送方向、原生源 run/toolCall、回复引用和接收状态。`CollaborationGraph`
+是这些元数据的纯 Renderer 投影，支持助手对的双向交流筛选及成员/原生消息定位回调，
+不会根据子任务父子关系生成连线。空协作空间只展示节点。
+
+模型通过 `task_assistants` 查询或准备任务成员，随后由 OpenClaw 原生 `sessions_send`
+投递。原生可信工具上下文经扩展 Gateway 方法绑定，Main 验证成员和轮次后记录投递意图；
+原生工具结果回填接收状态及 runId。用户输入仍使用原有 `chat.send`。
+发送授权固定目标原生 sessionId；等待宿主校验期间目标被重置时，OpenClaw 拒绝把该次投递转给替代会话。助手唤起的 main 轮次若早于原生回执到达，准备下一位成员时等待回执并重新校验来源和停止状态。
+头部协作入口打开右侧独立标签，节点详情不切换主会话；侧栏仅保留锚点行。
+不提供额外的手工编组或交接菜单。成员活动映射到该列表记录；详情按成员读取原生统计。
+整任务删除在移除成员数据前保留计划产物所在工作目录，并交给现有会话清理流程，避免遗留已批准计划文件。
+完整执行、权限、恢复、验证证据与限制见
+[Multi-Agent 协作设计](../features/multi-agent-collaboration.md)。
+
+### 模型驱动的协作成员关联
+
+用户直接对话固定属于 `main`：首页没有助手选择器，侧边栏没有按助手筛选或直接开始助手对话的入口。新建会话和首页模型选择不读取历史的助手选择或默认助手设置；Main 的用户会话创建 IPC 拒绝非 main 目标。其他助手由模型准备为任务内部会话，通过协作页查看，不作为独立聊天对象展示。
+
+主会话调用 task_assistants({agentId}) 时，CollaborationCoordinator 串行准备目标原生会话，再创建或扩展房间；运行中的主会话不会重新准备。原生准备失败或期间发生停止、删除、禁用时清理新会话，不发布可执行成员。每个任务最多 12 名成员，主会话身份及回合来源仍在产品边界校验。成员不能借此招募额外助手。该操作只建立会话关系，不决定模型分工或自动追加工作。
+
+task_assistants({}) 返回已有成员及其精确 sessionKey，并仅向主会话补充可用助手。原生 agents_list 的 Subagent 目标策略不被放宽。成员变化通过既有 cowork:sessions:changed 通知更新 UI；界面无须手动编排。
+
+自动关联按主会话分别串行，避免一个会话的慢准备阻塞其他会话。扩展请求携带与等待超时一致的 expiresAt；宿主在排队开始、原生准备结束和投递入队前复核，过期准备清理后不派发。
+
+### Manual assistant management
+
+Settings → Assistants hosts persistent assistant creation and editing, including role files. Workspaces are assigned by the existing agent service. This management surface offers neither direct peer chat nor a default conversation agent selector: user conversations remain owned by main. Profile and file changes are saved explicitly, and leaving with unsaved changes requires confirmation.

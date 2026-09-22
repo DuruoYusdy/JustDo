@@ -153,7 +153,9 @@ export function buildAgentEntry(
   fallbackPrimaryModel: string,
   displayNameMap?: Record<string, string>,
 ): Record<string, unknown> {
-  let primaryModel = parsePrimaryModelRef(agent.model.trim())?.primaryModel || fallbackPrimaryModel;
+  let primaryModel =
+    (agent.id === 'main' ? undefined : parsePrimaryModelRef(agent.model.trim())?.primaryModel) ||
+    fallbackPrimaryModel;
 
   // Normalize provider to lowercase (Gateway uses lowercase for all providers)
   const slashIndex = primaryModel.indexOf('/');
@@ -193,6 +195,6 @@ export function buildManagedAgentEntries({
   displayNameMap,
 }: BuildManagedAgentEntriesInput): Array<Record<string, unknown>> {
   return agents
-    .filter(agent => agent.id !== 'main' && agent.enabled)
+    .filter(agent => agent.id !== 'main')
     .map(agent => buildAgentEntry(agent, fallbackPrimaryModel, displayNameMap));
 }

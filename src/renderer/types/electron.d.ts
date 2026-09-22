@@ -1,3 +1,9 @@
+import type {
+  AgentFileName,
+  AgentFileSnapshot,
+  AgentProfileInput,
+  AgentResult,
+} from '../../shared/agents';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
@@ -142,6 +148,7 @@ interface CoworkSession {
   activeSkillIds: string[];
   agentId: string;
   modelRef?: string;
+  handoffSource?: import('../../shared/agents').AgentHandoffSource;
   forkSource?: {
     sessionId?: string;
     title: string;
@@ -620,7 +627,33 @@ interface IElectronAPI {
     onConfigSyncStart: (callback: () => void) => () => void;
     onConfigSyncDone: (callback: (data: { tools: number; error?: string }) => void) => () => void;
   };
+  collaboration: {
+    read: (
+      sessionId: string,
+    ) => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationSnapshot>>;
+    readMessages: (
+      sessionId: string,
+      deliveryIds: string[],
+    ) => Promise<
+      AgentResult<import('@shared/cowork/collaboration').CollaborationMessageResult[]>
+    >;
+    list: () => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationRoom[]>>;
+    create: (
+      sessionId: string,
+      agentIds: string[],
+    ) => Promise<AgentResult<import('@shared/cowork/collaboration').CollaborationSnapshot>>;
+    stop: (sessionId: string) => Promise<AgentResult<void>>;
+  };
   agents: {
+    delete: (agentId: string) => Promise<AgentResult<void>>;
+    save: (input: AgentProfileInput) => Promise<AgentResult<Agent>>;
+    readFile: (agentId: string, name: AgentFileName) => Promise<AgentResult<AgentFileSnapshot>>;
+    writeFile: (
+      agentId: string,
+      name: AgentFileName,
+      content: string,
+      expected: AgentFileSnapshot,
+    ) => Promise<AgentResult<AgentFileSnapshot>>;
     list: () => Promise<Agent[]>;
   };
   api: {
@@ -794,7 +827,7 @@ interface IElectronAPI {
       session?: CoworkSession;
       error?: string;
     }>;
-    deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
+    deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string; deletedSessionIds?: string[] }>;
     setSessionPinned: (options: {
       sessionId: string;
       pinned: boolean;

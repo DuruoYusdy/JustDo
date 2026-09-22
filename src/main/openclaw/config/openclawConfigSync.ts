@@ -70,6 +70,7 @@ import {
   buildManagedAgentEntries,
 } from '../models/openclawAgentModels';
 import { getElectronNodeRuntimePath } from '../runtime/electronNodeRuntime';
+import { resolveManagedAgentWorkspace } from './agentWorkspace';
 import { syncBuiltinCredentialFile } from './builtinCredentialFile';
 import {
   MANAGED_PROVIDER_SECRET_SOURCE,
@@ -1332,6 +1333,16 @@ export const OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS =
   DEFAULT_AGENT_RUNTIME_SETTINGS.subagents.runTimeoutSeconds;
 export const OPENCLAW_ACP_BACKEND = OpenClawExtensionId.ACPX;
 export const OPENCLAW_MCP_TOOL_OWNER = 'bundle-mcp';
+export const OPENCLAW_COLLABORATION_TOOLS = ['task_assistants', 'assistants_create'] as const;
+
+export const buildManagedOpenClawSandboxToolConfig = (mode: CoworkExecutionMode) => ({
+  tools: {
+    alsoAllow: [
+      ...OPENCLAW_COLLABORATION_TOOLS,
+      ...(mapExecutionModeToSandboxMode(mode) === 'all' ? [] : [OPENCLAW_MCP_TOOL_OWNER]),
+    ],
+  },
+});
 export const OPENCLAW_MAX_SKILLS_IN_PROMPT = 200;
 export const OPENCLAW_MAX_SKILLS_PROMPT_CHARS = 50_000;
 // Keep the product's historical 365-day stale-session policy. In current
@@ -2014,7 +2025,7 @@ const isBundledPluginAvailable = (pluginId: string): boolean => {
 };
 
 const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
-  pluginId === OpenClawExtensionId.WORKBOARD;
+  pluginId === OpenClawExtensionId.WORKBOARD || pluginId === OpenClawExtensionId.AGENT_TEAM;
 
 export const listManagedOpenClawPluginIds = (): string[] => [
   ...new Set([
@@ -2318,8 +2329,6 @@ export class OpenClawConfigSync {
       }
     }
 
-    const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'local');
-
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
@@ -2355,9 +2364,12 @@ export class OpenClawConfigSync {
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
     };
-    const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
-      ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
-      : {};
+    const defaultPluginEntries = {
+      ...(isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
+        ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } } : {}),
+      ...(isBundledPluginAvailable(OpenClawExtensionId.AGENT_TEAM)
+        ? { [OpenClawExtensionId.AGENT_TEAM]: { enabled: false } } : {}),
+    };
     const mcpServers = buildOpenClawMcpServers(
       mcpServerRecords,
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
@@ -2470,17 +2482,12 @@ export class OpenClawConfigSync {
           host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
           mode: OPENCLAW_FALLBACK_EXEC_MODE,
         },
-        // Keep the legacy MCP owner allowance only for local execution. In
-        // sandbox mode, host-side MCP tools must not bypass the sandbox boundary.
-        ...(sandboxMode === 'all'
-          ? {}
-          : {
-              sandbox: {
-                tools: {
-                  alsoAllow: [OPENCLAW_MCP_TOOL_OWNER],
-                },
-              },
-            }),
+        // Collaboration tools enforce managed-session identity and host-side
+        // admission before execution, so they remain available in a sandboxed
+        // conversation. Host-side MCP tools stay local-execution-only.
+        sandbox: buildManagedOpenClawSandboxToolConfig(
+          coworkConfig.executionMode || 'local',
+        ),
         loopDetection: {
           enabled: true,
         },
@@ -2622,9 +2629,8 @@ export class OpenClawConfigSync {
    *
    * With an explicit v2026.9.2 roster every entry without `workspace`, including
    * `main`, resolves under `<defaults.workspace>/<normalizedAgentId>`. Pin the
-   * main entry to the user's configured directory. Native non-main agents keep
-   * the nested workspace behavior, while external ACP runtime owners share the
-   * main workspace because they do not own OpenClaw bootstrap state.
+   * main and external ACP owners use the project workspace; native independent
+   * agents use stable runtime-owned role workspaces.
    *
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
@@ -2684,7 +2690,14 @@ export class OpenClawConfigSync {
         const normalizedEntry = {
           ...entry,
           id: agentId,
-          ...(agentId === 'main' ? { workspace: mainWorkspaceDir } : {}),
+          workspace:
+            agentId === 'main' || agentId === ScheduledTaskAgentId || 'runtime' in entry
+              ? mainWorkspaceDir
+              : resolveManagedAgentWorkspace(
+                  this.engineManager.getStateDir(),
+                  mainWorkspaceDir,
+                  agentId,
+                ),
         };
         const constrainedEntry = constrainAgentEntryToAvailableModels(
           normalizedEntry,
@@ -2741,7 +2754,6 @@ export class OpenClawConfigSync {
    */
   private writeMinimalConfig(configPath: string, reason: string): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
-    const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'local');
     const configuredWorkspaceDir = (coworkConfig.workingDirectory || '').trim();
     const resolvedWorkspaceDir = configuredWorkspaceDir
       ? path.resolve(configuredWorkspaceDir)
@@ -2783,9 +2795,12 @@ export class OpenClawConfigSync {
       ),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
-    const defaultPluginEntries = isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
-      ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } }
-      : {};
+    const defaultPluginEntries = {
+      ...(isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
+        ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } } : {}),
+      ...(isBundledPluginAvailable(OpenClawExtensionId.AGENT_TEAM)
+        ? { [OpenClawExtensionId.AGENT_TEAM]: { enabled: false } } : {}),
+    };
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );
@@ -2818,24 +2833,21 @@ export class OpenClawConfigSync {
           workspace: resolvedWorkspaceDir,
           sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
         },
-        entries: {
-          main: {
-            reasoningDefault: 'stream',
-            heartbeat: buildManagedOpenClawHeartbeatConfig(),
-            workspace: resolvedWorkspaceDir,
-          },
-          [ScheduledTaskAgentId]: {
-            workspace: resolvedWorkspaceDir,
-            tools: {
-              fs: { workspaceOnly: sandboxMode === 'all' },
-              exec: {
-                host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
-                mode: PermissionMode.Full,
-              },
-            },
-          },
-          ...buildManagedExternalAgentEntries(resolvedWorkspaceDir, externalAgentSettings),
-        },
+        entries: Object.fromEntries(
+          Object.entries(
+            this.buildAgentsEntries(
+              '',
+              new Set(),
+              resolvedWorkspaceDir,
+              externalAgentSettings,
+              coworkConfig.executionMode || 'local',
+            ).entries,
+          ).map(([id, entry]) => {
+            const withoutModel = { ...entry };
+            delete withoutModel.model;
+            return [id, withoutModel];
+          }),
+        ),
       },
       acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
       session: buildManagedOpenClawSessionConfig(),
@@ -2856,6 +2868,9 @@ export class OpenClawConfigSync {
           host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
           mode: OPENCLAW_FALLBACK_EXEC_MODE,
         },
+        sandbox: buildManagedOpenClawSandboxToolConfig(
+          coworkConfig.executionMode || 'local',
+        ),
       },
       plugins: mergeOpenClawPluginConfig(
         applyDefaultOpenClawPluginEntries({}, defaultPluginEntries),
@@ -3013,9 +3028,14 @@ export class OpenClawConfigSync {
                 ...existingAgents,
                 ownership: 'explicit',
                 defaults: mergedDefaults,
-                entries: mergeAgentEntriesWithManagedMainSettings(
-                  minimalEntries,
-                  existingEntries,
+                entries: Object.fromEntries(
+                  Object.entries({ ...existingEntries, ...minimalEntries }).map(([id, entry]) => [
+                    id,
+                    {
+                      ...(isRecord(existingEntries[id]) ? existingEntries[id] : {}),
+                      ...(isRecord(entry) ? entry : {}),
+                    },
+                  ]),
                 ),
               },
               acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
@@ -3038,6 +3058,9 @@ export class OpenClawConfigSync {
                   host: resolveOpenClawExecHost(coworkConfig.executionMode || 'local'),
                   mode: OPENCLAW_FALLBACK_EXEC_MODE,
                 },
+                sandbox: buildManagedOpenClawSandboxToolConfig(
+                  coworkConfig.executionMode || 'local',
+                ),
               },
               plugins: mergeOpenClawPluginConfig(
                 applyDefaultOpenClawPluginEntries(existingPlugins, defaultPluginEntries),

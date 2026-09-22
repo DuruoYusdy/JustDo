@@ -12,6 +12,7 @@ import {
   extractThinkingCached,
 } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
+  isTrustedPeerInput,
   normalizeMessage,
   stripMessageDisplayMetadataText,
   stripUnreliableGoalZeroUsageText,
@@ -47,6 +48,8 @@ export type BuildChatItemsProps = {
   searchOpen?: boolean;
   searchQuery?: string;
   historyRenderLimit?: number;
+  /** Project trusted peer deliveries opposite the selected agent in member-history views. */
+  peerPerspective?: boolean;
 };
 
 function appendCanvasBlockToAssistantMessage(
@@ -305,7 +308,10 @@ function isToolMessageRole(message: unknown): boolean {
   return hasToolBlock;
 }
 
-function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
+function groupMessages(
+  items: ChatItem[],
+  peerPerspective = false,
+): Array<ChatItem | MessageGroup> {
   const result: Array<ChatItem | MessageGroup> = [];
   let currentGroup: MessageGroup | null = null;
 
@@ -319,12 +325,16 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
       continue;
     }
 
-    const normalized = normalizeMessage(item.message);
+    const normalized = normalizeMessage(item.message, { peerPerspective });
     const role = normalizeRoleForGrouping(normalized.role);
     const modelName = role.toLowerCase() === 'assistant' ? (normalized.modelName ?? null) : null;
     const senderLabel =
       role.toLowerCase() === 'user' || role.toLowerCase() === 'assistant'
         ? (modelName ?? normalized.senderLabel ?? null)
+        : null;
+    const senderId =
+      role.toLowerCase() === 'user' || role.toLowerCase() === 'assistant'
+        ? (normalized.senderId ?? null)
         : null;
     const timestamp = normalized.timestamp || Date.now();
     const shouldSplitBySender = role.toLowerCase() === 'user' || role.toLowerCase() === 'assistant';
@@ -358,6 +368,7 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
       !currentGroup ||
       currentGroup.role !== role ||
       (shouldSplitBySender && currentGroup.senderLabel !== senderLabel) ||
+      (shouldSplitBySender && currentGroup.senderId !== senderId) ||
       shouldSplitByAssistantBlock ||
       shouldSplitByToolBlock
     ) {
@@ -369,6 +380,7 @@ function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
         key: `group:${role}:${item.key}`,
         role,
         senderLabel,
+        senderId,
         modelName,
         messages: [{ message: item.message, key: item.key, duplicateCount: item.duplicateCount }],
         timestamp,
@@ -410,11 +422,13 @@ function sourceMessageId(message: unknown): string | null {
   return id || null;
 }
 
-function collapseDuplicateSourceKey(message: unknown): string | null {
+function collapseDuplicateSourceKey(message: unknown, peerPerspective: boolean): string | null {
   if (isPendingSendMessage(message)) {
     return null;
   }
-  const normalized = safeNormalizeMessage(message);
+  const normalized = peerPerspective
+    ? normalizeMessage(message, { peerPerspective: true })
+    : safeNormalizeMessage(message);
   if (!normalized) {
     return null;
   }
@@ -426,8 +440,10 @@ function collapseDuplicateSourceKey(message: unknown): string | null {
   return id ? `${role}:${id}` : null;
 }
 
-function prefersNativeChatSurface(message: unknown): boolean {
-  const normalized = safeNormalizeMessage(message);
+function prefersNativeChatSurface(message: unknown, peerPerspective: boolean): boolean {
+  const normalized = peerPerspective
+    ? normalizeMessage(message, { peerPerspective: true })
+    : safeNormalizeMessage(message);
   if (!normalized) {
     return false;
   }
@@ -447,12 +463,14 @@ function stripSenderLabelPrefix(text: string, senderLabel: string): string {
   return text.replace(new RegExp(`^${escapeRegExp(label)}(?::|：|-|—)?[ \\t]+`), '');
 }
 
-function sourceDuplicateDisplayParts(message: unknown): {
+function sourceDuplicateDisplayParts(message: unknown, peerPerspective: boolean): {
   role: string;
   senderLabel: string;
   text: string;
 } | null {
-  const normalized = safeNormalizeMessage(message);
+  const normalized = peerPerspective
+    ? normalizeMessage(message, { peerPerspective: true })
+    : safeNormalizeMessage(message);
   if (!normalized) {
     return null;
   }
@@ -478,9 +496,13 @@ function sourceDuplicateDisplayParts(message: unknown): {
   };
 }
 
-function isSameSourceRelayNativeDuplicate(previousMessage: unknown, nextMessage: unknown): boolean {
-  const previous = sourceDuplicateDisplayParts(previousMessage);
-  const next = sourceDuplicateDisplayParts(nextMessage);
+function isSameSourceRelayNativeDuplicate(
+  previousMessage: unknown,
+  nextMessage: unknown,
+  peerPerspective: boolean,
+): boolean {
+  const previous = sourceDuplicateDisplayParts(previousMessage, peerPerspective);
+  const next = sourceDuplicateDisplayParts(nextMessage, peerPerspective);
   if (!previous || !next || previous.role !== next.role) {
     return false;
   }
@@ -495,11 +517,16 @@ function isSameSourceRelayNativeDuplicate(previousMessage: unknown, nextMessage:
   );
 }
 
-function collapseDuplicateDisplaySignature(message: unknown): string | null {
+function collapseDuplicateDisplaySignature(
+  message: unknown,
+  peerPerspective: boolean,
+): string | null {
   if (isPendingSendMessage(message)) {
     return null;
   }
-  const normalized = safeNormalizeMessage(message);
+  const normalized = peerPerspective
+    ? normalizeMessage(message, { peerPerspective: true })
+    : safeNormalizeMessage(message);
   if (!normalized) {
     return null;
   }
@@ -526,7 +553,10 @@ function collapseDuplicateDisplaySignature(message: unknown): string | null {
   return `${role}:${senderLabel}:${text}`;
 }
 
-function collapseSequentialDuplicateMessages(items: ChatItem[]): ChatItem[] {
+function collapseSequentialDuplicateMessages(
+  items: ChatItem[],
+  peerPerspective = false,
+): ChatItem[] {
   const collapsed: ChatItem[] = [];
   let previousSignature: string | null = null;
   let previousSourceKey: string | null = null;
@@ -538,16 +568,19 @@ function collapseSequentialDuplicateMessages(items: ChatItem[]): ChatItem[] {
       previousSourceKey = null;
       continue;
     }
-    const signature = collapseDuplicateDisplaySignature(item.message);
-    const sourceKey = collapseDuplicateSourceKey(item.message);
+    const signature = collapseDuplicateDisplaySignature(item.message, peerPerspective);
+    const sourceKey = collapseDuplicateSourceKey(item.message, peerPerspective);
     const previous = collapsed[collapsed.length - 1];
     if (
       sourceKey &&
       previousSourceKey === sourceKey &&
       previous?.kind === 'message' &&
-      isSameSourceRelayNativeDuplicate(previous.message, item.message)
+      isSameSourceRelayNativeDuplicate(previous.message, item.message, peerPerspective)
     ) {
-      if (!prefersNativeChatSurface(previous.message) && prefersNativeChatSurface(item.message)) {
+      if (
+        !prefersNativeChatSurface(previous.message, peerPerspective) &&
+        prefersNativeChatSurface(item.message, peerPerspective)
+      ) {
         collapsed[collapsed.length - 1] = item;
         previousSignature = signature;
       }
@@ -942,7 +975,9 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
   const historyRenderLimit = resolveHistoryRenderLimit(props.historyRenderLimit);
   const history = enrichToolResultsWithInputs(
     (Array.isArray(props.messages) ? props.messages : []).filter(
-      message => !isAssistantHeartbeatAckForDisplay(message),
+      message =>
+        !isAssistantHeartbeatAckForDisplay(message) &&
+        (props.peerPerspective === true || !isTrustedPeerInput(message)),
     ),
   );
   const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
@@ -977,7 +1012,9 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
   }
   for (let i = historyStart; i < history.length; i++) {
     const msg = history[i];
-    const normalized = safeNormalizeMessage(msg);
+    const normalized = props.peerPerspective
+      ? normalizeMessage(msg, { peerPerspective: true })
+      : safeNormalizeMessage(msg);
     if (!normalized) {
       continue;
     }
@@ -1181,8 +1218,11 @@ export function buildChatItems(props: BuildChatItemsProps): Array<ChatItem | Mes
     }
   }
 
-  const collapsed = collapseSequentialDuplicateMessages(sortChatItemsByVisibleTime(items));
-  const result = groupMessages(collapsed);
+  const collapsed = collapseSequentialDuplicateMessages(
+    sortChatItemsByVisibleTime(items),
+    props.peerPerspective,
+  );
+  const result = groupMessages(collapsed, props.peerPerspective);
 
   return result;
 }

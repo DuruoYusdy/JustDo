@@ -299,3 +299,15 @@ Gateway port/token 由 Main 管理；token 不应进入普通 Redux、日志或�
 ## 24. Engine 变更完成条件
 
 必须验证冷启动、并发 ensure、启动中 stop、异常 child exit、代理 restart、sleep/resume、优雅退出和打包 runtime path。Gateway method/schema 变化还要更新 shared contract、adapter、capability matrix 和 patch disposition；只让 TypeScript 编译通过不构成 runtime 兼容验证。
+
+## 平级协作投递
+
+平级协作只走 OpenClaw 原生 `sessions_send`。collaboration extension 在工具调用前把可信的
+session/run/toolCall 身份交给 Main；Main 校验任务房间、成员资格、轮次和目标 session，
+随后允许原生 `inputProvenance.kind: inter_session` 投递。接收确认必须匹配产品投递 id；
+accepted 表示原生接收，并非任务完成。旧 `collaboration_send` 仅保留历史读取兼容。
+调度、轮次上限和恢复规则见 [协作设计](../features/multi-agent-collaboration.md)。
+
+### 模型创建长期助手
+
+现有 collaboration 扩展的 assistants_create 是原生 agents.create 管理 API 的模型入口。模型自主决定创建与后续通信，Main 只校验可信主会话运行身份、序列化配置写入、映射产品档案。原生负责目录、配置及 AGENTS.md 文件写入。创建与运行时配置热加载并非同步完成，因此在同一受限请求内等待 agents.list 可见后再初始化，不重启发起调用的 Gateway。创建本身不登记参与者或派发任务；需要协作时，主模型先通过 task_assistants 准备任务成员，再使用原生 sessions_send 投递。

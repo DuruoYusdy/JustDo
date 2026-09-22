@@ -38,6 +38,7 @@ type BrowserExtensionChatControllerDependencies = {
   getStore: () => CoworkStore;
   getRouter: () => CoworkEngineRouter;
   getRuntime: () => OpenClawRuntimeAdapter | null;
+  getDefaultModelRef?: () => string | undefined;
 };
 
 const limit = (value: unknown, maxLength: number): string =>
@@ -326,7 +327,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     const store = this.deps.getStore();
     const session = sessionId ? store.getSession(sessionId) : undefined;
     if (sessionId && !session) throw new Error('Conversation not found.');
-    const defaultModelRef = store.getAgent('main')?.model.trim() || undefined;
+    const defaultModelRef = this.deps.getDefaultModelRef?.()?.trim() || undefined;
     let runtime = this.deps.getRuntime();
     if (!runtime) {
       try {
@@ -357,7 +358,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     };
     for (const agent of store.listAgents()) {
       const modelRef = agent.model.trim();
-      if (agent.enabled) addStoredModel(modelRef);
+      if (agent.enabled && agent.id !== 'main') addStoredModel(modelRef);
     }
     addStoredModel(defaultModelRef);
     addStoredModel(session?.modelRef);
@@ -531,7 +532,6 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     const workspaceRoot = resolveTaskWorkingDirectory(config.workingDirectory.trim());
     if (!workspaceRoot) throw new Error('Select a task folder in the desktop app first.');
     const agentId = 'main';
-    const initialModelRef = store.getAgent(agentId)?.model.trim() || undefined;
     return store.createSession(
       title,
       workspaceRoot,
@@ -539,7 +539,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       [],
       agentId,
       resolvePermissionMode(config.permissionMode),
-      initialModelRef,
+      undefined,
     );
   }
 }

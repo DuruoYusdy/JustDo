@@ -16,6 +16,14 @@ const sdk = vi.hoisted(() => ({
   ssrfPolicyFromHttpBaseUrlAllowedHostname: vi.fn(() => ({ allowedHostnames: ['example.test'] })),
 }));
 
+vi.mock('openclaw/plugin-sdk/codex-session-transcript-runtime', () => ({
+  withCodexSessionTranscriptMirrorWriteLock: vi.fn(),
+}));
+
+vi.mock('openclaw/plugin-sdk/routing', () => ({
+  isSubagentSessionKey: (key: string) => /^(?:agent:[^:]+:)?subagent:/i.test(key.trim()),
+}));
+
 vi.mock('openclaw/plugin-sdk/logging-core', () => ({
   redactSensitiveText: sdk.redactSensitiveText,
 }));
@@ -247,7 +255,9 @@ test('reads only requested history details from the specified native session', a
     { type: 'compaction', id: 'compact-1', summary: 'Earlier work', tokensBefore: 1000 },
   ]);
   const { registerGatewayMethod } = registerPlugin();
-  const handler = registerGatewayMethod.mock.calls[0][1] as HistoryHandler;
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
   const respond = vi.fn();
   const sessionKey = 'agent:main:justdo:session-1';
 
@@ -307,7 +317,9 @@ test('batches exact visible failure details with tool inputs and redacts only er
     },
   ]);
   const { registerGatewayMethod } = registerPlugin();
-  const handler = registerGatewayMethod.mock.calls[0][1] as HistoryHandler;
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
   const respond = vi.fn();
   await handler({
     params: {
@@ -342,7 +354,9 @@ test('bounds failure lookup batches and returned error text', async () => {
     },
   ]);
   const { registerGatewayMethod } = registerPlugin();
-  const handler = registerGatewayMethod.mock.calls[0][1] as HistoryHandler;
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
   const respond = vi.fn();
   await handler({
     params: { sessionKey: 'session-1', failureMessageIds: Array(251).fill('failure') },

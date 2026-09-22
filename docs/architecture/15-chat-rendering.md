@@ -342,3 +342,33 @@ Gateway 的 display history 会清除 assistant 错误的 errorMessage。历史 
 Renderer 的 pipeline/system-message-display.ts 统一过滤历史消息、实时 Content 及实时/历史终态错误中的内部日志提示：旧版 Log:/Logs: 行、独立命令行，以及新版完整句子 To view logs, run ... in a terminal.。流式输出仅暂扣末尾匹配的提示前缀，完成后保留不完整或无关文本；实际错误原因和恢复建议不变。规则不依赖模型元数据，因为 Gateway 投影可能省略它；用户及工具正文不经过此过滤。原始 Gateway transcript 和诊断日志不改写。
 
 气泡页脚、活动轮次页脚及会话详情使用共享的 isGatewayInjectedModelRef 判断内部模型标识，覆盖裸名、provider 前缀及大小写变化；气泡显示现有本地化系统消息标签，模型统计隐藏该内部标识。
+
+## 协作空间呈现
+
+空间侧栏以 anchor session 显示一行，主会话和输入框不随节点选择改变。
+头部“协作 · 人数”与会话菜单打开右侧现有标签栏的“协作”页。
+主会话的子任务列表只查询 main 当前会话派生的 Subagent，不再混入助手成员。Graph 是平级助手的导航入口；助手详情标题栏复用子任务面板，只查询该助手当前任务会话的 Subagent，无任务时隐藏按钮。打开子任务详情时保留实际父会话 ID，并复用现有消息标签；main 列表刷新不会关闭助手的子任务详情。
+面板读取路由元数据并以 `CollaborationGraph` 展示有向消息关系。房间列表由 Renderer
+单例外部 store 订阅 `sessions-changed`，侧栏、会话列表和详情共享一次原生查询与监听；
+面板快照随该 revision 读取，不使用固定时间轮询。
+点击边筛选两个助手之间的双向交流，点击节点/消息在同一标签内打开 `CollaborationMemberHistory`，
+独立 ChatController 读取原生历史和实时事件，切换/关闭时取消订阅并断开连接。
+正文不进入 Main 或 Redux 缓存；当前不提供单条原生 entry 滚动定位。
+成员详情在时间线分组之前将可信协作来信投影为 user 角色（保留原始 provenance，不修改原生历史），使右侧来信正确重置左侧连续消息的头像位置。连续本助手消息仅首条显示头像。
+成员详情沿用 Graph 的房间成员配色，左侧正文、思考、工具过程和流式输出共用本助手的名称首字头像；右侧来信使用同一配色映射中的发送方头像。主会话继续使用默认头像。
+
+Normalizer 仅在成员详情的显式 peerPerspective 投影中，将带可信
+sessions_send（以及旧历史 collaboration_send）provenance 的输入放在右侧并标注来源；
+普通主会话在 timeline 投影前隐藏这些内部输入。内部前缀只有在原生投递 id 和来源
+完全一致时才会隐藏，原始历史和用户文字保持不变。
+
+协作成员详情使用普通原生会话的 `ChatController` 与共享 `ChatMessageDisplay`，不启用 Subagent 任务边界发现。详情独立订阅历史和实时流，Gateway 重启后刷新连接；搜索成员记录仍保留主会话，并在协作页选择该成员。协作消息来源由原生 provenance 的 sourceSessionKey 解析，包含发送 Agent 身份，避免不同成员的相同正文被合并。
+
+协作连线选择筛选两个助手之间的双向投递，并按发生时间展示完整对话；清除筛选恢复按最近交流倒序排列的全量事件。搜索匹配收发助手名称和已解析的原生消息正文；超过 40 条后使用可变高度虚拟列表。事件显示日期时间、收发助手、发送/回复及投递状态，不推测内容摘要。7 至 12 名成员时，锚点位于中心，其余成员沿扩展椭圆分布并使用更紧凑的节点。图使用整个协作画布，支持滚轮缩放、拖拽平移及双击空白复位。点击投递记录时，成员历史组件只将匹配 deliveryId / idempotencyKey、sessions_send（兼容旧 collaboration_send）原生 provenance 与源 sessionKey 的消息交给共享渲染器；不根据正文猜测身份。当前历史范围缺失的消息显示说明，不用完整目标会话冒充对应消息。节点仍打开完整成员历史。
+
+房间列表首次成功读取仅建立观察基线，之后首次观察到当前任务的新房间自动展开协作页。后台房间及切换会话期间返回的响应不抢焦点；已观察过的房间在同次视图生命周期内不再次自动展开，尊重用户手动关闭。成员执行结束显示空闲，不把执行结束视作业务目标完成。
+首次请求失败后，后续成功快照仍可建立基线，恢复自动展开。交流列表将标题和搜索栏放在滚动区域外，虚拟行按投递身份与显示模式缓存高度。正文查询逐批加载，一批失败不会丢弃其他批次的结果；修改搜索文字不重复启动正在进行的查询，切换房间清空该视图状态。
+
+协作成员的 `sessionId` 是应用会话 ID（也是托管 session key 的末段），不等于 OpenClaw 的原生 transcript ID。Gateway 扩展必须通过 `getSessionEntry(sessionKey, latest)` 取得原生 `sessionId` 后查询 receipt 索引；没有原生会话时返回正文不可用，不得以应用 ID 创建或猜测历史归属。正文仍由 `chat.message.get` 应用可见性规则，并校验 receipt 与发送方 provenance。
+
+查看协作关系或单条投递详情时，Renderer 把房间锚点和 delivery id 交给 Main；Main 只接受该房间拥有的投递，再由 collaboration 扩展使用 OpenClaw transcript 的 idempotency 索引把 receipt 解析为原生 entry id，并调用 `chat.message.get` 校验该 entry 仍位于当前可见分支。返回前再次严格匹配 idempotencyKey、原生 provenance 与源 sessionKey。每个请求最多查询 16 条投递，跨轮次关系和搜索按批次加载，不再读取或逐页扫描完整历史。正文不进入 JustDo 数据库或 Redux；同一面板生命周期内只按 delivery id 保留内存缓存，房间变化即清空。查询失败不会冒充空消息。

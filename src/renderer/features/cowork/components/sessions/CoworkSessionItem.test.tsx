@@ -1,42 +1,47 @@
 // @vitest-environment jsdom
-
 import { DndContext } from '@dnd-kit/core';
+import { configureStore } from '@reduxjs/toolkit';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
 import CoworkSessionItem from './CoworkSessionItem';
 
-const renderSessionItem = (options?: { isRuntimeRunning?: boolean }) => {
+const renderSessionItem = (options?: { isRuntimeRunning?: boolean; collaboration?: boolean }) => {
   const onExport = vi.fn();
   const onCopy = vi.fn();
+  const store = configureStore({ reducer: { agent: () => ({ agents: [] }) } });
   render(
-    <DndContext>
-      <CoworkSessionItem
-        session={{
-          id: 'session-1',
-          title: 'Planning',
-          status: 'idle',
-          pinned: false,
-          createdAt: 1,
-          updatedAt: 2,
-        }}
-        hasUnread={false}
-        isActive
-        isRuntimeRunning={options?.isRuntimeRunning}
-        isBatchMode={false}
-        isSelected={false}
-        onSelect={vi.fn()}
-        onDelete={vi.fn()}
-        onRename={vi.fn()}
-        onExport={onExport}
-        onCopy={onCopy}
-        onTogglePinned={vi.fn()}
-        onToggleSelection={vi.fn()}
-        onEnterBatchMode={vi.fn()}
-      />
-    </DndContext>,
+    <Provider store={store}>
+      <DndContext>
+        <CoworkSessionItem
+          session={{
+            id: 'session-1',
+            title: 'Planning',
+            status: 'idle',
+            pinned: false,
+            createdAt: 1,
+            updatedAt: 2,
+            ...(options?.collaboration ? { collaboration: { memberCount: 3, deleting: false } } : {}),
+          }}
+          hasUnread={false}
+          isActive
+          isRuntimeRunning={options?.isRuntimeRunning}
+          isBatchMode={false}
+          isSelected={false}
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+          onRename={vi.fn()}
+          onExport={onExport}
+          onCopy={onCopy}
+          onTogglePinned={vi.fn()}
+          onToggleSelection={vi.fn()}
+          onEnterBatchMode={vi.fn()}
+        />
+      </DndContext>
+    </Provider>,
   );
   fireEvent.contextMenu(screen.getByText('Planning'));
   return { onExport, onCopy };
@@ -45,11 +50,34 @@ const renderSessionItem = (options?: { isRuntimeRunning?: boolean }) => {
 afterEach(cleanup);
 
 describe('CoworkSessionItem context menu session actions', () => {
+  it('copies the Gateway ID for the main session represented by the list item', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    const getGatewaySessionId = vi.fn().mockResolvedValue({
+      success: true,
+      sessionId: 'gateway-main-session',
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: { cowork: { getGatewaySessionId } },
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    renderSessionItem({ collaboration: true });
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy main session ID' }));
+
+    await waitFor(() => expect(getGatewaySessionId).toHaveBeenCalledWith('session-1'));
+    expect(writeText).toHaveBeenCalledWith('gateway-main-session');
+  });
+
   it('offers export and copy for the selected session', () => {
     i18nService.setLanguage('en', { persist: false });
     const { onExport, onCopy } = renderSessionItem();
 
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Export session' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export main conversation' }));
     expect(onExport).toHaveBeenCalledTimes(1);
     expect(onCopy).not.toHaveBeenCalled();
 
@@ -62,7 +90,7 @@ describe('CoworkSessionItem context menu session actions', () => {
     i18nService.setLanguage('en', { persist: false });
     renderSessionItem({ isRuntimeRunning: true });
 
-    const exportItem = screen.getByRole('menuitem', { name: 'Export session' });
+    const exportItem = screen.getByRole('menuitem', { name: 'Export main conversation' });
     const copyItem = screen.getByRole('menuitem', { name: 'Copy current session' });
     expect(exportItem.hasAttribute('disabled')).toBe(true);
     expect(exportItem.getAttribute('title')).toBe(
@@ -89,4 +117,11 @@ describe('CoworkSessionItem context menu session actions', () => {
     fireEvent.keyDown(menuItems[0], { key: 'ArrowDown' });
     expect(document.activeElement).toBe(menuItems[1]);
   });
+});
+
+it('keeps task menus focused and does not offer an incomplete collaboration copy', () => {
+  i18nService.setLanguage('en', { persist: false });
+  renderSessionItem({ collaboration: true });
+  expect(screen.queryByRole('menuitem', { name: 'Copy current session' })).toBeNull();
+  expect(screen.getByRole('menuitem', { name: 'Export main conversation' })).toBeTruthy();
 });

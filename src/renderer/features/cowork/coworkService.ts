@@ -795,6 +795,7 @@ export class CoworkService {
     if (!cowork) return false;
 
     const result = await cowork.deleteSessions(sessionIds);
+    if (result.deletedSessionIds?.length) store.dispatch(deleteSessionsAction(result.deletedSessionIds));
     if (result.success) {
       store.dispatch(deleteSessionsAction(sessionIds));
       return true;

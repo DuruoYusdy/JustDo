@@ -41,7 +41,7 @@ describe('default model IPC', () => {
     });
   });
 
-  test('persists the renderer canonical model reference for the selected agent', async () => {
+  test('persists main selection in app config and clears its legacy profile override', async () => {
     const result = await handlers.get('config:setDefaultModel')?.(
       {},
       {
@@ -53,7 +53,7 @@ describe('default model IPC', () => {
     );
 
     expect(result).toEqual({ success: true });
-    expect(updateAgent).toHaveBeenCalledWith('main', { model: 'acme/custom-model' });
+    expect(updateAgent).toHaveBeenCalledWith('main', { model: '' });
     expect(appConfig).toMatchObject({
       model: {
         defaultModel: 'custom-model',
@@ -62,7 +62,29 @@ describe('default model IPC', () => {
     });
   });
 
-  test('keeps the provider-key fallback for callers without a canonical reference', async () => {
+  test('restores app selection and legacy metadata if Gateway rejects the change', async () => {
+    appConfig = {
+      model: { defaultModel: 'old-model', defaultModelProvider: 'custom_0' },
+      theme: 'dark',
+    };
+    syncOpenClawConfig.mockResolvedValueOnce({ success: false, error: 'sync rejected' });
+    const result = await handlers.get('config:setDefaultModel')?.(
+      {},
+      { modelId: 'new-model', providerKey: 'openai', agentId: 'main' },
+    );
+    expect(result).toEqual({ success: false, error: 'sync rejected' });
+    expect(appConfig).toEqual({
+      model: { defaultModel: 'old-model', defaultModelProvider: 'custom_0' },
+      theme: 'dark',
+    });
+    expect(updateAgent).toHaveBeenNthCalledWith(1, 'main', { model: '' });
+    expect(updateAgent).toHaveBeenNthCalledWith(2, 'main', { model: 'custom_0/old-model' });
+    expect(syncOpenClawConfig).toHaveBeenLastCalledWith({
+      reason: 'default-model-change-rollback',
+    });
+  });
+
+  test('clears main profile overrides for callers without a canonical reference', async () => {
     await handlers.get('config:setDefaultModel')?.(
       {},
       {
@@ -72,6 +94,22 @@ describe('default model IPC', () => {
       },
     );
 
-    expect(updateAgent).toHaveBeenCalledWith('main', { model: 'custom_0/custom-model' });
+    expect(updateAgent).toHaveBeenCalledWith('main', { model: '' });
   });
+});
+
+test('changing a specialist model does not replace the application default', async () => {
+  const set = vi.fn();
+  const updateAgent = vi.fn();
+  registerDefaultModelHandlers({
+    getStore: () => ({ get: () => ({ model: { defaultModel: 'original' } }), set }) as never,
+    getCoworkStore: () => ({ getAgent: () => ({ id: 'review', model: '' }), updateAgent }) as never,
+    syncOpenClawConfig: async () => ({ success: true }),
+  });
+  await handlers.get('config:setDefaultModel')?.(
+    {},
+    { agentId: 'review', providerKey: 'openai', modelId: 'review-model' },
+  );
+  expect(set).not.toHaveBeenCalled();
+  expect(updateAgent).toHaveBeenCalledWith('review', { model: 'openai/review-model' });
 });

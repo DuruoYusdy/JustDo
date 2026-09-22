@@ -219,6 +219,28 @@ describe('browser annotation messages', () => {
 });
 
 describe('group footer helpers', () => {
+  test('shows peer source labels instead of attributing them to the user', () => {
+    expect(getGroupFooterLabel({ ...createGroup('user'), senderLabel: 'Review peer' })).toBe(
+      'Review peer',
+    );
+    expect(getGroupFooterLabel(createGroup('user'))).toBe(i18nService.t('coworkYouLabel'));
+  });
+  test('uses the configured peer name for the footer and a distinct initial avatar', () => {
+    const group = {
+      ...createGroup('user'),
+      senderId: 'review-agent',
+      senderLabel: '协作消息 · review-agent',
+    };
+    expect(getGroupFooterLabel(group, undefined, { 'review-agent': '审查助手' })).toBe(
+      '审查助手',
+    );
+    const rendered = stringifyTemplate(
+      renderMessageBlock(group, { peerNames: { 'review-agent': '审查助手' } }),
+    );
+    expect(rendered).toContain('chat-avatar peer');
+    expect(rendered).toContain('审查助手');
+    expect(rendered).toContain('审');
+  });
   test('uses assistant model name when present', () => {
     expect(
       getGroupFooterLabel({
@@ -226,6 +248,30 @@ describe('group footer helpers', () => {
         modelName: 'gpt-4.1',
       }),
     ).toBe('gpt-4.1');
+  });
+  test('uses the selected assistant identity on the local side of a peer perspective', () => {
+    const group = createGroup('assistant');
+    expect(getGroupFooterLabel(group, '实现助手', undefined, true)).toBe('实现助手');
+    const rendered = stringifyTemplate(
+      renderMessageBlock(group, {
+        assistantName: '实现助手',
+        peerPerspective: true,
+        showAvatar: true,
+      }),
+    );
+    expect(rendered).toContain('chat-avatar peer');
+    expect(rendered).toContain('实现助手');
+    expect(rendered).toContain('实');
+    expect(rendered).not.toContain('chat-group--continuation');
+    const continuation = stringifyTemplate(
+      renderMessageBlock(group, {
+        assistantName: '实现助手',
+        peerPerspective: true,
+        showAvatar: false,
+      }),
+    );
+    expect(continuation).not.toContain('chat-avatar peer');
+    expect(continuation).toContain('chat-group--continuation');
   });
 
   test.each(['openclaw/gateway-injected', 'gateway-injected'])(

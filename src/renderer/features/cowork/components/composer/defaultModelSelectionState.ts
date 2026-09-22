@@ -12,7 +12,7 @@ export const syncDefaultModelSelectionState = (
 ): void => {
   const modelRef = toOpenClawModelRef(model);
   if (modelRef) {
-    dispatch(updateAgent({ id: agentId, updates: { model: modelRef } }));
+    dispatch(updateAgent({ id: agentId, updates: { model: agentId === 'main' ? '' : modelRef } }));
   }
-  dispatch(setSelectedModel(model));
+  if (agentId === 'main') dispatch(setSelectedModel(model));
 };

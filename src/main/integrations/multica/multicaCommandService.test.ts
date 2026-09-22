@@ -153,7 +153,7 @@ describe('MulticaCommandService', () => {
       [],
       'main',
       'full',
-      'provider/model',
+      undefined,
     );
     expect(runOpenClaw).toHaveBeenCalledWith(
       expect.arrayContaining(['--session-key', expect.stringMatching(/^agent:main:multica:/)]),
@@ -195,7 +195,7 @@ describe('MulticaCommandService', () => {
       [],
       'main',
       'full',
-      'provider/model',
+      undefined,
     );
   });
 

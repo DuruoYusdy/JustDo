@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
+import { MAIN_USER_AGENT_ID } from '@shared/agents';
 import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import {
   GoalExecutionPhase,
@@ -301,14 +302,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const browserAnnotations = useSelector((state: RootState) =>
       selectDraftBrowserAnnotations(state, draftKey),
     );
-    const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const agents = useSelector((state: RootState) => state.agent.agents);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const [openClawModelCatalog, setOpenClawModelCatalog] = useState<OpenClawModelChoice[]>([]);
     const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
     const modelCatalogRequestRef = useRef(0);
     const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
-    const effectiveAgentId = modelAgentId ?? currentAgentId;
+    const effectiveAgentId = modelAgentId ?? MAIN_USER_AGENT_ID;
     const loadOpenClawModelCatalog = useCallback(async () => {
       const requestId = ++modelCatalogRequestRef.current;
       if (
@@ -347,6 +347,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const currentAgent = agents.find(agent => agent.id === effectiveAgentId);
     const { selectedModel: agentSelectedModel, hasInvalidExplicitModel: hasUnresolvedAgentModel } =
       resolveAgentModelSelection({
+        agentId: effectiveAgentId ?? 'main',
         agentModel: currentAgent?.model ?? '',
         availableModels,
         fallbackModel: globalSelectedModel,

@@ -14,6 +14,7 @@ import type {
   OpenClawExtensionConfigurationField,
   OpenClawPluginCapabilityReview,
 } from '../../../shared/openclaw/extensions';
+import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
 import {
   managedDirectoryFailure,
   managedDirectoryFailureFromMessage,
@@ -788,6 +789,42 @@ export class OpenClawExtensionImportService {
     return this.deps.restartGatewayAfterMutation(reason);
   }
 
+  private async syncAgentTeamSkill(enabled: boolean, viaGateway: boolean): Promise<void> {
+    try {
+      if (viaGateway && this.deps.requestGateway) {
+        const result = await this.deps.requestGateway<{ ok: boolean }>('skills.update', {
+          skillKey: OpenClawExtensionId.AGENT_TEAM,
+          enabled,
+        });
+        if (!result.ok) throw new Error('Skill update rejected');
+        return;
+      }
+      const manager = this.deps.getOpenClawEngineManager();
+      const cli = await manager.buildCliEnvironment();
+      const result = await this.runCommand(process.execPath, [
+        cli.openclawEntry,
+        'config',
+        'set',
+        'skills.entries.agent-team.enabled',
+        String(enabled),
+        '--strict-json',
+      ], {
+        cwd: cli.runtimeRoot,
+        env: { ...cli.env, OPENCLAW_HOME: manager.getBaseDir(), ELECTRON_RUN_AS_NODE: '1' },
+      });
+      if (result.exitCode !== 0) throw new Error('Skill update rejected');
+      const config = readJsonRecord(manager.getConfigPath());
+      const skills = isRecord(config.skills) ? config.skills : {};
+      const entries = isRecord(skills.entries) ? skills.entries : {};
+      const entry = entries[OpenClawExtensionId.AGENT_TEAM];
+      if (!isRecord(entry) || entry.enabled !== enabled) throw new Error('Skill update not persisted');
+    } catch {
+      // The plugin write may already have committed. The same toggle is safe to
+      // retry and must repair the skill even if the plugin already has that state.
+      throw new Error(t('agentTeamSkillSyncFailed'));
+    }
+  }
+
   private async inspectCapabilityReview(params: {
     cli: Awaited<ReturnType<OpenClawEngineManager['buildCliEnvironment']>>;
     pluginDirectory: string;
@@ -1366,6 +1403,16 @@ export class OpenClawExtensionImportService {
           enabled,
           ...(reviewToken ? { acknowledgeCapabilities: { reviewToken } } : {}),
         });
+        let skillSyncError: string | undefined;
+        if (extensionId === OpenClawExtensionId.AGENT_TEAM) {
+          // A skills.* mutation invalidates persisted session skill snapshots even
+          // when native filesystem watching is disabled. The extension owns this skill.
+          try {
+            await this.syncAgentTeamSkill(enabled, true);
+          } catch {
+            skillSyncError = t('agentTeamSkillSyncFailed');
+          }
+        }
         const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
         if (result.restartRequired || policyDigestAfter !== policyDigestBefore) {
           const status = await this.restartGatewayAfterMutation('extension-status-change');
@@ -1378,7 +1425,9 @@ export class OpenClawExtensionImportService {
             };
           }
         }
-        return { success: true, warnings: result.warnings };
+        return skillSyncError
+          ? { success: false, error: skillSyncError }
+          : { success: true, warnings: result.warnings };
       } catch (error) {
         if (isGatewayUnavailableError(error)) {
           // Fall through to the cold CLI path for offline recovery only.
@@ -1421,6 +1470,13 @@ export class OpenClawExtensionImportService {
     const installed = this.listInstalled().find(extension => extension.id === extensionId);
     if (!installed) return { success: false, error: 'Extension is not installed.' };
     if (installed.enabled === enabled) {
+      if (extensionId === OpenClawExtensionId.AGENT_TEAM) {
+        try {
+          await this.syncAgentTeamSkill(enabled, false);
+        } catch {
+          return { success: false, error: t('agentTeamSkillSyncFailed') };
+        }
+      }
       const convergenceError = await convergeColdState(gatewayMayNeedRestore);
       return convergenceError ? { success: false, error: convergenceError } : { success: true };
     }
@@ -1466,6 +1522,7 @@ export class OpenClawExtensionImportService {
         };
       }
 
+      if (extensionId === OpenClawExtensionId.AGENT_TEAM) await this.syncAgentTeamSkill(enabled, false);
       const convergenceError = await convergeColdState(wasRuntimeActive);
       return convergenceError ? { success: false, error: convergenceError } : { success: true };
     } catch (error) {

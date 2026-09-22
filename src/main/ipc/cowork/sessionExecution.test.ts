@@ -46,7 +46,8 @@ describe('cowork session execution permissions', () => {
       updateSession: vi.fn(),
       addMessage: vi.fn(),
       getSession: vi.fn().mockReturnValue(session('ask')),
-      getAgent: vi.fn().mockReturnValue({ model: 'openai/gpt-5' }),
+      listAgents: () => [{ id: 'main', enabled: true, isDefault: true }],
+      getAgent: vi.fn().mockReturnValue({ enabled: true, model: 'openai/gpt-5' }),
     } as unknown as CoworkStore;
     const startSession = vi.fn(
       (_sessionId: string, _prompt: string, options?: { onAccepted?: () => void }) => {
@@ -73,7 +74,8 @@ describe('cowork session execution permissions', () => {
     );
     expect(result).toMatchObject({ success: true });
     expect(createSession.mock.calls[0]?.[5]).toBe('full');
-    expect(createSession.mock.calls[0]?.[6]).toBe('openai/gpt-5');
+    // Legacy main profile models must not override the composer/application selection.
+    expect(createSession.mock.calls[0]?.[6]).toBeUndefined();
     expect(startSession).toHaveBeenCalledWith(
       'session-1',
       '<<<EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>context<<<END_EXTERNAL_UNTRUSTED_CONTENT id="0123456789abcdef">>>\n\nhello',
@@ -102,7 +104,8 @@ describe('cowork session execution permissions', () => {
       updateSession: vi.fn(),
       addMessage: vi.fn(),
       getSession: vi.fn().mockReturnValue(session('ask')),
-      getAgent: vi.fn(),
+      listAgents: () => [{ id: 'main', enabled: true, isDefault: true }],
+      getAgent: vi.fn().mockReturnValue({ enabled: true, model: '' }),
     } as unknown as CoworkStore;
     registerCoworkSessionExecutionHandlers({
       ensureEngineRunning,
@@ -221,7 +224,8 @@ describe('cowork session execution permissions', () => {
       createSession: vi.fn().mockReturnValue(createdSession),
       updateSession,
       getSession: vi.fn().mockImplementation(() => createdSession),
-      getAgent: vi.fn(),
+      listAgents: () => [{ id: 'main', enabled: true, isDefault: true }],
+      getAgent: vi.fn().mockReturnValue({ enabled: true, model: '' }),
     } as unknown as CoworkStore;
     registerCoworkSessionExecutionHandlers({
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
@@ -242,4 +246,74 @@ describe('cowork session execution permissions', () => {
     );
     expect(createdSession.status).toBe('error');
   });
+});
+
+test.each([undefined, { enabled: false, model: '' }])(
+  'rejects an unavailable selected role before persisting a session',
+  async agent => {
+    const createSession = vi.fn();
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+      getCoworkStore: () =>
+        ({
+          getConfig: () => ({ workingDirectory: 'C:/project' }),
+          getAgent: () => agent,
+          createSession,
+        }) as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({ startSession: vi.fn() }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: async () => {},
+      getEngineNotReadyResponse: vi.fn(),
+    });
+    await expect(
+      handlers.get('cowork:session:start')?.({}, { prompt: 'hello', agentId: 'main' }),
+    ).resolves.toMatchObject({ success: false, error: 'agentUnavailable' });
+    expect(createSession).not.toHaveBeenCalled();
+  },
+);
+
+test('uses main even when a specialist was previously configured as the default', async () => {
+  const created = { ...session('ask'), agentId: 'main' };
+  const createSession = vi.fn().mockReturnValue(created);
+  const startSession = vi.fn().mockResolvedValue(undefined);
+  registerCoworkSessionExecutionHandlers({
+    ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+    getCoworkStore: () =>
+      ({
+        getConfig: () => ({ workingDirectory: 'C:/project' }),
+        listAgents: () => [{ id: 'research', enabled: true, isDefault: true }],
+        getAgent: () => ({ enabled: true, model: '' }),
+        createSession,
+        getSession: () => created,
+        updateSession: vi.fn(),
+      }) as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+    waitForConfigUpdates: async () => {},
+    getEngineNotReadyResponse: vi.fn(),
+  });
+  await expect(
+    handlers.get('cowork:session:start')?.({}, { prompt: 'hello' }),
+  ).resolves.toMatchObject({ success: true });
+  expect(createSession.mock.calls[0][4]).toBe('main');
+  expect(startSession).toHaveBeenCalledWith(
+    created.id,
+    'hello',
+    expect.objectContaining({ agentId: 'main', workspaceRoot: createSession.mock.calls[0][1] }),
+  );
+});
+
+test('rejects a direct conversation with a peer before preparing any runtime', async () => {
+  const ensureEngineRunning = vi.fn();
+  const getCoworkStore = vi.fn();
+  registerCoworkSessionExecutionHandlers({
+    ensureEngineRunning,
+    getCoworkStore,
+    getCoworkEngineRouter: vi.fn(),
+    waitForConfigUpdates: vi.fn(),
+    getEngineNotReadyResponse: vi.fn(),
+  });
+  await expect(
+    handlers.get('cowork:session:start')?.({}, { prompt: 'hello', agentId: 'research' }),
+  ).resolves.toMatchObject({ success: false, error: 'agentUnavailable' });
+  expect(ensureEngineRunning).not.toHaveBeenCalled();
+  expect(getCoworkStore).not.toHaveBeenCalled();
 });

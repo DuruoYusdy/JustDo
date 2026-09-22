@@ -54,6 +54,7 @@ import { isNsisInstalledApp } from './core/app/installedApp';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
 import { loadDeveloperConfig } from './core/development/developerConfigFile';
+import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
 import { createDevSessionLifecycle } from './core/development/devSessionLifecycle';
 import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
@@ -149,6 +150,7 @@ import {
   registerWindowsSandboxHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
+import { registerCollaborationHandlers } from './ipc/cowork/collaboration';
 import { registerMulticaIntegrationHandlers } from './ipc/multica';
 import {
   registerExtensionHandlers,
@@ -178,6 +180,7 @@ import {
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
 import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
+import { NativeAssistantCreation } from './openclaw/config/nativeAssistantCreation';
 import {
   buildProviderSelection,
   listManagedOpenClawPluginIds,
@@ -287,6 +290,7 @@ const migrateAgentModelRefs = (): number => {
   let changed = 0;
 
   for (const agent of agents) {
+    if (agent.deletedAt) continue;
     const normalizedModel = agent.model.trim();
     if (!normalizedModel) continue;
 
@@ -315,7 +319,17 @@ const migrateAgentModelRefs = (): number => {
 
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
-  const preferredUserDataPath = path.join(appDataPath, USER_DATA_DIRECTORY_NAME);
+  const developmentDirectory = resolveDevelopmentDataDirectory({
+    isPackaged: app.isPackaged,
+    nodeEnv: process.env.NODE_ENV,
+    directory: process.env.JUSTDO_DEV_USER_DATA_DIR,
+  });
+  const preferredUserDataPath =
+    developmentDirectory ?? path.join(appDataPath, USER_DATA_DIRECTORY_NAME);
+  if (developmentDirectory) {
+    fs.mkdirSync(developmentDirectory, { recursive: true });
+    process.env.JUSTDO_DEV_WORKSPACE_DIR = path.join(developmentDirectory, 'project');
+  }
   const currentUserDataPath = app.getPath('userData');
 
   if (currentUserDataPath !== preferredUserDataPath) {
@@ -1457,6 +1471,7 @@ if (multicaBridgeArgv) {
   });
 
   registerCoworkSessionHandlers({
+    getCollaboration: () => bindCollaboration.coordinator(),
     getCoworkStore,
     getCoworkEngineRouter,
     requestGateway: <T>(method: string, params?: unknown) =>
@@ -1477,8 +1492,31 @@ if (multicaBridgeArgv) {
     getRuntime: getOpenClawRuntimeAdapter,
   });
 
+  const nativeAssistantCreation = new NativeAssistantCreation({
+    getDatabase: () => getStore().getDatabase(),
+    getStore: getCoworkStore,
+    getStateDir: () => getOpenClawEngineManager().getStateDir(),
+    exclusive: operation => getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+    onChanged: notifyCoworkSessionsChanged,
+  });
+  const bindCollaboration = registerCollaborationHandlers({
+    createAssistant: (input, identity, assertActive) => nativeAssistantCreation.create(input, identity, assertActive),
+    onSessionsChanged: notifyCoworkSessionsChanged,
+    getDatabase: () => getStore().getDatabase(),
+    getStore: getCoworkStore,
+    getRouter: getCoworkEngineRouter,
+    getRuntime: getOpenClawRuntimeAdapter,
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
+  });
+
   registerAgentHandlers({
     getStore: getCoworkStore,
+    syncConfig: () => syncOpenClawConfig({ reason: 'agent-profile-change' }),
+    requestGateway: <T>(method: string, params?: unknown) =>
+      getCoworkEngineService().requestGateway<T>(method, params),
   });
 
   registerCoworkInteractionHandlers({
@@ -1776,6 +1814,7 @@ if (multicaBridgeArgv) {
         getStore: getCoworkStore,
         getRouter: getCoworkEngineRouter,
         getRuntime: getOpenClawRuntimeAdapter,
+        getDefaultModelRef: resolveDefaultAgentModelRef,
       }),
       browserExtensionChatToken,
       packageJson.version,
@@ -1862,6 +1901,7 @@ if (multicaBridgeArgv) {
 
     const coworkEngineRouter = getCoworkEngineRouter();
     bindEmbeddedBrowserGateway();
+    bindCollaboration();
     bindSessionPermissionModeRuntime();
     bindCoworkRuntimeForwarder(coworkEngineRouter, getCoworkStore);
     coworkEngineRouter.on('cronChanged', payload => {
@@ -1887,13 +1927,10 @@ if (multicaBridgeArgv) {
     });
     bindOpenClawStatusForwarder();
 
-    const defaultAgentModelRef = resolveDefaultAgentModelRef();
-    const backfilledAgentModels = getCoworkStore().backfillEmptyAgentModels(defaultAgentModelRef);
+    // Empty agent models intentionally inherit the application default.
     const qualifiedAgentModels = migrateAgentModelRefs();
-    if (backfilledAgentModels > 0 || qualifiedAgentModels > 0) {
-      console.log(
-        `[Main] migrated agent model bindings: backfilled=${backfilledAgentModels}, qualified=${qualifiedAgentModels}`,
-      );
+    if (qualifiedAgentModels > 0) {
+      console.log(`[Main] migrated agent model bindings: qualified=${qualifiedAgentModels}`);
     }
 
     let startupSync = await syncOpenClawConfig({

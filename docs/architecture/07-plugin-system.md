@@ -380,3 +380,70 @@ MCP env、Extension configuration、Skill credential 和 Marketplace provider �
 ## 19. Plugin Definition of Done
 
 新增能力必须证明 source ownership、manifest/schema validation、managed path、冲突/replace、enable 与 runtime apply、删除/rollback、secret redaction、IPC/preload/UI consumer 和打包资源。若 Marketplace 只是新增 provider adapter但没有 composition 注册，文档与 UI 必须继续显示“未配置”，不能写成已有目录内容。
+
+## Independent Agent role files
+
+The sidebar Agent manager edits AGENTS.md, SOUL.md and IDENTITY.md through native
+agents.files APIs. Role instructions are not copied into session projects or
+mirrored into profile system_prompt fields. Non-main managed roles have stable
+stateDir/agent-workspaces/<id> directories; main retains its existing workspace.
+See [independent agents](../features/multi-agent.md) for ownership and limitations.
+
+## 平级协作原生扩展
+
+内置 `collaboration` 扩展随本地运行时装配并默认启用，仅向受管 JustDo 原生会话提供
+`task_assistants` 和 `assistants_create`，Subagent key 不提供这两个工具。
+`before_tool_call` 的可信身份在 Gateway 方法中短期绑定，工具执行消费绑定后发送
+`plugin.collaboration.requested` 事件；Main 验证后通过 `collaboration.resolve` 返回回执。
+hook 与工具工厂可能属于不同注册实例，不能用实例内 Map 传递调用身份。
+计划模式在通用变更工具策略与原生 session 状态校验两处阻止协作发送。
+扩展不更改全局 agentToAgent / sessions.visibility 策略。
+
+
+模型先通过 task_assistants 查询/准备成员，再调用 OpenClaw 原生 sessions_send。发送前 hook 将精确任务目标交给宿主校验，并通过原生 scoped-access provider 临时授权该源/目标的 send 操作和目标 sessionId；不授权 history/list，也不改变全局 visibility。发送强制异步，原生 scoped-session 路径关闭自动 ping-pong，模型通过显式 sessions_send 回传。after_tool_call 记录实际原生 runId 和状态并撤销临时授权。Patch 025 只共享 Gateway bundle 与动态 SDK 的原生 scoped-access 注册表，避免同进程模块副本隔离；不另行实现消息执行器。
+
+### 长期助手创建工具
+
+collaboration 扩展声明并注册 assistants_create，复用 before_tool_call 的可信 session/run/toolCall 绑定及宿主请求通道。仅允许当前主会话用户运行创建，Plan 模式禁止写入。输入限于名称、职责、AGENTS.md 指令与可选模型；不开放任意 Gateway RPC、文件路径或权限参数。Main 的 NativeAssistantCreation 调用原生 agents.create/update/files.get/files.set，以读取校验后的真实状态返回 created/existing/incomplete。创建请求期限为 60 秒，普通协作请求仍为 8 秒。现有 sessions-changed 通知刷新助手列表，不新增界面或消息正文缓存。
+
+
+### Optional Agent Team extension
+
+`openclaw-extensions/agent-team` owns the persistent-peer tools
+`task_assistants` and `assistants_create`, and the before/after native
+`sessions_send` hooks that admit task-scoped sends and record receipts. Its
+bundled `skills/agent-team/SKILL.md` describes discovery, preparation, asynchronous
+replies and persistent profile creation. There is no per-turn roster or
+collaboration instruction injection. Models obtain current membership and
+available profile descriptions through the query tool when needed.
+
+Agent Team defaults to disabled and can be enabled or disabled in the existing
+Extensions manager through native `plugins.setEnabled`. It is not an
+application-managed mandatory plugin. Configuration synchronization applies a
+missing-entry default only, preserving explicit enabled/disabled choices.
+Native plugin lifecycle controls skill discovery, tool registration and scoped
+send grants together; existing extension mutations handle Gateway restart.
+
+The always-on Runtime Services extension owns the read-only
+`collaboration.messages` receipt lookup. Disabling Agent Team does not remove
+assistant profiles, task metadata or historical message visibility. Runtime Services
+also blocks native peer sends from managed sessions while Agent Team is disabled,
+so stale session keys cannot bypass the switch through broad session visibility. Message
+bodies continue to live exclusively in the native transcript store. The
+application bridge listens for `plugin.agent-team.requested`; existing
+`collaboration.*` RPC names and database identities are unchanged.
+
+
+Agent Team's switch also synchronizes its bundled `agent-team` skill through
+native `skills.update` (cold recovery uses native `config set`). This intentionally
+makes the extension one feature switch and invalidates existing session skill
+snapshots even with `skills.load.watch=false`. A partial skill write failure is
+reported and the same requested state can be retried; it never reports full
+success just because the plugin entry was already updated. Native per-agent and
+per-session skill allowlists remain authoritative.
+
+Native SubAgent session keys bypass the team send hooks and remain subject to
+OpenClaw's ownership/visibility checks; they do not consume peer message budget.
+Ambiguous label/physical-ID targets are not used to bypass the disabled peer
+boundary. Scoped peer access providers are acquired on service start and released
+on stop, including cached-registry stop/start cycles.

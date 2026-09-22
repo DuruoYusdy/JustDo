@@ -1,0 +1,14 @@
+.agent-manager {
+  container: assistant-manager / inline-size;
+}
+
+@container assistant-manager (min-width: 720px) {
+  .agent-manager-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .agent-manager-roster {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 65vh;
+  }
+}

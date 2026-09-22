@@ -66,6 +66,7 @@ Rules:
 
 const ALWAYS_MUTATING_TOOLS = new Set([
   'apply_patch',
+  'assistants_create',
   'conversations_send',
   'conversations_turn',
   'create_goal',
@@ -204,6 +205,8 @@ const isMutatingTool = (event: {
   params?: unknown;
 }): boolean => {
   const normalized = event.toolName.trim().toLowerCase();
+  if (normalized === 'task_assistants')
+    return Boolean(isRecord(event.params) && event.params.agentId);
   if (normalized === PRESENT_PLAN_TOOL.toLowerCase()) return false;
   if (event.toolKind === 'code_mode_exec') return true;
   if (normalized === 'exec' || normalized === 'bash' || normalized === 'shell') {

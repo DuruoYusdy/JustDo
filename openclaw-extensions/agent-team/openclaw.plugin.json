@@ -1,0 +1,18 @@
+{
+  "id": "agent-team",
+  "name": "Agent Team",
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["tool"]
+  },
+  "contracts": {
+    "tools": ["task_assistants", "assistants_create"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "description": "Optional persistent assistant collaboration. Discover teammates and coordinate work on demand.",
+  "skills": ["./skills"]
+}
