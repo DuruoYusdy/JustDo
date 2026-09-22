@@ -284,3 +284,22 @@ SQLite transaction 只能保护本数据库，不能回滚 Gateway、文件系�
 ## 23. Schema Definition of Done
 
 提供幂等 DDL、旧用户迁移、真实查询索引、事务边界、坏值 fallback、备份/失败策略和测试。更新表数量/字段/权威文档，并验证重复启动与强制中断后可恢复。任何会触发 destructive legacy detection 的规则调整都必须单独审查其误判与数据丢失风险。
+
+## 24. LiteLLM EndUser 活动记录
+
+CustomerRegistrationService 在 Customer 查询/创建/更新成功后调用 `/customer/activity`，
+首次成功上报 startup，随后每24小时 heartbeat（重新启动仍上报 startup）。每次活动上报保留 loginTime，
+并附带发送时的客户端当前时间 clientTime（UTC ISO格式），与数据库接收时间 last_seen_at 分开记录。账号切换后重新上报 startup；失败时保留事件ID，
+按1、5、15分钟间隔补试，三次仍失败则等待24小时；成功后恢复24小时周期。
+待发事件不跨进程持久化。重复事件仍更新当前活跃时间，但不重复计数启动。
+原 Customer metadata 继续提交，alias 保持产品名和版本。
+
+`deploy/litellm/shared/proxy_hooks/activity.py`（Docker 与 Native 共用）作为 ASGI 扩展，使用独立连接池直接更新远端
+`LiteLLM_EndUserTable.metadata`；唯一数据库变更是增加可空 JSONB 列。
+事务行锁保护读改写，保留其他顶层metadata。customer_activity记录最近90个有活动UTC日期、
+最近256事件ID、启动数和数据库接收时间。客户端loginTime是声明值，不是服务端认证登录事件。
+原生LiteLLM API/UI不展示该额外列。没有上报可能是离线，不能作为未启动的证明。
+
+活动接口使用由现有API凭据派生的令牌，仅允许写入；共享令牌不能证明用户身份。
+数据库故障返回503，不影响原有模型请求。所有连接实例须检查Prisma迁移策略，
+禁止未经审查的schema同步删除自定义列。部署备份、运行和回滚方式见扩展README。
