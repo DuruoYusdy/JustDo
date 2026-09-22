@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import fs from 'fs';
 
+import { ACTIVITY_REPORTING_CONFIG } from '../../../config/activityReporting';
 import {
   buildBuiltinModelRequestHeaders,
   type BuiltinModelCredential,
@@ -98,6 +99,7 @@ export class CustomerRegistrationService {
   }
 
   start(): void {
+    if (!ACTIVITY_REPORTING_CONFIG.enabled) return;
     if (this.running) return;
     this.running = true;
     this.retryAttempt = 0;
@@ -112,6 +114,10 @@ export class CustomerRegistrationService {
   }
 
   sync(): Promise<void> {
+    if (!ACTIVITY_REPORTING_CONFIG.enabled) {
+      this.stop();
+      return Promise.resolve();
+    }
     if (this.syncPromise) return this.syncPromise;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;

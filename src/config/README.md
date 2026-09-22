@@ -8,8 +8,16 @@
 | --- | --- |
 | [appUpdate.ts](./appUpdate.ts) | 应用更新地址、语音模型路径与版本历史限制 |
 | [builtinModels.ts](./builtinModels.ts) | 内置模型开关 `enabled`、LiteLLM API 地址 `baseUrl` |
+| [activityReporting.ts](./activityReporting.ts) | 活动信息上报开关 `enabled`，默认开启 |
 | [builtinModelAuth.ts](./builtinModelAuth.ts) | Jalor 换证地址、JWT 生命周期上限、开发认证模式与临时 API Key |
 | [outboundHeaders.ts](./outboundHeaders.ts) | 请求头注入开关、URL 白名单与请求头名称的分组预设 |
+
+## 活动上报
+
+在 `activityReporting.ts` 中将 `enabled` 改为 `false`，关闭 `/customer/activity` 的启动上报、
+每日心跳及失败重试；登录回调也不会启动上报。设为 `true` 恢复原有上报行为，仍须内置模型启用且 JWT 有效。
+此开关不关闭 JWT 换证、模型请求或服务端必要的身份/EndUser 处理，不删除已经保存的活动数据。
+修改后须重启 Electron 开发进程或重新打包，不是运行时设置。
 
 ## 模型认证
 

@@ -287,6 +287,10 @@ SQLite transaction 只能保护本数据库，不能回滚 Gateway、文件系�
 
 ## 24. LiteLLM EndUser 活动记录
 
+`src/config/activityReporting.ts` 的 `ACTIVITY_REPORTING_CONFIG.enabled` 控制客户端活动上报，默认开启。
+关闭后不创建上报服务，服务自身也拒绝启动及手动同步，不读取上报用户文件或发送活动请求、安排重试。
+该开关不影响 JWT 认证和模型请求，不清除服务端已有记录；修改后需重启开发进程或重新打包。
+
 CustomerRegistrationService 使用当前短期 JWT 调用 `/customer/activity`，服务端校验 JWT、Team 和正文用户一致性后
 在事务内创建或更新 EndUser；客户端不持有 Customer 管理权限。
 首次成功上报 startup，随后每24小时 heartbeat（重新启动仍上报 startup）。每次活动上报保留 loginTime，

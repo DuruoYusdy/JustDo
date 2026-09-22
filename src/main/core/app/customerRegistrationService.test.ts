@@ -7,6 +7,12 @@ import type { BuiltinModelCredential } from '../../cowork/builtinModelCredential
 import { buildCustomerApiBaseUrl, CustomerRegistrationService } from './customerRegistrationService';
 
 const directories: string[] = [];
+const reportingConfig = vi.hoisted(() => ({ enabled: true }));
+
+vi.mock('../../../config/activityReporting', () => ({
+  ACTIVITY_REPORTING_CONFIG: reportingConfig,
+}));
+
 const credential = (userAccount = 'alice', accessToken = 'short-lived-token'): BuiltinModelCredential => ({
   userAccount, accessToken, expiresAt: Number.MAX_SAFE_INTEGER,
 });
@@ -27,11 +33,32 @@ const setup = (getCredential = () => credential()) => {
 };
 
 afterEach(() => {
+  reportingConfig.enabled = true;
+  vi.restoreAllMocks();
   vi.useRealTimers();
   for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
 describe('JWT customer activity', () => {
+  test('disabled reporting does not read user info, access credentials, send requests or schedule timers', async () => {
+    vi.useFakeTimers();
+    reportingConfig.enabled = false;
+    const getCredential = vi.fn(() => credential());
+    const { service, request } = setup(getCredential);
+    const readFile = vi.spyOn(fs.promises, 'readFile');
+
+    service.start();
+    await service.sync();
+    await vi.advanceTimersByTimeAsync(48 * 3_600_000);
+    service.start(); // Login callbacks must not restart disabled reporting.
+    await service.sync();
+
+    expect(readFile).not.toHaveBeenCalled();
+    expect(getCredential).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   test('reports using current JWT without calling customer management APIs or sending login secrets', async () => {
     const { service, request } = setup();
     await service.sync();

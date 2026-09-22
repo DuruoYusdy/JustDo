@@ -15,6 +15,7 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
+import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
 import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import type { DeveloperConfig } from '../shared/app/developerConfig';
@@ -1935,7 +1936,7 @@ if (multicaBridgeArgv) {
     });
     getBuiltinModelAuthCoordinator().initialize(startupSync.success ? builtinModelCredential : null);
     builtinModelCredentialMonitor.start(builtinModelCredential);
-    if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
+    if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled && ACTIVITY_REPORTING_CONFIG.enabled) {
       customerRegistrationService = new CustomerRegistrationService({
         getCredential: getActiveBuiltinModelCredential,
         baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
