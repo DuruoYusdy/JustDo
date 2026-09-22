@@ -36,6 +36,7 @@ const builderConfig = JSON.parse(
   extraResources?: Array<{ from?: string; to?: string }>;
   nsis?: {
     allowElevation?: boolean;
+    deleteAppDataOnUninstall?: boolean;
     differentialPackage?: boolean;
     packElevateHelper?: boolean;
     perMachine?: boolean;
@@ -47,6 +48,8 @@ const unpackScriptPath = path.resolve(__dirname, '../../scripts/unpack-cfmind.cj
 const unpackScript = readFileSync(unpackScriptPath, 'utf8');
 const processHelperPath = path.resolve(__dirname, '../../scripts/nsis-process-helper.ps1');
 const processHelper = readFileSync(processHelperPath, 'utf8').replaceAll('\r\n', '\n');
+const userDataHelperPath = path.resolve(__dirname, '../../scripts/nsis-user-data-helper.ps1');
+const userDataHelper = readFileSync(userDataHelperPath, 'utf8').replaceAll('\r\n', '\n');
 const tempDirs: string[] = [];
 const { compressTarArchive } = require('../../scripts/pack-openclaw-tar.cjs') as {
   compressTarArchive: (sourceTar: string, outputArchive: string) => Promise<void>;
@@ -97,6 +100,55 @@ afterEach(() => {
 });
 
 describe('Windows uninstaller process handling', () => {
+  it.runIf(process.platform === 'win32')(
+    'recognizes a real executable sharing lock when process enumeration fails',
+    () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-lock-probe-'));
+      tempDirs.push(root);
+      writeFileSync(path.join(root, 'probe.exe'), 'test executable');
+      const command = `
+        function global:Get-Process { throw 'Simulated unavailable process inventory' }
+        $held = [IO.File]::Open((Join-Path $env:JUSTDO_INSTALL_ROOT 'probe.exe'), 'Open', 'Read', 'None')
+        try {
+          & $env:JUSTDO_TEST_HELPER -Action Find
+          Write-Output "locked-find=$LASTEXITCODE"
+          & $env:JUSTDO_TEST_HELPER -Action Wait -MaxAttempts 1
+          Write-Output "locked-wait=$LASTEXITCODE"
+        } finally { $held.Dispose() }
+        & $env:JUSTDO_TEST_HELPER -Action Find
+        Write-Output "unlocked-find=$LASTEXITCODE"
+        & $env:JUSTDO_TEST_HELPER -Action Wait -MaxAttempts 1
+        Write-Output "unlocked-wait=$LASTEXITCODE"
+        exit 0
+      `;
+      const result = spawnSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(command, 'utf16le').toString('base64'),
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            JUSTDO_INSTALL_ROOT: root,
+            JUSTDO_APP_PROCESS_NAME: 'probe',
+            JUSTDO_CALLER_PID: String(process.pid),
+            JUSTDO_TEST_HELPER: processHelperPath,
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('locked-find=0');
+      expect(result.stdout).toContain('locked-wait=1');
+      expect(result.stdout).toContain('unlocked-find=1');
+      expect(result.stdout).toContain('unlocked-wait=0');
+    },
+    30_000,
+  );
+
   it('excludes the uninstaller process from installed-process detection', () => {
     expect(nsisScript).toContain('Kernel32::GetCurrentProcessId()');
     expect(processHelper).toContain('$_.Id -ne $callerPid');
@@ -144,12 +196,8 @@ describe('Windows installer process handling', () => {
       nsisScript.indexOf('Function JustDoCheckAppRunning'),
       nsisScript.indexOf('FunctionEnd', nsisScript.indexOf('Function JustDoCheckAppRunning')),
     );
-    expect(processCheck).toContain(
-      'ReadRegStr $R8 HKCU "Software\\${APP_GUID}" InstallLocation',
-    );
-    expect(processCheck).toContain(
-      'phase=process-check-skipped reason=pristine-install',
-    );
+    expect(processCheck).toContain('ReadRegStr $R8 HKCU "Software\\${APP_GUID}" InstallLocation');
+    expect(processCheck).toContain('phase=process-check-skipped reason=pristine-install');
     expect(processCheck).toContain('ReadRegStr $R7 HKLM "Software\\${APP_GUID}" InstallLocation');
     expect(processCheck).toContain('${AndIfNot} ${FileExists} "$INSTDIR\\*.*"');
     expect(processCheck).toContain('${If} $JustDoPristineInstall != "1"');
@@ -161,9 +209,7 @@ describe('Windows installer process handling', () => {
   it('stops legacy managed Python processes without making cleanup a setup prerequisite', () => {
     expect(processHelper).toContain("'StopLegacyPython'");
     expect(processHelper).toContain("Join-Path $userDataRoot 'runtimes\\python-win'");
-    expect(processHelper).toMatch(
-      /\$executablePath\.StartsWith\(\r?\n\s+\$legacyPythonRoot,/,
-    );
+    expect(processHelper).toMatch(/\$executablePath\.StartsWith\(\r?\n\s+\$legacyPythonRoot,/);
     expect(processHelper).toContain('[IO.FileAttributes]::ReparsePoint');
     expect(processHelper).toContain('Test-PathChainContainsReparsePoint');
     expect(nsisScript).toContain('JUSTDO_USER_DATA_ROOT');
@@ -178,15 +224,28 @@ describe('Windows installer process handling', () => {
     expect(cleanupFunction?.[1]).not.toContain('Abort');
   });
 
-  it('does not continue silently when scoped process inspection fails', () => {
-    expect(nsisScript).toContain(
-      'Abort "Setup could not inspect processes in the installation directory."',
-    );
+  it('falls back to filesystem replacement when scoped process inspection fails', () => {
     expect(nsisScript).toContain('JustDoInstallInspectionFailed:');
-    expect(nsisScript).toContain('安装程序无法确认 ${PRODUCT_NAME} 是否已关闭');
-    expect(nsisScript).toContain('Setup could not verify whether ${PRODUCT_NAME} has closed.');
+    expect(nsisScript).toContain('phase=process-check-degraded');
+    expect(nsisScript).toContain('action=continue-to-filesystem-replacement');
+    expect(nsisScript).not.toContain(
+      'Setup could not inspect processes in the installation directory.',
+    );
+    expect(nsisScript).not.toContain('安装程序无法确认 ${PRODUCT_NAME} 是否已关闭');
     expect(nsisScript).toContain('${ElseIf} $0 != "1"');
+    expect(processHelper).toContain("$Action -in @('Find', 'Wait', 'Stop')");
+    expect(processHelper).toContain('fallback=executable-lock-probe locked=$locked');
+    expect(processHelper).toContain('$win32Code -eq 32 -or $win32Code -eq 33');
     expect(processHelper).toContain('error-type=$exceptionType hresult=$hresult');
+  });
+
+  it('treats managed runtime staging as an upgrade optimization', () => {
+    expect(nsisScript).toContain('phase=runtime-staging-degraded');
+    expect(nsisScript).toContain('action=continue-with-normal-old-version-removal');
+    expect(nsisScript).toContain('phase=runtime-restore-degraded');
+    expect(nsisScript).toContain('action=continue-with-new-runtime');
+    expect(nsisScript).not.toContain('reason=runtime-staging-failed');
+    expect(nsisScript).not.toContain('reason=runtime-restore-failed');
   });
 
   it('runs process checks from a script file instead of a fragile inline command', () => {
@@ -226,9 +285,9 @@ describe('Windows installer process handling', () => {
       );
       expect(stage.status, stage.stderr).toBe(0);
       expect(existsSync(markerPath)).toBe(false);
-      expect(existsSync(path.join(`${installRoot}.justdo-runtime-staging`, 'cfmind', 'marker.txt'))).toBe(
-        true,
-      );
+      expect(
+        existsSync(path.join(`${installRoot}.justdo-runtime-staging`, 'cfmind', 'marker.txt')),
+      ).toBe(true);
 
       const restore = spawnSync(
         powershellPath,
@@ -265,14 +324,10 @@ describe('Windows installer process handling', () => {
       copyFileSync(process.execPath, legacyPythonExecutable);
       copyFileSync(process.execPath, unrelatedPythonExecutable);
 
-      const legacyPython = spawn(
-        legacyPythonExecutable,
-        ['-e', 'setInterval(() => {}, 1_000)'],
-        {
-          stdio: 'ignore',
-          windowsHide: true,
-        },
-      );
+      const legacyPython = spawn(legacyPythonExecutable, ['-e', 'setInterval(() => {}, 1_000)'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
       const unrelatedPython = spawn(
         unrelatedPythonExecutable,
         ['-e', 'setInterval(() => {}, 1_000)'],
@@ -304,7 +359,14 @@ describe('Windows installer process handling', () => {
 
         const result = spawnSync(
           powershellPath,
-          ['-NoProfile', '-NonInteractive', '-File', processHelperPath, '-Action', 'StopLegacyPython'],
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-File',
+            processHelperPath,
+            '-Action',
+            'StopLegacyPython',
+          ],
           {
             encoding: 'utf8',
             env: {
@@ -386,7 +448,14 @@ describe('Windows installer process handling', () => {
 
         const result = spawnSync(
           powershellPath,
-          ['-NoProfile', '-NonInteractive', '-File', processHelperPath, '-Action', 'StopLegacyPython'],
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-File',
+            processHelperPath,
+            '-Action',
+            'StopLegacyPython',
+          ],
           {
             encoding: 'utf8',
             env: {
@@ -439,15 +508,19 @@ describe('Windows installer process handling', () => {
   });
 
   it('passes userData to the resource migrator instead of deleting the legacy runtime', () => {
-    expect(nsisScript).toContain('"$APPDATA\\${PRODUCT_NAME}"');
+    expect(nsisScript).toContain('"$JustDoCurrentUserAppData\\${PRODUCT_NAME}"');
     expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\runtimes\\python-win"');
     expect(unpackScript).toContain('migrateLegacyPythonRuntime()');
   });
 
   it('uses packaged dependency config and removes legacy app-data copies', () => {
     expect(nsisScript).not.toContain('CopyFiles /SILENT "$INSTDIR\\resources\\dependency-config');
-    expect(nsisScript).toContain('Delete "$APPDATA\\${PRODUCT_NAME}\\dependency-config\\.npmrc"');
-    expect(nsisScript).toContain('Delete "$APPDATA\\${PRODUCT_NAME}\\dependency-config\\pip.ini"');
+    expect(nsisScript).toContain(
+      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\.npmrc"',
+    );
+    expect(nsisScript).toContain(
+      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\pip.ini"',
+    );
     expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\dependency-config"');
     expect(nsisScript).toContain('dependency-config-legacy: cleanup-complete');
   });
@@ -479,9 +552,7 @@ describe('Windows installer process handling', () => {
     expect(builderHook).toContain('compressTarArchive(outputTar, outputArchive)');
     expect(builderHook).toContain('totalEntries: tarEntries.length');
     expect(builderHook).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");
-    expect(executableBuilderConfig).toContain(
-      "process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'",
-    );
+    expect(executableBuilderConfig).toContain("process.env.ELECTRON_BUILDER_7Z_FILTER = 'BCJ'");
     expect(builderConfig.artifactBuildCompleted).toBe('./scripts/electron-builder-hooks.cjs');
   });
 
@@ -548,11 +619,7 @@ describe('Windows installer process handling', () => {
     writeFileSync(staleSkillPath, 'default');
     writeFileSync(stalePythonPackagePath, 'stale');
     writeFileSync(legacyUserPackagePath, 'user-package');
-    await createZstdTarFixture(archiveRoot, archivePath, [
-      'cfmind',
-      'mingit',
-      'python-win',
-    ]);
+    await createZstdTarFixture(archiveRoot, archivePath, ['cfmind', 'mingit', 'python-win']);
     writeFileSync(
       metadataPath,
       '{"schemaVersion":1,"totalEntries":32,"uncompressedBytes":10485760}\n',
@@ -591,9 +658,7 @@ describe('Windows installer process handling', () => {
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
     expect(existsSync(managedTempRoot)).toBe(false);
-    expect(readFileSync(progressPath, 'utf8')).toBe(
-      'determinate\n100\nCore resources verified',
-    );
+    expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nCore resources verified');
     const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
     expect(diagnosticLog).toContain('event=resource-install-start');
     expect(diagnosticLog).toContain('event=archive-inspected');
@@ -603,9 +668,7 @@ describe('Windows installer process handling', () => {
     expect(diagnosticLog).toContain('event=runtime-validation-complete');
     expect(diagnosticLog).toContain('event=resource-install-complete');
     expect(diagnosticLog).toContain('event=extractor-temp-cleanup-complete');
-    expect(diagnosticLog).toContain(
-      'mode=determinate percent=100 message=Core resources verified',
-    );
+    expect(diagnosticLog).toContain('mode=determinate percent=100 message=Core resources verified');
     if (process.platform === 'win32') {
       expect(result.stdout).toContain('Using Windows native resource extraction');
       expect(result.stdout).not.toContain('0 resource entries ready');
@@ -631,12 +694,11 @@ describe('Windows installer process handling', () => {
     writeFileSync(installedPackagePath, '{"version":"previous"}');
     writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{"version":"new"}');
     writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
-    writeFileSync(path.join(archiveRoot, 'cfmind', 'growth-fixture.bin'), Buffer.alloc(8 * 1024 * 1024, 0x61));
-    await createZstdTarFixture(archiveRoot, archivePath, [
-      'cfmind',
-      'mingit',
-      'python-win',
-    ]);
+    writeFileSync(
+      path.join(archiveRoot, 'cfmind', 'growth-fixture.bin'),
+      Buffer.alloc(8 * 1024 * 1024, 0x61),
+    );
+    await createZstdTarFixture(archiveRoot, archivePath, ['cfmind', 'mingit', 'python-win']);
     writeFileSync(
       metadataPath,
       '{"schemaVersion":1,"totalEntries":3,"uncompressedBytes":16777216}\n',
@@ -657,15 +719,7 @@ fs.statfsSync = (...args) => {
 
     const result = spawnSync(
       process.execPath,
-      [
-        unpackScriptPath,
-        archivePath,
-        installResources,
-        '',
-        metadataPath,
-        '',
-        diagnosticLogPath,
-      ],
+      [unpackScriptPath, archivePath, installResources, '', metadataPath, '', diagnosticLogPath],
       {
         encoding: 'utf8',
         env: {
@@ -699,11 +753,7 @@ fs.statfsSync = (...args) => {
       writePythonRuntimeFixture(path.join(archiveRoot, 'python-win'));
       writeFileSync(path.join(archiveRoot, 'cfmind', 'package.json'), '{}');
       writeFileSync(path.join(archiveRoot, 'mingit', 'cmd', 'git.exe'), 'mingit');
-      await createZstdTarFixture(archiveRoot, archivePath, [
-        'cfmind',
-        'mingit',
-        'python-win',
-      ]);
+      await createZstdTarFixture(archiveRoot, archivePath, ['cfmind', 'mingit', 'python-win']);
       writeFileSync(
         metadataPath,
         '{"schemaVersion":1,"totalEntries":27,"uncompressedBytes":10485760}\n',
@@ -722,14 +772,12 @@ fs.statfsSync = (...args) => {
         ],
         {
           encoding: 'utf8',
-          env: Object.fromEntries(
-            [
-              ...Object.entries(process.env).filter(
-                ([key]) => !['systemroot', 'windir'].includes(key.toLowerCase()),
-              ),
-              ['JUSTDO_INSTALLER_DISABLE_NATIVE_TAR', '1'],
-            ],
-          ),
+          env: Object.fromEntries([
+            ...Object.entries(process.env).filter(
+              ([key]) => !['systemroot', 'windir'].includes(key.toLowerCase()),
+            ),
+            ['JUSTDO_INSTALLER_DISABLE_NATIVE_TAR', '1'],
+          ]),
         },
       );
 
@@ -738,9 +786,7 @@ fs.statfsSync = (...args) => {
       const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
       expect(diagnosticLog).toContain('extractor=npm-tar');
       expect(diagnosticLog).toContain('mode=determinate percent=100');
-      expect(readFileSync(progressPath, 'utf8')).toBe(
-        'determinate\n100\nCore resources verified',
-      );
+      expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nCore resources verified');
     },
   );
 
@@ -1051,6 +1097,140 @@ fs.rmSync = (target, options) => {
 });
 
 describe('Windows installer presentation', () => {
+  it('offers destructive user-data removal as an unchecked uninstall option', () => {
+    expect(builderConfig.nsis?.deleteAppDataOnUninstall).toBe(false);
+    expect(nsisScript).toContain('!macro customUnInstallSection');
+    expect(nsisScript).toContain('Section /o "un.$(JustDoDeleteUserData)"');
+    expect(nsisScript).toContain('Delete all local user data');
+    expect(nsisScript).toContain('删除所有本机用户数据');
+    expect(nsisScript).toContain('刪除所有本機使用者資料');
+    expect(nsisScript).toContain('Function un.JustDoDeleteCurrentUserData');
+    expect(nsisScript).toContain('UAC_AsUser_Call Function un.JustDoDeleteCurrentUserData');
+    expect(nsisScript).toContain('${If} ${isUpdated}');
+    expect(nsisScript).not.toContain('MB_RETRYIGNORE');
+    expect(nsisScript).toContain('keep the remaining files and finish uninstalling');
+    expect(nsisScript).toContain('-RequireDesktopUser');
+    expect(nsisScript).toContain('User data preserved: desktop account could not be confirmed.');
+    expect(userDataHelper).toContain('$desktopOwners[0] -ne $currentSid');
+    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}"');
+    expect(nsisScript).not.toContain('RMDir /r "$PROFILE\\${APP_FILENAME}\\project"');
+    expect(userDataHelper).toContain('[IO.FileAttributes]::ReparsePoint');
+    expect(userDataHelper).toContain('[IO.Directory]::Delete($item.FullName, $false)');
+    expect(userDataHelper).not.toContain('Remove-Item -Recurse');
+  });
+
+  it('rejects the legacy deletion bypass before uninstall removes files', () => {
+    const start = nsisScript.indexOf('!macro customUnInit');
+    const unInit = nsisScript.slice(start, nsisScript.indexOf('!macroend', start));
+    expect(unInit).toContain('${GetOptions} $0 "--delete-app-data" $1');
+    expect(unInit).toContain('SetErrorLevel 2');
+    expect(unInit.indexOf('Quit')).toBeLessThan(unInit.indexOf('InitPluginsDir'));
+  });
+
+  it('defines the uninstall option for every electron-builder bundled language', () => {
+    const languageIds = [
+      1033, 1031, 1036, 3082, 2052, 1028, 1041, 1042, 1040, 1043, 1030, 1053, 1044, 1035, 1049,
+      2070, 1046, 1045, 1058, 1029, 1051, 1038, 1025, 1055, 1054, 1066,
+    ];
+    const definedIds = Array.from(
+      nsisScript.matchAll(/LangString JustDoDeleteUserData (\d+) /g),
+      match => Number(match[1]),
+    );
+
+    expect(definedIds).toHaveLength(languageIds.length);
+    expect(new Set(definedIds)).toEqual(new Set(languageIds));
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'deletes owned user data without traversing a junction',
+    () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-user-data-delete-'));
+      tempDirs.push(root);
+      const roaming = path.join(root, 'Roaming');
+      const local = path.join(root, 'Local');
+      const outside = path.join(root, 'outside');
+      const powershellPath = path.join(
+        process.env.SystemRoot || 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe',
+      );
+      mkdirSync(path.join(roaming, 'JustDo', 'nested'), { recursive: true });
+      mkdirSync(path.join(local, 'JustDo'), { recursive: true });
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(path.join(roaming, 'JustDo', 'nested', 'owned.txt'), 'owned');
+      writeFileSync(path.join(outside, 'must-survive.txt'), 'safe');
+      symlinkSync(outside, path.join(roaming, 'JustDo', 'linked-outside'), 'junction');
+
+      const result = spawnSync(
+        powershellPath,
+        ['-NoProfile', '-NonInteractive', '-File', userDataHelperPath, '-Names', 'JustDo|justdo'],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, APPDATA: roaming, LOCALAPPDATA: local },
+        },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(existsSync(path.join(roaming, 'JustDo'))).toBe(false);
+      expect(existsSync(path.join(local, 'JustDo'))).toBe(false);
+      expect(readFileSync(path.join(outside, 'must-survive.txt'), 'utf8')).toBe('safe');
+    },
+    30_000,
+  );
+
+  it('keeps upgrade cleanup limited to obsolete managed app-data resources', () => {
+    expect(nsisScript).toContain(
+      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\.npmrc"',
+    );
+    expect(nsisScript).toContain(
+      'Delete "$JustDoCurrentUserAppData\\${PRODUCT_NAME}\\dependency-config\\pip.ini"',
+    );
+    expect(unpackScript).toContain("path.join(userDataDir, 'runtimes', 'python-win')");
+    expect(nsisScript).not.toContain('Delete "$APPDATA\\${PRODUCT_NAME}\\justdo.sqlite"');
+    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\openclaw"');
+    expect(nsisScript).not.toContain('RMDir /r "$APPDATA\\${PRODUCT_NAME}\\local-speech-models"');
+  });
+
+  it.runIf(process.platform === 'win32').each([true, false])(
+    'only deletes elevated profile data when the desktop account matches (%s)',
+    sameAccount => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-user-data-account-'));
+      tempDirs.push(root);
+      const roaming = path.join(root, 'Roaming');
+      const local = path.join(root, 'Local');
+      const marker = path.join(roaming, 'JustDo', 'must-preserve.sqlite');
+      mkdirSync(path.dirname(marker), { recursive: true });
+      mkdirSync(local, { recursive: true });
+      writeFileSync(marker, 'user data');
+      const desktopSid = sameAccount
+        ? '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'
+        : "'S-1-5-21-0-0-0-99999'";
+      const command = [
+        'function Get-CimInstance { [pscustomobject]@{ ProcessId = 1 } }',
+        `function Invoke-CimMethod { [pscustomobject]@{ Sid = ${desktopSid} } }`,
+        `& '${userDataHelperPath.replaceAll("'", "''")}' -Names JustDo -RequireDesktopUser`,
+        'exit $LASTEXITCODE',
+      ].join('; ');
+      const result = spawnSync(
+        path.join(
+          process.env.SystemRoot || 'C:\\Windows',
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        ),
+        ['-NoProfile', '-NonInteractive', '-Command', command],
+        { encoding: 'utf8', env: { ...process.env, APPDATA: roaming, LOCALAPPDATA: local } },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(sameAccount ? 0 : 3);
+      expect(existsSync(marker)).toBe(!sameAccount);
+    },
+    30_000,
+  );
+
   it('keeps both install modes but re-enters interactive elevated launches through the desktop user', () => {
     const preInit = nsisScript.slice(
       nsisScript.indexOf('!macro preInit'),
@@ -1071,11 +1251,18 @@ describe('Windows installer presentation', () => {
     expect(preInit.indexOf('${If} ${Silent}')).toBeLessThan(
       preInit.indexOf('${StdUtils.ExecShellAsUser}'),
     );
+    expect(preInit).toMatch(
+      /\$\{If\} \$\{Silent\}(?:(?!\$\{EndIf\})[\s\S])*Goto JustDoAccountBootstrapComplete/,
+    );
     expect(preInit).toContain('JustDoBootstrapAllUsers:');
     expect(preInit).toContain('/allusers $0');
     expect(preInit.indexOf('${StdUtils.ExecShellAsUser}')).toBeLessThan(
       preInit.indexOf('StrCpy $JustDoCurrentUserAppData "$APPDATA"'),
     );
+    expect(nsisScript).toContain(
+      'UAC_AsUser_Call Function JustDoReadDesktopUserPaths ${UAC_SYNCREGISTERS}',
+    );
+    expect(nsisScript).toContain('CreateDirectory "$JustDoCurrentUserAppData\\${PRODUCT_NAME}"');
   });
 
   it('uses a branded, DPI-aware install page', () => {
@@ -1108,16 +1295,12 @@ describe('Windows installer presentation', () => {
     expect(pageShow).toContain('SendMessage $HWNDPARENT ${JUSTDO_WM_SETREDRAW} 1 0');
     expect(pageShow).toContain('user32::RedrawWindow');
     expect(pageShow).not.toContain('Call JustDoCheckAppRunning');
-    expect(nsisScript).toContain(
-      'SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0',
-    );
+    expect(nsisScript).toContain('SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0');
     expect(nsisScript).not.toContain(
       'SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 1 35',
     );
     expect(nsisScript).toContain('StrCpy $JustDoLastResourceProgress $2');
-    expect(nsisScript).toContain(
-      '${JUSTDO_PBM_SETPOS} $JustDoLastResourceProgress 0',
-    );
+    expect(nsisScript).toContain('${JUSTDO_PBM_SETPOS} $JustDoLastResourceProgress 0');
 
     expect(nsisScript).not.toContain('JustDoSetInstallProgress');
     expect(nsisScript).toContain('Reading core resources: $2%');
@@ -1181,7 +1364,7 @@ describe('Windows installer presentation', () => {
 
   it('persists privacy-safe diagnostics across early setup and resource extraction', () => {
     expect(nsisScript).toContain('Function JustDoWriteInstallEvent');
-    expect(nsisScript).toContain("kernel32::GetTickCount()i.r1");
+    expect(nsisScript).toContain('kernel32::GetTickCount()i.r1');
     expect(nsisScript).toContain('phase=process-check-start');
     expect(nsisScript).toContain('phase=electron-builder-core-start');
     expect(nsisScript).toContain('phase=electron-builder-core-returned duration-ms=$1');
@@ -1192,7 +1375,13 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).toContain('!define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort');
     expect(nsisScript).toContain('phase=installer-success status=completed');
     expect(nsisScript).toContain('phase=installer-session-end terminal-state=');
-    expect(nsisScript).toContain('=== installer-session-start ===');
+    expect(nsisScript).toContain('INSTALL SESSION START | timestamp=');
+    expect(nsisScript).toContain('INSTALL SESSION END | timestamp=');
+    expect(nsisScript).toContain('!insertmacro JustDoOpenAppendLog $2 "$JustDoInstallLogPath"');
+    expect(nsisScript).toContain('!insertmacro JustDoOpenAppendLog $2 "$JustDoResourceLogPath"');
+    expect(nsisScript).not.toContain('FileOpen $2 "$JustDoInstallLogPath" w');
+    expect(nsisScript).not.toContain('FileOpen $2 "$JustDoResourceLogPath" w');
+    expect(nsisScript).not.toContain('Delete "$JustDoInstallLogPath"');
     expect(nsisScript).not.toContain('Delete "$JustDoResourceLogPath"');
     expect(nsisScript).toContain('install-resource.log');
     expect(nsisScript).toContain('"$JustDoResourceLogPath"');
@@ -1202,9 +1391,47 @@ describe('Windows installer presentation', () => {
     expect(unpackScript).toContain("'resource-install-start'");
     expect(unpackScript).toContain("'runtime-upgrade-failed'");
     expect(unpackScript).toContain("'resource-install-failed'");
+    expect(unpackScript).toContain("writeDiagnosticBoundary('START')");
+    expect(unpackScript).toContain("writeDiagnosticBoundary('END', 'success')");
   });
 
-  it('selects one mandatory log directory before multi-user initialization', () => {
+  it('appends separated resource diagnostics across repeated installer sessions', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-resource-log-append-'));
+    tempDirs.push(root);
+    const diagnosticLogPath = path.join(root, 'install-resource.log');
+    const missingArchive = path.join(root, 'missing.tar.zst');
+    const destination = path.join(root, 'resources');
+    writeFileSync(diagnosticLogPath, 'existing-session-must-survive\n');
+
+    for (const sessionId of ['session-one', 'session-two']) {
+      const result = spawnSync(
+        process.execPath,
+        [
+          unpackScriptPath,
+          missingArchive,
+          destination,
+          path.join(root, 'user-data'),
+          '',
+          '',
+          diagnosticLogPath,
+          sessionId,
+          'v-test',
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(result.status).toBe(1);
+    }
+
+    const log = readFileSync(diagnosticLogPath, 'utf8');
+    expect(log).toContain('existing-session-must-survive');
+    expect(log.match(/RESOURCE INSTALL SESSION START/g)).toHaveLength(2);
+    expect(log.match(/RESOURCE INSTALL SESSION END/g)).toHaveLength(2);
+    expect(log).toContain('session=session-one');
+    expect(log).toContain('session=session-two');
+    expect(log).toContain('status=archive-missing');
+  });
+
+  it('tries diagnostic directories without making logging an installation prerequisite', () => {
     const preInit = nsisScript.slice(
       nsisScript.indexOf('!macro preInit'),
       nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro preInit')),
@@ -1220,7 +1447,8 @@ describe('Windows installer presentation', () => {
     expect(preInit).toContain('StrCpy $JustDoCurrentUserAppData "$APPDATA"');
     expect(preInit).toContain('StrCpy $JustDoCurrentUserLocalAppData "$LOCALAPPDATA"');
     expect(preInit).toContain('Call JustDoSelectInstallLogDirectory');
-    expect(preInit).toContain('diagnostic logs, so installation will not continue');
+    expect(nsisScript).not.toContain('logging-unavailable');
+    expect(nsisScript).not.toContain('Abort "Required installer log');
     expect(selector.indexOf('$JustDoCurrentUserAppData')).toBeLessThan(
       selector.indexOf('$JustDoCurrentUserLocalAppData'),
     );
@@ -1230,8 +1458,26 @@ describe('Windows installer presentation', () => {
     expect(selector.indexOf('$JustDoCurrentTemp')).toBeLessThan(
       selector.indexOf('$JustDoInstallerDirectory'),
     );
-    expect(nsisScript).not.toContain('FileOpen $2 "NUL"');
+    expect(nsisScript.match(/FileOpen \$2 "NUL" w/g)).toHaveLength(3);
     expect(nsisScript).toContain('phase=install-log-relocated');
+  });
+
+  it('retrieves captured desktop paths before opening any inner-instance log handle', () => {
+    const reader = nsisScript.slice(
+      nsisScript.indexOf('Function JustDoReadDesktopUserPaths'),
+      nsisScript.indexOf('FunctionEnd', nsisScript.indexOf('Function JustDoReadDesktopUserPaths')),
+    );
+    const customInit = nsisScript.slice(
+      nsisScript.indexOf('!macro customInit'),
+      nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro customInit')),
+    );
+    expect(reader).toContain('StrCpy $0 "$JustDoCurrentUserAppData"');
+    expect(reader).toContain('StrCpy $1 "$JustDoCurrentUserLocalAppData"');
+    expect(reader).toContain('StrCpy $3 "$JustDoCurrentTemp"');
+    expect(reader).not.toContain('"$APPDATA"');
+    expect(customInit.indexOf('UAC_AsUser_Call Function JustDoReadDesktopUserPaths')).toBeLessThan(
+      customInit.indexOf('$2 "$JustDoInstallLogPath"'),
+    );
   });
 
   it('runs UAC inner process preparation only after the final directory is normalized', () => {

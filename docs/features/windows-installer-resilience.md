@@ -47,11 +47,19 @@ temporary-storage corrections in this change.
   tree or runtime exists to protect or stage.
 - Upgrade checks use `Get-Process` plus the executable path and do not depend on
   CIM/WMI.
+- Process enumeration is advisory. If Windows cannot provide a trustworthy
+  inventory, setup falls back to probing the installed executable for an
+  exclusive file lock and then lets old-version removal/atomic copy make the
+  final decision. An inspection API failure by itself never blocks setup.
 - Matching remains scoped to the selected installation root. It must not kill
   another installation, a portable copy, or an unrelated process with the same
   name.
 - A healthy installed application still receives the graceful update shutdown
   request before the bounded force-close fallback.
+- Managed-runtime staging is an upgrade performance optimization. Historical,
+  unexpected, or inaccessible staging data is recorded but does not block the
+  new installation; the normal old-tree removal and complete new runtime remain
+  authoritative.
 
 This is an incremental hardening step. A future implementation should replace
 PowerShell inspection with a small native Restart Manager/path-aware helper so
@@ -72,10 +80,11 @@ If the desktop shell is unavailable, an interactive elevated setup offers to
 restart explicitly in `/allusers` mode; it never silently treats the credential
 account as the selected current user.
 
-Silent `/allusers` installs are not re-launched because their target is the
-machine. An elevated silent current-user invocation fails with a nonzero exit
-code: an asynchronous desktop-shell relaunch could not preserve completion and
-exit-code semantics. It must be launched non-elevated by the target user.
+Silent installs do not require a desktop-shell relaunch. They run as the
+invoking account and let electron-builder resolve `/currentuser`, `/allusers`,
+or the existing installation mode normally. For `/currentuser`, the invoking
+account is the target user, including when launched from an elevated shell.
+This preserves completion and exit-code semantics for deployment automation.
 
 ### Temporary storage
 
@@ -99,10 +108,54 @@ exit-code semantics. It must be launched non-elevated by the target user.
 - The guard logs `unexpected-disk-growth`; it does not recursively delete an
   unrecognized `SampleDir`, because ownership cannot be proven safely.
 
+### Upgrade and uninstall data ownership
+
+Upgrade cleanup is deliberately narrow. Setup removes only obsolete,
+installer-owned app-data resources whose replacements are already packaged:
+
+- `%APPDATA%/<productName>/runtimes/python-win`, the unused legacy Python
+  runtime; failure to remove it is non-fatal;
+- the legacy `dependency-config/.npmrc` and `dependency-config/pip.ini` files.
+
+Setup preserves the application database, OpenClaw state and transcripts,
+provider configuration and secrets, Chromium profile data, browser import
+database, local speech models, logs, and unknown files under userData. It never
+deletes the default `~/<productName lowercase>/project` directory or another
+user-selected workspace.
+
+Interactive uninstall exposes an unchecked optional component for deleting all
+local user data. Without that explicit selection, uninstall removes application
+files but preserves Roaming and Local app-data directories. Selecting it removes
+the current user's product/package-name variants below `%APPDATA%` and
+`%LOCALAPPDATA%`, plus the package updater cache; external projects, downloads,
+and workspaces remain untouched.
+For an all-users uninstall, deletion runs synchronously in the initiating
+desktop user's context rather than an administrator credential account. The
+cleanup does not traverse junctions or symbolic links, and a partial failure is
+reported with a retry choice. Silent upgrade uninstall never selects the
+destructive component. A directly elevated uninstall without an outer user
+process only deletes profile data if that account owns the current desktop;
+if the account cannot be confirmed, uninstall finishes and reports that data
+was retained. This check applies only to the optional destructive cleanup.
+The legacy electron-builder `--delete-app-data` switch is rejected before
+uninstall starts because its built-in deletion bypasses these safeguards.
+Use the interactive checkbox to request data deletion instead.
+
 ## Diagnostics
 
 The lifecycle log remains `install-timing.log`; resource extraction details are
-in `install-resource.log`. Relevant events are:
+in `install-resource.log`. Both files are append-only across installer runs.
+NSIS uses Windows append-only handles so callback writes and overlapping
+installer processes cannot overwrite records through stale file offsets.
+Log directory failures fall back to another writable location; if none is
+available, installation continues without persistent diagnostics.
+Each run is wrapped in prominent `INSTALL SESSION START` / `INSTALL SESSION END`
+separators containing its timestamp, PID, session ID, version, and terminal
+state, so repeated installs remain distinguishable without erasing prior
+diagnostics. Resource-extractor records also carry the same session ID.
+Success/failure callbacks also close silent sessions. A forcibly terminated
+process may leave a START without an END; the next run still appends a new block.
+Relevant events are:
 
 - `phase=process-check-skipped reason=pristine-install`
 - `extractor-temp-root`

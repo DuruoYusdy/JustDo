@@ -230,6 +230,12 @@ run_id PK、`archived_paths_json`、updated_at。它不是结果内容表，而�
 
 正常备份：退出应用后复制 `justdo.sqlite`；如在线备份则用 SQLite backup/checkpoint 机制。排障先备份数据库、WAL、SHM，再运行只读 `PRAGMA integrity_check`/`table_info`。不要在应用运行时手工修改 row。
 
+Windows 覆盖升级保留整个 `<userData>`，只删除安装器明确拥有且已经废弃的
+`runtimes/python-win` 与 `dependency-config/.npmrc`、`dependency-config/pip.ini`。
+普通交互卸载默认同样保留数据；卸载组件页提供默认不勾选的“删除所有本机用户数据”选项。
+勾选后删除当前用户 `%APPDATA%`/`%LOCALAPPDATA%` 下的产品与历史 package-name 目录，
+但绝不删除 `~/<productName lowercase>/project`、下载文件或任何用户选择的 workspace。
+
 典型检查：表/列是否存在、foreign_keys 是否开启、WAL 是否堆积、open run partial unique 是否冲突、JSON parse warning、result catch-up key 是否损坏。原始数据库可能包含用户 prompt、路径和 credentials，分享前需脱敏。
 
 ## 17. Schema 变更清单

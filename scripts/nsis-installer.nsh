@@ -3,8 +3,21 @@
 !include "StdUtils.nsh"
 !include "TextFunc.nsh"
 !include "x64.nsh"
+!include "UAC.nsh"
 
 !define JUSTDO_INSTALLER_QUIT_SWITCH "--justdo-request-quit-for-update"
+
+; NSIS FileOpen ... a only seeks once when opening. Long-lived handles would
+; overwrite records appended by callbacks or another installer process. Windows
+; FILE_APPEND_DATA without FILE_WRITE_DATA appends each FileWrite atomically.
+!macro JustDoOpenAppendLog _HANDLE _PATH
+  ClearErrors
+  System::Call 'kernel32::CreateFileW(t "${_PATH}", i 0x00000004, i 0x00000003, p 0, i 4, i 0x80, p 0) i.s'
+  Pop ${_HANDLE}
+  ${If} ${_HANDLE} == -1
+    SetErrors
+  ${EndIf}
+!macroend
 
 !macro JustDoResolveNativePowerShell _OUTPUT
   StrCpy ${_OUTPUT} "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
@@ -47,6 +60,7 @@ Var JustDoPristineInstall
 Var JustDoInstallTerminalState
 Var JustDoInstallerPid
 Var JustDoInstallerSessionId
+Var JustDoInstallerSessionEnded
 Var JustDoLastInstallEvent
 Var JustDoInstallMode
 Var JustDoInstallLogDirectory
@@ -103,11 +117,11 @@ FunctionEnd
     StrCpy $JustDoInstallLogPath "$1\install-timing.log"
     StrCpy $JustDoResourceLogPath "$1\install-resource.log"
     ClearErrors
-    FileOpen $0 "$JustDoInstallLogPath" a
+    !insertmacro JustDoOpenAppendLog $0 "$JustDoInstallLogPath"
     ${IfNot} ${Errors}
       FileClose $0
       ClearErrors
-      FileOpen $0 "$JustDoResourceLogPath" a
+      !insertmacro JustDoOpenAppendLog $0 "$JustDoResourceLogPath"
       ${IfNot} ${Errors}
         FileClose $0
         StrCpy $JustDoInstallLogDirectory "$1"
@@ -156,7 +170,7 @@ Function JustDoWriteInstallEvent
   StrCpy $R0 "$JustDoInstallLogPath"
   ${If} $JustDoInstallLogPath != ""
     ClearErrors
-    FileOpen $9 "$JustDoInstallLogPath" a
+    !insertmacro JustDoOpenAppendLog $9 "$JustDoInstallLogPath"
   ${Else}
     SetErrors
   ${EndIf}
@@ -165,7 +179,7 @@ Function JustDoWriteInstallEvent
     ; so diagnostics never silently split across unrelated locations.
     Call JustDoSelectInstallLogDirectory
     ClearErrors
-    FileOpen $9 "$JustDoInstallLogPath" a
+    !insertmacro JustDoOpenAppendLog $9 "$JustDoInstallLogPath"
   ${EndIf}
   ${IfNot} ${Errors}
     ${If} $R0 != ""
@@ -194,6 +208,48 @@ Function JustDoWriteInstallEvent
   Pop $0
 FunctionEnd
 
+Function JustDoWriteInstallSessionEnd
+  ${If} $JustDoInstallerSessionId == ""
+  ${OrIf} $JustDoInstallerSessionEnded == "1"
+    Return
+  ${EndIf}
+  StrCpy $JustDoInstallerSessionEnded "1"
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  Push $6
+  Push $7
+  ${GetTime} "" "L" $0 $1 $2 $3 $4 $5 $6
+  ClearErrors
+  !insertmacro JustDoOpenAppendLog $7 "$JustDoInstallLogPath"
+  ${IfNot} ${Errors}
+    FileWrite $7 "====================================================================================================$\r$\n"
+    FileWrite $7 "INSTALL SESSION END | timestamp=$2-$1-$0 $4:$5:$6 | session=$JustDoInstallerSessionId | pid=$JustDoInstallerPid | version=${VERSION} | terminal-state=$JustDoInstallTerminalState$\r$\n"
+    FileWrite $7 "====================================================================================================$\r$\n$\r$\n"
+    FileClose $7
+  ${EndIf}
+  ClearErrors
+  !insertmacro JustDoOpenAppendLog $7 "$JustDoResourceLogPath"
+  ${IfNot} ${Errors}
+    FileWrite $7 "====================================================================================================$\r$\n"
+    FileWrite $7 "INSTALL SESSION END | timestamp=$2-$1-$0 $4:$5:$6 | session=$JustDoInstallerSessionId | pid=$JustDoInstallerPid | version=${VERSION} | terminal-state=$JustDoInstallTerminalState$\r$\n"
+    FileWrite $7 "====================================================================================================$\r$\n$\r$\n"
+    FileClose $7
+  ${EndIf}
+  ClearErrors
+  Pop $7
+  Pop $6
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
 !macro JustDoLogInstallEvent _TEXT
   Push "${_TEXT}"
   Call JustDoWriteInstallEvent
@@ -211,6 +267,7 @@ FunctionEnd
 Function .onInstSuccess
   StrCpy $JustDoInstallTerminalState "success"
   !insertmacro JustDoLogInstallEvent "phase=installer-success status=completed version=${VERSION} install-mode=$JustDoInstallMode install-dir=$INSTDIR core-validation=passed"
+  Call JustDoWriteInstallSessionEnd
 FunctionEnd
 
 Function .onInstFailed
@@ -224,6 +281,7 @@ Function .onInstFailed
     !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete runtime-restore-result=$0"
+  Call JustDoWriteInstallSessionEnd
 FunctionEnd
 
 Function .onGUIEnd
@@ -239,6 +297,7 @@ Function .onGUIEnd
       !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
     ${EndIf}
   ${EndIf}
+  Call JustDoWriteInstallSessionEnd
 FunctionEnd
 
 Function JustDoPollResourceProgress
@@ -557,7 +616,7 @@ Function JustDoStopLegacyPythonProcesses
   ; access-denied and inspection failures are logged but never block setup.
   System::Call 'Kernel32::GetCurrentProcessId()i.r0'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_INSTALL_ROOT", "$INSTDIR").r1'
-  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_USER_DATA_ROOT", "$APPDATA\${PRODUCT_NAME}").r1'
+  System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_USER_DATA_ROOT", "$JustDoCurrentUserAppData\${PRODUCT_NAME}").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
   !insertmacro JustDoResolveNativePowerShell $R8
   nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action StopLegacyPython'
@@ -634,12 +693,13 @@ Function JustDoCheckAppRunning
         !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=app-still-running"
         Abort "${PRODUCT_NAME} is still running after a graceful shutdown request."
       ${ElseIf} $0 != "0"
-        !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=process-inspection-failed"
-        Abort "Setup could not verify whether ${PRODUCT_NAME} has closed."
+        ; Process enumeration is advisory. The old-version removal and atomic
+        ; copy below are the authority on whether installed files are actually
+        ; busy, so an inspection failure alone must not block an upgrade.
+        !insertmacro JustDoLogInstallEvent "phase=process-check-degraded reason=process-inspection-failed action=continue-to-filesystem-replacement"
       ${EndIf}
     ${ElseIf} $0 != "1"
-      !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=initial-process-inspection-failed"
-      Abort "Setup could not inspect processes in the installation directory."
+      !insertmacro JustDoLogInstallEvent "phase=process-check-degraded reason=initial-process-inspection-failed action=continue-to-filesystem-replacement"
     ${EndIf}
   ${Else}
     JustDoInstallProcessCheck:
@@ -692,16 +752,9 @@ Function JustDoCheckAppRunning
           !insertmacro JustDoLogInstallEvent "phase=process-check-complete result=closed"
       ${ElseIf} $0 != "1"
         JustDoInstallInspectionFailed:
-          ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-          ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-            StrCpy $1 "安装程序无法确认 ${PRODUCT_NAME} 是否已关闭。请点击“重试”重新检测，或点击“取消”退出安装程序。"
-          ${Else}
-            StrCpy $1 "Setup could not verify whether ${PRODUCT_NAME} has closed. Click Retry to check again, or Cancel to exit setup."
-          ${EndIf}
-          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$1" IDRETRY JustDoInstallProcessRetry
-          StrCpy $JustDoInstallTerminalState "user-cancelled"
-          !insertmacro JustDoLogInstallEvent "phase=installer-cancel reason=process-inspection-failed"
-          Quit
+          ; Do not trap users in a retry loop merely because process metadata
+          ; is unavailable. A real file lock will be detected by removal/copy.
+          !insertmacro JustDoLogInstallEvent "phase=process-check-degraded reason=process-inspection-failed action=continue-to-filesystem-replacement"
       ${EndIf}
   ${EndIf}
   JustDoInstallProcessReady:
@@ -710,13 +763,10 @@ Function JustDoCheckAppRunning
     Call JustDoStopLegacyPythonProcesses
     Call JustDoStageManagedRuntimes
     ${If} $0 != "0"
-      !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=runtime-staging-failed result=$0"
-      ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-      ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-        Abort "无法安全暂存旧版运行环境，安装已停止。请重试并提供安装日志。"
-      ${Else}
-        Abort "Setup could not safely stage the previous runtime. Retry and provide the install log."
-      ${EndIf}
+      ; Staging only shortens old-version cleanup. If historical or unexpected
+      ; data makes it unavailable, let the normal uninstaller remove the old
+      ; tree instead of rejecting an otherwise installable upgrade.
+      !insertmacro JustDoLogInstallEvent "phase=runtime-staging-degraded result=$0 action=continue-with-normal-old-version-removal"
     ${EndIf}
   ${EndIf}
   System::Call 'kernel32::GetTickCount()i.r0'
@@ -731,6 +781,12 @@ Function JustDoCheckAppRunning
   System::Call 'user32::UpdateWindow(p $JustDoInstFilesPage)i.r0'
   System::Call 'user32::UpdateWindow(p $HWNDPARENT)i.r0'
   StrCpy $JustDoProcessCheckComplete "1"
+FunctionEnd
+
+Function JustDoReadDesktopUserPaths
+  StrCpy $0 "$JustDoCurrentUserAppData"
+  StrCpy $1 "$JustDoCurrentUserLocalAppData"
+  StrCpy $3 "$JustDoCurrentTemp"
 FunctionEnd
 
 !macro customCheckAppRunning
@@ -764,8 +820,10 @@ FunctionEnd
     ${GetOptions} $0 "--justdo-current-user-bootstrap" $1
     ${If} ${Errors}
       ${If} ${Silent}
-        SetErrorLevel 2
-        Quit
+        ; Unattended installs run as the invoking account. Let electron-builder
+        ; honor /currentuser, /allusers and its normal registry-based selection.
+        ; A desktop shell is not required for deployment or update automation.
+        Goto JustDoAccountBootstrapComplete
       ${EndIf}
       ${StdUtils.ExecShellAsUser} $1 "$EXEPATH" "open" '--justdo-current-user-bootstrap $0'
       ${If} $1 == "ok"
@@ -808,25 +866,19 @@ FunctionEnd
   ; Start diagnostics before architecture, mutex and multi-user checks because
   ; each of those electron-builder template paths can terminate setup early.
   Call JustDoSelectInstallLogDirectory
-  ${If} $JustDoInstallLogDirectory == ""
-    StrCpy $JustDoInstallTerminalState "logging-unavailable"
-    MessageBox MB_OK|MB_ICONSTOP "安装程序无法创建必需的诊断日志，因此不会继续安装。请检查 APPDATA、LOCALAPPDATA、TEMP 或安装包所在目录的写入权限。$\r$\n$\r$\nSetup cannot create its required diagnostic logs, so installation will not continue. Check write access to APPDATA, LOCALAPPDATA, TEMP, or the setup file directory." /SD IDOK
-    SetErrorLevel 2
-    Quit
-  ${EndIf}
-
   ClearErrors
-  FileOpen $2 "$JustDoInstallLogPath" a
+  !insertmacro JustDoOpenAppendLog $2 "$JustDoInstallLogPath"
   ${If} ${Errors}
-    StrCpy $JustDoInstallTerminalState "logging-unavailable"
-    MessageBox MB_OK|MB_ICONSTOP "安装程序无法重新打开必需的诊断日志，因此不会继续安装。$\r$\n$JustDoInstallLogPath$\r$\n$\r$\nSetup cannot reopen its required diagnostic log, so installation will not continue.$\r$\n$JustDoInstallLogPath" /SD IDOK
-    SetErrorLevel 2
-    Quit
+    ; Logging must never prevent an otherwise valid installation.
+    FileOpen $2 "NUL" w
+    ClearErrors
   ${EndIf}
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
-  FileWrite $2 "$\r$\n=== installer-session-start ===$\r$\n"
+  FileWrite $2 "$\r$\n====================================================================================================$\r$\n"
+  FileWrite $2 "INSTALL SESSION START | timestamp=$5-$4-$3 $7:$8:$9 | session=$JustDoInstallerSessionId | pid=$JustDoInstallerPid | version=${VERSION} | installer=$EXEPATH$\r$\n"
+  FileWrite $2 "====================================================================================================$\r$\n"
   FileWrite $2 "pre-init-start: $5-$4-$3 $7:$8:$9$\r$\n"
-  FileWrite $2 "log-format-version: 3$\r$\n"
+  FileWrite $2 "log-format-version: 4$\r$\n"
   FileWrite $2 "installer-pid: $JustDoInstallerPid$\r$\n"
   FileWrite $2 "installer-session-id: $JustDoInstallerSessionId$\r$\n"
   FileWrite $2 "product: ${PRODUCT_NAME} ${VERSION}$\r$\n"
@@ -871,25 +923,39 @@ FunctionEnd
   FileWrite $2 "resource-detail-log: $JustDoResourceLogPath$\r$\n"
   FileClose $2
   ClearErrors
+  !insertmacro JustDoOpenAppendLog $2 "$JustDoResourceLogPath"
+  ${IfNot} ${Errors}
+    FileWrite $2 "$\r$\n====================================================================================================$\r$\n"
+    FileWrite $2 "INSTALL SESSION START | timestamp=$5-$4-$3 $7:$8:$9 | session=$JustDoInstallerSessionId | pid=$JustDoInstallerPid | version=${VERSION} | installer=$EXEPATH$\r$\n"
+    FileWrite $2 "====================================================================================================$\r$\n"
+    FileClose $2
+  ${EndIf}
+  ClearErrors
   !insertmacro JustDoLogInstallEvent "phase=installer-pre-init-complete"
 !macroend
 !endif
 
 !macro customInit
+  ; Synchronize before opening handles: UAC_SYNCREGISTERS replaces all general
+  ; registers, including $2, with values from the outer process.
+  ${If} ${UAC_IsInnerInstance}
+    !insertmacro UAC_AsUser_Call Function JustDoReadDesktopUserPaths ${UAC_SYNCREGISTERS}
+    StrCpy $JustDoCurrentUserAppData $0
+    StrCpy $JustDoCurrentUserLocalAppData $1
+    StrCpy $JustDoCurrentTemp $3
+  ${EndIf}
   ; Multi-user state is only valid after electron-builder's initMultiUser macro.
   ; Append it to the session started by preInit instead of truncating early logs.
   ClearErrors
-  FileOpen $2 "$JustDoInstallLogPath" a
+  !insertmacro JustDoOpenAppendLog $2 "$JustDoInstallLogPath"
   ${If} ${Errors}
     !insertmacro JustDoLogInstallEvent "phase=install-log-recovery trigger=custom-init-reopen"
     ClearErrors
-    FileOpen $2 "$JustDoInstallLogPath" a
+    !insertmacro JustDoOpenAppendLog $2 "$JustDoInstallLogPath"
   ${EndIf}
   ${If} ${Errors}
-    StrCpy $JustDoInstallTerminalState "logging-unavailable"
-    MessageBox MB_OK|MB_ICONSTOP "安装程序无法写入必需的诊断日志，因此不会继续安装。$\r$\n$JustDoInstallLogPath$\r$\n$\r$\nSetup cannot write its required diagnostic log, so installation will not continue.$\r$\n$JustDoInstallLogPath" /SD IDOK
-    SetErrorLevel 2
-    Quit
+    FileOpen $2 "NUL" w
+    ClearErrors
   ${EndIf}
   FileWrite $2 "detected-per-user-installation: $hasPerUserInstallation$\r$\n"
   FileWrite $2 "detected-per-machine-installation: $hasPerMachineInstallation$\r$\n"
@@ -921,19 +987,15 @@ FunctionEnd
   ; Write timestamps to help diagnose slow installation phases.
   ; Log directory was selected and verified by preInit.
 
-  CreateDirectory "$APPDATA\${PRODUCT_NAME}"
+  CreateDirectory "$JustDoCurrentUserAppData\${PRODUCT_NAME}"
   ; The old uninstaller has now removed the previous app shell. Restore the
   ; same-volume, directory-level runtime staging so unpack-cfmind can replace it
   ; transactionally and roll it back if the new archive is invalid.
   Call JustDoRestoreManagedRuntimes
   ${If} $0 != "0"
-    !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=runtime-restore-failed result=$0"
-    ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-    ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-      Abort "无法恢复旧版运行环境，安装已停止。请重试并提供安装日志。"
-    ${Else}
-      Abort "Setup could not restore the previous runtime. Retry and provide the install log."
-    ${EndIf}
+    ; The new package installs a complete runtime. A stale runtime staging
+    ; directory is diagnostic residue, not a reason to reject the new app.
+    !insertmacro JustDoLogInstallEvent "phase=runtime-restore-degraded result=$0 action=continue-with-new-runtime"
   ${EndIf}
   System::Call 'kernel32::GetTickCount()i.r0'
   ${If} $JustDoCoreInstallStartedTick != 0
@@ -986,18 +1048,18 @@ FunctionEnd
   !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-validation-complete result=passed"
 
   ; Re-probe both logs together before the long resource phase. If either path
-  ; became unavailable, relocate the pair and continue only after both reopen.
+  ; became unavailable, try relocating the pair. Diagnostics remain best-effort.
   StrCpy $R5 "0"
   StrCpy $R4 "$JustDoInstallLogPath"
   ClearErrors
-  FileOpen $0 "$JustDoInstallLogPath" a
+  !insertmacro JustDoOpenAppendLog $0 "$JustDoInstallLogPath"
   ${If} ${Errors}
     StrCpy $R5 "1"
   ${Else}
     FileClose $0
   ${EndIf}
   ClearErrors
-  FileOpen $0 "$JustDoResourceLogPath" a
+  !insertmacro JustDoOpenAppendLog $0 "$JustDoResourceLogPath"
   ${If} ${Errors}
     StrCpy $R5 "1"
   ${Else}
@@ -1006,20 +1068,14 @@ FunctionEnd
   ${If} $R5 == "1"
     Call JustDoSelectInstallLogDirectory
   ${EndIf}
-  ${If} $JustDoInstallLogDirectory == ""
-    StrCpy $JustDoInstallTerminalState "logging-unavailable"
-    MessageBox MB_OK|MB_ICONSTOP "安装程序无法写入必需的诊断日志，因此安装已停止。$\r$\n$R4$\r$\n$\r$\nSetup cannot write its required diagnostic logs, so installation has stopped.$\r$\n$R4" /SD IDOK
-    Abort "Required installer logs are unavailable."
-  ${EndIf}
   ${If} $R5 == "1"
     !insertmacro JustDoLogInstallEvent "phase=install-log-relocated trigger=custom-install-probe previous=$R4 current=$JustDoInstallLogPath"
   ${EndIf}
   ClearErrors
-  FileOpen $2 "$JustDoInstallLogPath" a
+  !insertmacro JustDoOpenAppendLog $2 "$JustDoInstallLogPath"
   ${If} ${Errors}
-    StrCpy $JustDoInstallTerminalState "logging-unavailable"
-    MessageBox MB_OK|MB_ICONSTOP "安装程序无法重新打开必需的诊断日志，因此安装已停止。$\r$\n$JustDoInstallLogPath$\r$\n$\r$\nSetup cannot reopen its required diagnostic log, so installation has stopped.$\r$\n$JustDoInstallLogPath" /SD IDOK
-    Abort "Required installer log is unavailable."
+    FileOpen $2 "NUL" w
+    ClearErrors
   ${EndIf}
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
@@ -1142,7 +1198,7 @@ FunctionEnd
   !insertmacro JustDoAddInstallActivity \
     "正在整理核心资源" \
     "Preparing core resources"
-  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar.zst $INSTDIR\resources $APPDATA\${PRODUCT_NAME} $INSTDIR\resources\win-resources-metadata.json <progress-file> $JustDoResourceLogPath$\r$\n"
+  FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar.zst $INSTDIR\resources $JustDoCurrentUserAppData\${PRODUCT_NAME} $INSTDIR\resources\win-resources-metadata.json <progress-file> $JustDoResourceLogPath <session-id> ${VERSION}$\r$\n"
   FileWrite $2 "tar-extract-detail-log: $JustDoResourceLogPath$\r$\n"
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     FileWrite $2 "app-exe: exists$\r$\n"
@@ -1175,7 +1231,7 @@ FunctionEnd
     SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
     ShowWindow $JustDoProgressBar 0
   ${EndIf}
-  ${StdUtils.ExecShellWaitEx} $R7 $R8 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "open" '"$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar.zst" "$INSTDIR\resources" "$APPDATA\${PRODUCT_NAME}" "$INSTDIR\resources\win-resources-metadata.json" "$JustDoResourceProgressFile" "$JustDoResourceLogPath"'
+  ${StdUtils.ExecShellWaitEx} $R7 $R8 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "open" '"$INSTDIR\resources\unpack-cfmind.cjs" "$INSTDIR\resources\win-resources.tar.zst" "$INSTDIR\resources" "$JustDoCurrentUserAppData\${PRODUCT_NAME}" "$INSTDIR\resources\win-resources-metadata.json" "$JustDoResourceProgressFile" "$JustDoResourceLogPath" "$JustDoInstallerSessionId" "${VERSION}"'
   ${If} $R7 != "ok"
     FileWrite $2 "tar-extract-launch-error: result=$R7 detail=$R8$\r$\n"
     StrCpy $0 "launch-$R7-$R8"
@@ -1288,10 +1344,15 @@ FunctionEnd
   !insertmacro JustDoAddInstallActivity \
     "正在保存本机配置" \
     "Saving local configuration"
-  Delete "$APPDATA\${PRODUCT_NAME}\dependency-config\.npmrc"
-  Delete "$APPDATA\${PRODUCT_NAME}\dependency-config\pip.ini"
-  RMDir "$APPDATA\${PRODUCT_NAME}\dependency-config"
-  FileWrite $2 "dependency-config-legacy: cleanup-complete$\r$\n"
+  Delete "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\.npmrc"
+  Delete "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\pip.ini"
+  RMDir "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config"
+  ${If} ${FileExists} "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\.npmrc"
+  ${OrIf} ${FileExists} "$JustDoCurrentUserAppData\${PRODUCT_NAME}\dependency-config\pip.ini"
+    FileWrite $2 "dependency-config-legacy: cleanup-incomplete$\r$\n"
+  ${Else}
+    FileWrite $2 "dependency-config-legacy: cleanup-complete$\r$\n"
+  ${EndIf}
 
   FileWrite $2 "delete-resource-tar: start$\r$\n"
   Delete "$INSTDIR\resources\win-resources.tar.zst"
@@ -1367,6 +1428,21 @@ FunctionEnd
 !macroend
 
 !macro customUnInit
+  ; The upstream legacy switch bypasses the safe optional cleanup section and
+  ; can delete an elevated credential account's data. Keep deletion in the
+  ; explicit interactive option, with normal and upgrade uninstalls unchanged.
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "--delete-app-data" $1
+  ${IfNot} ${Errors}
+    DetailPrint "The legacy --delete-app-data option is unsupported. Use the uninstall data checkbox."
+    ${IfNot} ${Silent}
+      MessageBox MB_OK|MB_ICONINFORMATION "To delete ${PRODUCT_NAME} data, run the uninstaller without --delete-app-data and select the user-data deletion option.$\r$\n$\r$\n若要删除 ${PRODUCT_NAME} 数据，请去掉 --delete-app-data 参数重新运行卸载程序，并勾选删除用户数据选项。"
+    ${EndIf}
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  ClearErrors
   ; In interactive mode, ask the user to close the app instead of silently
   ; killing it. Closing the main app also gives its gateway and child processes
   ; a chance to shut down cleanly. Silent uninstall keeps the non-interactive
@@ -1393,4 +1469,87 @@ FunctionEnd
           Goto JustDoUninstallProcessCheck
       ${EndIf}
   ${EndIf}
+!macroend
+
+!ifdef BUILD_UNINSTALLER
+Function un.JustDoDeleteCurrentUserData
+  ; Dispatching this function to the non-elevated UAC outer process keeps the
+  ; shell environment bound to the desktop user even when another account's
+  ; administrator credentials were entered for an all-users uninstall.
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\justdo-user-data-helper.ps1 "${PROJECT_DIR}\scripts\nsis-user-data-helper.ps1"
+  StrCpy $2 ""
+  ${If} ${UAC_IsAdmin}
+    StrCpy $2 "-RequireDesktopUser"
+  ${EndIf}
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-user-data-helper.ps1" -Names "${PRODUCT_NAME}|${APP_FILENAME}|${APP_PACKAGE_NAME}|${APP_PACKAGE_NAME}-updater" $2'
+  Pop $0
+  Pop $1
+FunctionEnd
+!endif
+
+; Assisted uninstall shows the standard components page when this macro is
+; present. Keep data deletion optional and unchecked: uninstalling the app is
+; reversible, while deleting local state, transcripts and credentials is not.
+; Silent upgrade uninstallers do not select this section, and electron-builder
+; also passes --updated, so upgrades always preserve user data.
+!macro customUnInstallSection
+  LangString JustDoDeleteUserData 1033 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1031 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1036 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 3082 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 2052 "删除所有本机用户数据（设置、聊天记录、浏览器数据和已下载模型）"
+  LangString JustDoDeleteUserData 1028 "刪除所有本機使用者資料（設定、聊天記錄、瀏覽器資料和已下載模型）"
+  LangString JustDoDeleteUserData 1041 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1042 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1040 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1043 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1030 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1053 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1044 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1035 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1049 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 2070 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1046 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1045 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1058 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1029 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1051 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1038 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1025 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1055 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1054 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+  LangString JustDoDeleteUserData 1066 "Delete all local user data (settings, chat history, browser data, and downloaded models)"
+
+  Section /o "un.$(JustDoDeleteUserData)" un.JustDoDeleteUserData
+    ; Deliberately never touch ~/${APP_FILENAME}/project, session cwd values,
+    ; downloads, or any other user-selected workspace. The helper only removes
+    ; exact children of the current desktop user's Roaming/Local bases and
+    ; never traverses a junction or symbolic link.
+    ${If} ${isUpdated}
+      Goto JustDoDeleteUserDataDone
+    ${EndIf}
+
+    JustDoDeleteUserDataRetry:
+    DetailPrint "Deleting local ${PRODUCT_NAME} user data..."
+    ${If} $installMode == "all"
+    ${AndIf} ${UAC_IsInnerInstance}
+      !insertmacro UAC_AsUser_Call Function un.JustDoDeleteCurrentUserData ${UAC_SYNCREGISTERS}
+    ${Else}
+      Call un.JustDoDeleteCurrentUserData
+    ${EndIf}
+    ${If} $0 == "3"
+      DetailPrint "User data preserved: desktop account could not be confirmed."
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONINFORMATION "${PRODUCT_NAME} was uninstalled. User data was kept because this elevated account could not be confirmed as the desktop user.$\r$\n$\r$\n${PRODUCT_NAME} 已卸载。无法确认管理员账户是否为当前桌面用户，已保留用户数据。"
+      ${EndIf}
+    ${ElseIf} $0 != "0"
+      ${If} ${Silent}
+        SetErrorLevel 3
+      ${Else}
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Some ${PRODUCT_NAME} data could not be deleted. Close programs using the data and click Retry, or click Cancel to keep the remaining files and finish uninstalling.$\r$\n$\r$\n部分 ${PRODUCT_NAME} 数据无法删除。请关闭正在使用这些数据的程序后点击“重试”，或点击“取消”保留剩余文件并完成卸载。" IDRETRY JustDoDeleteUserDataRetry
+      ${EndIf}
+    ${EndIf}
+    JustDoDeleteUserDataDone:
+  SectionEnd
 !macroend

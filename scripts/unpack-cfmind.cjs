@@ -8,6 +8,7 @@
  *
  * 用法: JustDo.exe <本脚本路径> <tarPath> <destDir> <userDataDir>
  *                   <metadataPath> <progressPath> <diagnosticLogPath>
+ *                   <installerSessionId> <productVersion>
  *
  * 效果:
  *   输入: $INSTDIR/resources/win-resources.tar.zst
@@ -35,6 +36,8 @@ const userDataDir = process.argv[4];
 const metadataPath = process.argv[5];
 const progressPath = process.argv[6];
 const diagnosticLogPath = process.argv[7];
+const installerSessionId = process.argv[8] || 'unknown';
+const productVersion = process.argv[9] || 'unknown';
 const diagnosticStartedAt = Date.now();
 let progressWriteWarningShown = false;
 let lastProgressPercent = null;
@@ -63,6 +66,7 @@ function writeDiagnostic(level, event, details = {}) {
     .join(' ');
   const line = [
     new Date().toISOString(),
+    `session=${sanitizeDiagnosticValue(installerSessionId)}`,
     `elapsed-ms=${Date.now() - diagnosticStartedAt}`,
     `level=${level}`,
     `event=${event}`,
@@ -81,6 +85,31 @@ function writeDiagnostic(level, event, details = {}) {
     }
   }
 }
+
+function writeDiagnosticBoundary(kind, status = '') {
+  if (!diagnosticLogPath) return;
+  const separator = '='.repeat(100);
+  const summary = [
+    `RESOURCE INSTALL SESSION ${kind}`,
+    `timestamp=${new Date().toISOString()}`,
+    `session=${sanitizeDiagnosticValue(installerSessionId)}`,
+    `version=${sanitizeDiagnosticValue(productVersion)}`,
+    status && `status=${sanitizeDiagnosticValue(status)}`,
+  ]
+    .filter(Boolean)
+    .join(' | ');
+  try {
+    fs.mkdirSync(path.dirname(diagnosticLogPath), { recursive: true });
+    fs.appendFileSync(diagnosticLogPath, `\n${separator}\n${summary}\n${separator}\n`, 'utf8');
+  } catch (error) {
+    if (!diagnosticWriteWarningShown) {
+      console.error(`[unpack-cfmind] Warning: unable to write diagnostic log: ${error.message}`);
+      diagnosticWriteWarningShown = true;
+    }
+  }
+}
+
+writeDiagnosticBoundary('START');
 
 function diagnosticWarning(message, error) {
   writeDiagnostic('warn', 'warning', {
@@ -513,12 +542,14 @@ if (!tarPath || !destDir) {
     destinationPresent: Boolean(destDir),
   });
   console.error('[unpack-cfmind] Usage: JustDo.exe unpack-cfmind.cjs <tarPath> <destDir>');
+  writeDiagnosticBoundary('END', 'invalid-arguments');
   process.exit(1);
 }
 
 if (!fs.existsSync(tarPath)) {
   writeDiagnostic('error', 'archive-missing', { archive: tarPath });
   console.error(`[unpack-cfmind] tar file not found: ${tarPath}`);
+  writeDiagnosticBoundary('END', 'archive-missing');
   process.exit(1);
 }
 
@@ -987,6 +1018,7 @@ async function main() {
     diskGrowthGuard.stop();
     clearTimeout(installTimeout);
     cleanupManagedInstallerTempRoot();
+    writeDiagnosticBoundary('END', 'success');
     process.exit(0);
   } catch (err) {
     diskGrowthGuard.stop();
@@ -1001,6 +1033,7 @@ async function main() {
       progressPercent: lastProgressPercent,
     });
     cleanupManagedInstallerTempRoot();
+    writeDiagnosticBoundary('END', 'failed');
     process.exit(1);
   }
 }

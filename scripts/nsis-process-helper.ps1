@@ -28,13 +28,20 @@ try {
       $stream = [IO.File]::Open(
         $appExecutablePath,
         [IO.FileMode]::Open,
-        [IO.FileAccess]::ReadWrite,
+        [IO.FileAccess]::Read,
         [IO.FileShare]::None
       )
       $stream.Dispose()
       return $false
     } catch {
-      return $true
+      # PowerShell wraps static .NET failures in MethodInvocationException.
+      # Inspect the underlying IOException to distinguish locks from ACL errors.
+      $lockException = $_.Exception
+      while ($null -ne $lockException.InnerException) {
+        $lockException = $lockException.InnerException
+      }
+      $win32Code = $lockException.HResult -band 0xFFFF
+      return $win32Code -eq 32 -or $win32Code -eq 33
     }
   }
 
@@ -295,6 +302,24 @@ try {
     }
   }
 } catch {
+  # Process inventory is only an optimization before the installer performs
+  # the real filesystem replacement. If Windows denies process enumeration,
+  # fall back to an exclusive-open probe of the installed executable. This
+  # keeps a genuinely locked application blocking the upgrade without making
+  # WMI/process API health a prerequisite for installation. Locks on any other
+  # installed file are still reported by the old-version removal/copy step.
+  if ($Action -in @('Find', 'Wait', 'Stop') -and
+      -not [string]::IsNullOrWhiteSpace($installRoot)) {
+    $locked = Test-AppExecutableLocked
+    Write-Output "fallback=executable-lock-probe locked=$locked"
+    if ($Action -eq 'Find') {
+      if ($locked) { exit 0 }
+      exit 1
+    }
+    if ($locked) { exit 1 }
+    exit 0
+  }
+
   # Keep diagnostics single-line and path-free so NSIS can record the failure
   # without exposing command lines or process metadata.
   $exceptionType = $_.Exception.GetType().FullName
