@@ -16,7 +16,7 @@ class HookTests(unittest.IsolatedAsyncioTestCase):
     async def request(self, body=None, token=TOKEN, path='/customer/activity', method='POST'):
         self.store = AsyncMock()
         self.downstream = AsyncMock()
-        self.hook = ActivityHook(self.downstream, self.store, TOKEN)
+        self.hook = ActivityHook(self.downstream, self.store, TOKEN, legacy_expires_at=4102444800)
         scope = {'type': 'http', 'path': path, 'method': method,
                  'headers': [(b'authorization', ('Bearer ' + token).encode())]}
         receive = AsyncMock(return_value={'type': 'http.request',
@@ -53,7 +53,7 @@ class HookTests(unittest.IsolatedAsyncioTestCase):
     async def test_database_failure_returns_retryable_error(self):
         store = AsyncMock()
         store.record.side_effect = RuntimeError('sensitive database details')
-        hook = ActivityHook(AsyncMock(), store, TOKEN)
+        hook = ActivityHook(AsyncMock(), store, TOKEN, legacy_expires_at=4102444800)
         send = AsyncMock()
         await hook({'type': 'http', 'path': '/customer/activity', 'method': 'POST',
                     'headers': [(b'authorization', ('Bearer ' + TOKEN).encode())]},

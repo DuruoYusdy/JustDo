@@ -1,0 +1,83 @@
+name: ${LITELLM_DEPLOYMENT_NAME:-justdo-litellm}
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: ['sh', '-c', 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes']
+    volumes:
+      - litellm-redis:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-litellm}
+      POSTGRES_USER: ${POSTGRES_USER:-litellm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - litellm-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  litellm:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        LITELLM_IMAGE: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:v1.99.1}
+    image: litellm-hooks:local
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    command: ['--host', '0.0.0.0', '--port', '4000', '--workers', '4']
+    healthcheck:
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=5).close()']
+      interval: 10s
+      timeout: 6s
+      start_period: 120s
+      retries: 12
+    environment:
+      CONFIG_FILE_PATH: /app/config.yaml
+      LITELLM_HOOKS: ${LITELLM_HOOKS-activity}
+      LITELLM_ACTIVITY_DATABASE_URL: ${LITELLM_ACTIVITY_DATABASE_URL:?set asyncpg database URL}
+      LITELLM_ACTIVITY_TOKEN: ${LITELLM_ACTIVITY_TOKEN:-}
+      LITELLM_ACTIVITY_LEGACY_EXPIRES_AT: ${LITELLM_ACTIVITY_LEGACY_EXPIRES_AT:-}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:?set stable LITELLM_SALT_KEY in .env}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      MINIMUM_CUSTOM_KEY_LENGTH: ${MINIMUM_CUSTOM_KEY_LENGTH:-16}
+      LITELLM_JWT_ISSUER: ${LITELLM_JWT_ISSUER-${JUSTDO_JWT_ISSUER:?set LITELLM_JWT_ISSUER in .env}}
+      LITELLM_JWT_AUDIENCE: ${LITELLM_JWT_AUDIENCE-${JUSTDO_JWT_AUDIENCE:?set LITELLM_JWT_AUDIENCE in .env}}
+      LITELLM_JWT_JWKS_URL: ${LITELLM_JWT_JWKS_URL-${JUSTDO_JWT_JWKS_URL:?set LITELLM_JWT_JWKS_URL in .env}}
+      LITELLM_JWT_ALGORITHMS: ${LITELLM_JWT_ALGORITHMS-${JUSTDO_JWT_ALGORITHMS-RS256}}
+      LITELLM_JWT_MAX_LIFETIME_SECONDS: ${LITELLM_JWT_MAX_LIFETIME_SECONDS-${JUSTDO_JWT_MAX_LIFETIME_SECONDS-300}}
+      LITELLM_JWT_CLOCK_SKEW_SECONDS: ${LITELLM_JWT_CLOCK_SKEW_SECONDS-${JUSTDO_JWT_CLOCK_SKEW_SECONDS-30}}
+      LITELLM_DEFAULT_TEAM_ID: ${LITELLM_DEFAULT_TEAM_ID-${JUSTDO_DEFAULT_TEAM_ID-}}
+    ports:
+      - '${LITELLM_PORT:-9108}:4000'
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+
+volumes:
+  litellm-postgres:
+  litellm-redis:

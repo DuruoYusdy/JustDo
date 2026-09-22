@@ -1,0 +1,21 @@
+[Unit]
+Description=LiteLLM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=litellm
+Group=litellm
+WorkingDirectory=/opt/litellm/native
+ExecStart=/opt/litellm/native/.venv/bin/python /opt/litellm/native/start.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+LimitNOFILE=16384
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

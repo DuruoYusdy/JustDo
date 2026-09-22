@@ -21,7 +21,9 @@ describe('application credential protection', () => {
       providers: { builtin_models: { apiKey: 'justdo-builtin-credential' } },
       api: { key: 'justdo-builtin-credential' },
     };
-    expect(transformAppConfigCredentials(config, 'encrypt', cipher)).toEqual(config);
+    expect(transformAppConfigCredentials(config, 'encrypt', cipher)).toEqual({
+      providers: { builtin_models: { apiKey: '' } }, api: { key: '' },
+    });
     expect(cipher.encryptString).not.toHaveBeenCalled();
   });
 
@@ -36,7 +38,7 @@ describe('application credential protection', () => {
     expect(JSON.stringify(encrypted)).toContain('legacy-fixture-key');
     expect(cipher.encryptString).not.toHaveBeenCalled();
     expect(transformAppConfigCredentials(encrypted, 'decrypt', cipher)).toEqual({
-      ...config, providers: { ...config.providers, builtin_models: { apiKey: 'justdo-builtin-credential', models: [] } },
+      ...config, providers: { ...config.providers, builtin_models: { apiKey: '', models: [] } },
     });
     expect(config.providers.builtin_models.apiKey).toBe('builtin-fixture-key');
   });

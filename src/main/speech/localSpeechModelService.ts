@@ -6,7 +6,7 @@ import { pipeline } from 'stream/promises';
 import * as tar from 'tar';
 import { createZstdDecompress } from 'zlib';
 
-import appUpdateConfig from '../../shared/app/appUpdateConfig.json';
+import { APP_UPDATE_CONFIG } from '../../config/appUpdate';
 import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/speech/localAsr';
 import {
   type LocalSpeechModelInstallResult,
@@ -226,8 +226,8 @@ export class LocalSpeechModelService {
     return this.dependencies.baseUrl
       ? new URL(this.dependencies.baseUrl)
       : new URL(
-          `${appUpdateConfig.speechModels.path.replace(/^\/+|\/+$/g, '')}/`,
-          `${appUpdateConfig.feedUrl.replace(/\/+$/, '')}/`,
+          `${APP_UPDATE_CONFIG.speechModels.path.replace(/^\/+|\/+$/g, '')}/`,
+          `${APP_UPDATE_CONFIG.feedUrl.replace(/\/+$/, '')}/`,
         );
   }
 

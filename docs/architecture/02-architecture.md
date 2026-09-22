@@ -116,7 +116,7 @@ Shared 由两个进程共同编译，适合放：IPC channel 常量、可序列�
 | `security/` | Windows 沙箱合约与原生二进制清单 |
 | `speech/` | 本地/在线 ASR、TTS、语音模型和设置 |
 
-构建脚本直接读取 `app/appUpdateConfig.json` 与 `security/mxcNativeBinaries.json`，与应用代码共用同一配置源。目录分组不改变 IPC 名称、数据结构或进程权限边界。
+构建脚本直接读取 `src/config/appUpdate.ts` 与 `security/mxcNativeBinaries.json`，与应用代码共用同一配置源。目录分组不改变 IPC 名称、数据结构或进程权限边界。
 
 ## 4. 依赖规则
 
@@ -178,7 +178,8 @@ sequenceDiagram
   M->>M: start outbound-header proxy
   M->>M: create default workspace/localfile protocol
   M->>D: reset stale session/run state
-  M->>M: restore system proxy and built-in provider
+  M->>M: load short-lived JWT and restore system proxy
+  M->>M: discover the user's built-in models
   M->>C: sync OpenClaw config
   C-->>M: verified config result
   M->>G: start managed Gateway
@@ -198,6 +199,7 @@ sequenceDiagram
    start/restart 都会先核对 policy digest，并在构造新进程环境前完成必要的 Proxy generation 切换。
 5. config sync 成功后才自动启动 Gateway 和 cron polling；失败被记录且新 Cowork admission 会 fail closed。
 6. 窗口创建晚于核心本地服务初始化，UI 不会在数据库不可用时假装 ready。
+7. 从 `user_info.json` 读取 mtoken，向显式配置的换证服务取得 JWT；JWT `sub` 必须匹配账号，缺失或临近过期时停止内置模型访问，`X-Cookie` 不参与模型认证。
 
 ## 7. Cowork 数据流
 
@@ -224,7 +226,7 @@ Start/continue handler 先等待待处理配置更新并确保 Gateway 的全局
 
 退出由统一 shutdown coordinator 保证只执行一次：
 
-1. 停止 customer registration、tray 和 cron polling，阻止新后台工作。
+1. 清除内存中的内置模型 JWT，停止凭据文件监听、tray 和 cron polling，阻止新后台工作。
 2. 停止全部 Cowork session。
 3. 停止 Gateway，使其不再发起 extension/tool 调用。
 4. 停止 outbound-header proxy。

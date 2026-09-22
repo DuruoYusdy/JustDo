@@ -1,5 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
 
+import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
 import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network/network';
 import {
   MODEL_PROVIDER_HEADER_LIMITS,
@@ -10,11 +11,7 @@ import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
 } from '../../core/network/mainProcessFetch';
-import {
-  BUILTIN_CREDENTIAL_MARKER,
-  BUILTIN_MODEL_PROVIDER_CONFIG,
-  resolveBuiltinRequestApiKey,
-} from '../../cowork/builtinModelProviderConfig';
+import { getBuiltinModelRequestHeaders } from '../../cowork/builtinModelCredential';
 
 interface PendingFetch {
   controller: AbortController;
@@ -162,20 +159,18 @@ export const registerNetworkHandlers = (): void => {
 
     const doFetch = async (headers: Record<string, string>, body = options.body) => {
       const requestHeaders = { ...headers };
-      const builtinAuth = Object.keys(requestHeaders).filter(
-        name =>
-          name.toLowerCase() === 'authorization' &&
-          requestHeaders[name] === `Bearer ${BUILTIN_CREDENTIAL_MARKER}`,
-      );
-      if (builtinAuth.length) {
-        const baseUrl = BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl.replace(/\/+$/, '');
-        if (options.method !== 'POST' || options.url !== `${baseUrl}/chat/completions`) {
-          throw new Error(t('builtinCredentialTargetMismatch'));
+      const baseUrl = BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl.replace(/\/+$/, '');
+      const isBuiltinProbe = options.purpose === NetworkFetchPurpose.ModelConnectionTest &&
+        options.method === 'POST' && options.url === `${baseUrl}/chat/completions`;
+      if (isBuiltinProbe) {
+        const authHeaders = getBuiltinModelRequestHeaders();
+        if (!authHeaders) throw new Error(t('builtinModelAuthenticationUnavailable'));
+        for (const name of Object.keys(requestHeaders)) {
+          if (Object.keys(authHeaders).some(key => key.toLowerCase() === name.toLowerCase())) {
+            delete requestHeaders[name];
+          }
         }
-        for (const name of builtinAuth) {
-          requestHeaders[name] =
-            `Bearer ${resolveBuiltinRequestApiKey(BUILTIN_CREDENTIAL_MARKER, baseUrl)}`;
-        }
+        Object.assign(requestHeaders, authHeaders);
       }
       const response = await session.defaultSession.fetch(options.url, {
         method: options.method,

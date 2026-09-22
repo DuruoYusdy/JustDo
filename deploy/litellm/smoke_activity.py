@@ -1,4 +1,8 @@
-"""Run inside the deployed container; creates and removes one unique test customer."""
+"""Optional legacy-activity smoke test; creates/removes one unique test customer.
+
+Run in the LiteLLM container while activity compatibility is enabled. For native
+deployment set LITELLM_SMOKE_BASE_URL=http://127.0.0.1:9108.
+"""
 import asyncio
 import json
 import os
@@ -9,6 +13,9 @@ import asyncpg
 
 
 async def main():
+    if not os.environ.get('LITELLM_ACTIVITY_TOKEN'):
+        raise SystemExit('Legacy activity compatibility is disabled; use JWT integration tests instead.')
+    base_url = os.getenv('LITELLM_SMOKE_BASE_URL', 'http://127.0.0.1:4000').rstrip('/')
     db = await asyncpg.connect(os.environ['LITELLM_ACTIVITY_DATABASE_URL'])
     user_id = 'activity-smoke-' + str(uuid4())
     try:
@@ -17,7 +24,7 @@ async def main():
         event = {'event_id': str(uuid4()), 'user_id': user_id, 'event_type': 'startup',
                  'metadata': {'productName': 'SmokeTest', 'version': '1'}}
         def post(token):
-            request = urllib.request.Request('http://127.0.0.1:9108/customer/activity',
+            request = urllib.request.Request(base_url + '/customer/activity',
                 data=json.dumps(event).encode(), headers={'Authorization': 'Bearer ' + token,
                                                         'Content-Type': 'application/json'})
             try:
@@ -38,4 +45,5 @@ async def main():
         print('Only the unique smoke-test customer was removed.')
 
 
-asyncio.run(main())
+if __name__ == '__main__':
+    asyncio.run(main())

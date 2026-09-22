@@ -574,16 +574,12 @@ export class OpenClawConfigSyncService {
         );
       }
       if (isAuthLogout) {
-        console.warn(
-          '[OpenClaw] syncOpenClawConfig: logout native reload did not complete; leaving Gateway running without a hard restart.',
-        );
-        return {
+        return this.failClosedConfigApplication({
           success: false,
           changed: syncResult.changed,
           configSynced: true,
           status: engineManager.getStatus(),
-          error: 'OpenClaw logout config was written, but native reload did not complete.',
-        };
+        }, 'OpenClaw logout config was written, but native reload did not complete.');
       }
       if (options.restartGatewayIfRunning === false) {
         return this.failClosedConfigApplication({

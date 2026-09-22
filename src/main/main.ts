@@ -15,7 +15,8 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
-import appUpdateConfig from '../shared/app/appUpdateConfig.json';
+import { APP_UPDATE_CONFIG } from '../config/appUpdate';
+import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
 import type { DeveloperConfig } from '../shared/app/developerConfig';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
@@ -32,7 +33,7 @@ import {
   listRetiredOpenClawProviderIds,
   ProviderName,
 } from '../shared/providers';
-import { BuiltinModelIpc } from '../shared/providers/builtinModels';
+import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/builtinModels';
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
@@ -58,7 +59,10 @@ import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedD
 import { setLanguage } from './core/i18n';
 import { initLogger } from './core/logger';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
-import { resolveOutboundHeaderUserInfoPath } from './core/network/outboundHeaderPolicyConfig';
+import {
+  resolveOutboundHeaderUserInfoPath,
+  updateOutboundHeaderUserInfoCache,
+} from './core/network/outboundHeaderPolicyConfig';
 import { OutboundHeaderPolicyService } from './core/network/outboundHeaderPolicyService';
 import { OutboundHeaderProxy } from './core/network/outboundHeaderProxy';
 import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/network/systemProxy';
@@ -72,12 +76,20 @@ import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
 import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
 import { registerLocalFileProtocol } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
+import {
+  getBuiltinModelAuthConfig,
+  resolveBuiltinModelDevelopmentApiKey,
+} from './cowork/builtinModelAuthConfig';
+import { BuiltinModelAuthCoordinator } from './cowork/builtinModelAuthCoordinator';
+import {
+  type BuiltinModelCredential,
+  clearActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredential,
+} from './cowork/builtinModelCredential';
+import { BuiltinModelCredentialMonitor } from './cowork/builtinModelCredentialMonitor';
 import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
-import {
-  BUILTIN_MODEL_PROVIDER_CONFIG,
-  getBuiltinModelProviderApiKey,
-} from './cowork/builtinModelProviderConfig';
+import { BuiltinModelTokenExchange } from './cowork/builtinModelTokenExchange';
 import {
   resolveAllEnabledProviderConfigs,
   resolveRawApiConfig,
@@ -432,6 +444,9 @@ let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let localSpeechModelService: LocalSpeechModelService | null = null;
 let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let customerRegistrationService: CustomerRegistrationService | null = null;
+let builtinModelCredentialMonitor: BuiltinModelCredentialMonitor | null = null;
+let builtinModelTokenExchange: BuiltinModelTokenExchange | null = null;
+let builtinModelAuthCoordinator: BuiltinModelAuthCoordinator | null = null;
 let windowsSandboxService: WindowsSandboxService | null = null;
 let browserExtensionChatServer: BrowserExtensionChatServer | null = null;
 let browserExtensionChatServerRestartPromise: Promise<void> | null = null;
@@ -743,13 +758,51 @@ const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
   return builtinModelLifecycle;
 };
 
+const getBuiltinModelTokenExchange = (): BuiltinModelTokenExchange => {
+  builtinModelTokenExchange ??= new BuiltinModelTokenExchange({
+    userInfoPath: resolveOutboundHeaderUserInfoPath(),
+    deviceIdPath: path.join(app.getPath('userData'), 'huawei', 'model-device.json'),
+    getConfig: getBuiltinModelAuthConfig,
+    getDevelopmentApiKey: () => resolveBuiltinModelDevelopmentApiKey(
+      getBuiltinModelAuthConfig(),
+      app.isPackaged,
+    ),
+    fetch: (url, init) => mainProcessFetch(url, init, { maxResponseBytes: 32_768 }),
+  });
+  return builtinModelTokenExchange;
+};
+
+const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
+  builtinModelAuthCoordinator ??= new BuiltinModelAuthCoordinator({
+    exchange: () => getBuiltinModelTokenExchange().refresh(),
+    getActive: getActiveBuiltinModelCredential,
+    login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
+    logout: () => getBuiltinModelLifecycle().refreshAfterLogout(),
+  });
+  return builtinModelAuthCoordinator;
+};
+
+const refreshBuiltinModelCredentialFromLoginFile = async (refreshCatalog = false) => {
+  updateOutboundHeaderUserInfoCache();
+  return getBuiltinModelAuthCoordinator().refresh(refreshCatalog);
+};
+
 // Authentication handlers should call these only after the Main process has
 // committed the corresponding authenticated/logged-out state.
-export const refreshAfterLogin = (): Promise<void> =>
-  getBuiltinModelLifecycle().refreshAfterLogin();
+export const refreshAfterLogin = async (): Promise<void> => {
+  getBuiltinModelTokenExchange().resume();
+  await refreshBuiltinModelCredentialFromLoginFile(true);
+  customerRegistrationService?.start();
+  void customerRegistrationService?.sync();
+};
 
-export const refreshAfterLogout = (): Promise<void> =>
-  getBuiltinModelLifecycle().refreshAfterLogout();
+export const refreshAfterLogout = (): Promise<void> => {
+  customerRegistrationService?.stop();
+  updateOutboundHeaderUserInfoCache();
+  builtinModelTokenExchange?.suspend();
+  clearActiveBuiltinModelCredential();
+  return getBuiltinModelAuthCoordinator().logout();
+};
 
 const getCoworkEngineService = (): CoworkEngineService => {
   if (!coworkEngineService) {
@@ -1572,7 +1625,11 @@ if (multicaBridgeArgv) {
   const runAppCleanup = async (): Promise<void> => {
     devSessionLifecycle?.stop();
     console.log('[Main] App is quitting, starting cleanup...');
+    builtinModelCredentialMonitor?.stop();
     customerRegistrationService?.stop();
+    builtinModelTokenExchange?.invalidate();
+    builtinModelAuthCoordinator?.initialize(null);
+    clearActiveBuiltinModelCredential();
     await clearBrowserExtensionAppServer(app.getPath('userData')).catch(error => {
       console.warn('[BrowserExtensionChat] Failed to clear app-server rendezvous:', error);
     });
@@ -1697,11 +1754,11 @@ if (multicaBridgeArgv) {
       getStore().set(APP_UPDATE_LAST_AUTOMATIC_CHECK_AT_KEY, checkedAt),
     releaseHistoryUrl: new URL(
       'release-history.json',
-      `${appUpdateConfig.feedUrl.replace(/\/+$/, '')}/`,
+      `${APP_UPDATE_CONFIG.feedUrl.replace(/\/+$/, '')}/`,
     ).toString(),
     fetchReleaseHistory: (requestUrl, init) =>
       mainProcessFetch(requestUrl, init, {
-        maxResponseBytes: appUpdateConfig.releaseHistory.maxBytes,
+        maxResponseBytes: APP_UPDATE_CONFIG.releaseHistory.maxBytes,
       }),
   });
   registerAutoUpdateHandlers(autoUpdateService);
@@ -1749,16 +1806,6 @@ if (multicaBridgeArgv) {
     await getOutboundHeaderProxy().start();
     activeOutboundHeaderPolicyDigest = initialOutboundHeaderPolicy.digest;
 
-    if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
-      customerRegistrationService = new CustomerRegistrationService({
-        apiKey: getBuiltinModelProviderApiKey(),
-        baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
-        productName: packageJson.productName,
-        version: packageJson.version,
-        userInfoPath: resolveOutboundHeaderUserInfoPath(),
-      });
-      customerRegistrationService.start();
-    }
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users
@@ -1801,9 +1848,16 @@ if (multicaBridgeArgv) {
     const appConfig = getStore().get<AppConfigSettings>('app_config');
     await applySystemProxyPreference(appConfig);
 
-    // Keep access enabled until authentication is introduced. Future login/logout
-    // flows can switch this single call between Enabled and Disabled.
-    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+    let builtinModelCredential: BuiltinModelCredential | null = null;
+    try {
+      builtinModelCredential = await getBuiltinModelTokenExchange().refresh();
+    } catch {
+      console.warn('[BuiltinModelTokenExchange] Startup exchange failed; retrying in background.');
+    }
+
+    await syncBuiltinModelProvider(store, {
+      access: builtinModelCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
+    });
 
     const coworkEngineRouter = getCoworkEngineRouter();
     bindEmbeddedBrowserGateway();
@@ -1841,9 +1895,14 @@ if (multicaBridgeArgv) {
       );
     }
 
-    const startupSync = await syncOpenClawConfig({
+    let startupSync = await syncOpenClawConfig({
       reason: 'startup',
     });
+    if (startupSync.success && !builtinModelCredential) {
+      startupSync = await syncOpenClawConfig({
+        reason: BuiltinModelSyncReason.AuthLogout,
+      });
+    }
     if (!startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
     }
@@ -1865,6 +1924,26 @@ if (multicaBridgeArgv) {
         .catch(error => {
           console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
         });
+    }
+
+    builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
+      userInfoPath: resolveOutboundHeaderUserInfoPath(),
+      refresh: refreshBuiltinModelCredentialFromLoginFile,
+      onError: error => {
+        console.error('[BuiltinModelCredentialMonitor] Credential refresh failed:', error);
+      },
+    });
+    getBuiltinModelAuthCoordinator().initialize(startupSync.success ? builtinModelCredential : null);
+    builtinModelCredentialMonitor.start(builtinModelCredential);
+    if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled) {
+      customerRegistrationService = new CustomerRegistrationService({
+        getCredential: getActiveBuiltinModelCredential,
+        baseUrl: BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl,
+        productName: APP_NAME,
+        version: app.getVersion(),
+        userInfoPath: resolveOutboundHeaderUserInfoPath(),
+      });
+      customerRegistrationService.start();
     }
 
     try {

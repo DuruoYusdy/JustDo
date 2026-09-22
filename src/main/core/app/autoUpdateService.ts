@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { type AppUpdater, autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
 
+import { APP_UPDATE_CONFIG } from '../../../config/appUpdate';
 import type {
   AppReleaseHistory,
   AppReleaseHistoryResult,
@@ -15,7 +16,6 @@ import {
   AppUpdateIpc,
   DEFAULT_APP_UPDATE_CHECK_FREQUENCY,
 } from '../../../shared/app/appUpdate';
-import appUpdateConfig from '../../../shared/app/appUpdateConfig.json';
 import { log } from '../logger';
 
 const STARTUP_CHECK_DELAY_MS = 10_000;
@@ -42,7 +42,7 @@ const {
   maxEntries: MAX_RELEASE_HISTORY_ENTRIES,
   maxReleaseDateLength: MAX_RELEASE_DATE_LENGTH,
   maxReleaseNotesLength: MAX_RELEASE_NOTES_LENGTH,
-} = appUpdateConfig.releaseHistory;
+} = APP_UPDATE_CONFIG.releaseHistory;
 const UPDATE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>

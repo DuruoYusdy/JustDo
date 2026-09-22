@@ -19,7 +19,7 @@ use only `latest.yml`; newer clients fetch the JSON history only when the user
 opens release history.
 
 Generation fails if the history exceeds the client limits defined in
-`src/shared/app/appUpdateConfig.json`, preventing a package that clients cannot
+`src/config/appUpdate.ts`, preventing a package that clients cannot
 display.
 
 Upload the versioned installer and `release-history.json` to the Generic update
@@ -27,8 +27,8 @@ server before atomically replacing `latest.yml`. Differential downloads are
 disabled; clients download the complete installer and verify its SHA-512 value
 against `latest.yml`.
 
-The Windows Generic feed is checked into
-`scripts/windows-update-config.cjs`. Packaging does not need to reach the feed
+The Windows Generic feed is checked into `src/config/appUpdate.ts`. Packaging
+does not need to reach the feed
 and does not require update environment variables. Run
 `npm run verify:windows-update-artifacts` after packaging and before uploading
 any files.

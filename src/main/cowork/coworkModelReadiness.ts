@@ -1,5 +1,6 @@
+import { ProviderName } from '../../shared/providers';
 import { mergeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
-import { resolveBuiltinRequestApiKey } from './builtinModelProviderConfig';
+import { getBuiltinModelRequestHeaders } from './builtinModelCredential';
 import { buildOpenAIChatCompletionsUrl, extractApiErrorSnippet } from './coworkModelApi';
 import { resolveCurrentApiConfig } from './providerApiConfig';
 
@@ -9,6 +10,7 @@ type ModelReadinessApiConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  providerName?: string;
   headers?: Record<string, string>;
 };
 
@@ -29,6 +31,7 @@ function resolveModelReadinessApiConfig(): {
       apiKey: resolution.config.apiKey,
       baseURL: resolution.config.baseURL,
       model: resolution.config.model,
+      providerName: resolution.providerMetadata?.providerName,
       headers: resolution.config.headers,
     },
   };
@@ -54,9 +57,16 @@ export async function probeCoworkModelReadiness(
       'Content-Type': 'application/json',
     };
     if (config.apiKey) {
-      headers.Authorization = `Bearer ${resolveBuiltinRequestApiKey(config.apiKey, config.baseURL)}`;
+      headers.Authorization = `Bearer ${config.apiKey}`;
     }
     headers = mergeModelProviderHeaders(headers, config.headers);
+    if (config.providerName === ProviderName.BuiltinModels) {
+      const builtinHeaders = getBuiltinModelRequestHeaders();
+      if (!builtinHeaders) {
+        return { ok: false, error: 'Built-in model authentication is unavailable.' };
+      }
+      Object.assign(headers, builtinHeaders);
+    }
 
     const response = await fetch(url, {
       method: 'POST',

@@ -1,5 +1,4 @@
 import { t } from '../core/i18n';
-import { BUILTIN_CREDENTIAL_MARKER, getBuiltinModelProviderApiKey } from '../cowork/builtinModelProviderConfig';
 
 type CredentialCipher = {
   isEncryptionAvailable(): boolean;
@@ -33,9 +32,9 @@ export function transformAppConfigCredentials(
   if (isRecord(builtin)) {
     const previousKey = builtin.apiKey;
     if (isRecord(config.api) && typeof previousKey === 'string' && previousKey && config.api.key === previousKey) {
-      config.api.key = BUILTIN_CREDENTIAL_MARKER;
+      config.api.key = '';
     }
-    builtin.apiKey = BUILTIN_CREDENTIAL_MARKER;
+    builtin.apiKey = '';
   }
   const transform = (owner: unknown, key: string): void => {
     if (!isRecord(owner)) return;
@@ -51,8 +50,9 @@ export function transformAppConfigCredentials(
         throw new Error(t('credentialDecryptionFailed'));
       }
     }
-    if (typeof owner[key] === 'string' && owner[key] === getBuiltinModelProviderApiKey()) {
-      owner[key] = BUILTIN_CREDENTIAL_MARKER;
+    if (owner[key] === 'justdo-builtin-credential' ||
+      (isRecord(config.model) && config.model.defaultModelProvider === 'builtin_models')) {
+      owner[key] = '';
     }
   };
   transform(config.api, 'key');

@@ -1,5 +1,6 @@
 **
 !shared/
 !shared/**
+!custom_auth.py
 shared/**/__pycache__/
 shared/**/*.pyc

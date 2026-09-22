@@ -106,7 +106,7 @@ OpenClaw model ref 必须是 `provider/model-id`。启动迁移规则：
 
 ## 7. Built-in model 生命周期
 
-`BuiltinModelLifecycle` 与 `syncBuiltinModelProvider` 管理内置 provider。当前启动保持 access enabled，未来认证 login/logout 通过同一入口切换。刷新会获取可用模型、更新 `app_config.providers`、通知 Renderer，并触发 OpenClaw config sync。刷新失败不能删除上一次可用配置，也不能记录凭证。
+`BuiltinModelLifecycle` 与 `syncBuiltinModelProvider` 管理内置 provider。启动和 login refresh 只有在 Main 从 `user_info.json` 读取 mtoken 并向显式配置的换证服务取得 `sub` 匹配账号的 JWT 后才启用；`X-Cookie` 不参与模型认证。缺失凭据时删除 provider 且不发请求。刷新从 LiteLLM 获取 JWT 身份所属长期 Team 的可见模型、更新不含凭据的 `app_config.providers`、通知 Renderer，并触发 OpenClaw config sync。JWT 由 Main 写入受限权限的派生快照；OpenClaw provider 与 memory search 使用原生 exec SecretRef，JWT 在 Main/Gateway 内存中使用，Gateway env 和配置 JSON 都不含明文。文件变化触发模型刷新与 `secrets.reload`，未续签则在到期前 fail closed。发现失败会清空模型投影，避免跨账号沿用旧目录。
 
 内置模型服务的 OpenAI-compatible 响应契约要求：完整结构化 `tool_calls` 的最终 `finish_reason` 必须是 `tool_calls`；普通文本、不完整参数或未知工具不能被服务推断为调用。JustDo 不再用通用 runtime patch 放宽第三方 provider；第三方响应继续遵守 OpenClaw 原生的 visible-text + stop 安全策略。
 
@@ -256,9 +256,9 @@ Gateway start/restart/stop 不是三个互不相关的按钮。Manager 需要共
 
 Windows bundle launcher 每 5 秒 best-effort flush V8 compile cache，timer 不保持 CLI 进程存活。Gateway 的顶层 await 可能令 `import()` 在整个服务生命周期都不 resolve，因此不能只在 import 完成或正常退出时落盘；Windows 终止进程前已落盘的缓存可被后续冷启动复用。该优化减少重复编译，不能省去插件、数据库和 Gateway 服务初始化。
 
-自定义模型供应商的 API Key 不再注入 Gateway launch environment，也不再经过 `JUSTDO_APIKEY_CUSTOM_N` 环境变量样式的中间占位符。同步先将凭据按规范化 provider 名称原子写入 `<stateDir>/model-provider-secrets.json`，再将 `models.providers.*.apiKey` 写成同名原生 file SecretRef；`secrets.providers.justdo-model-providers` 声明该 JSON 文件。非内置 provider 还可声明自定义请求头：名称保留在 `models.providers.*.headers`，值以独立 file SecretRef 写入同一受限权限文件，并同时用于 Renderer 的模型发现/连接测试和 Main 的 readiness/标题请求。内置 provider 忽略该字段，继续只使用 outbound-header policy，两个功能不互相合并配置。新增供应商由 config watcher 加载配置及凭据，启动环境不变，因此不触发冷重启。只修改 Key 或请求头值时引用及配置文件不变，Main 显式调用 `secrets.reload` 刷新原生快照，并在失败时停止 Gateway，避免把旧凭据状态报告为已更新。供应商改名会同步更改 SecretRef 与密钥文件条目。
+自定义模型供应商的 API Key 不再注入 Gateway launch environment，也不再经过 `JUSTDO_APIKEY_CUSTOM_N` 环境变量样式的中间占位符。同步先将凭据按规范化 provider 名称原子写入 `<stateDir>/model-provider-secrets.json`，再将 `models.providers.*.apiKey` 写成同名原生 file SecretRef；`secrets.providers.justdo-model-providers` 声明该 JSON 文件。非内置 provider 还可声明自定义请求头：名称保留在 `models.providers.*.headers`，值以独立 file SecretRef 写入同一受限权限文件，并同时用于 Renderer 的模型发现/连接测试和 Main 的 readiness/标题请求。内置 provider 忽略自定义 headers，使用受管 JWT/account SecretRef；既有 outbound-header policy 独立负责工具登录头。新增供应商由 config watcher 加载配置及凭据，启动环境不变，因此不触发冷重启。只修改 Key 或请求头值时引用及配置文件不变，Main 显式调用 `secrets.reload` 刷新原生快照，并在失败时停止 Gateway，避免把旧凭据状态报告为已更新。供应商改名会同步更改 SecretRef 与密钥文件条目。
 
-内置模型（含 memory embedding）使用 `justdo-builtin` 原生 exec SecretRef，凭据在 `<stateDir>/credentials/credentials.bin` 中加密保存。Gateway 在启动或凭据刷新时一次性调用解密程序，通过管道取得 Key；JSON 只保存引用，`models.json` 由原生来源快照机制写入 `secretref-managed` 标记，环境变量及命令行不携带 Key。没有新增本地代理、监听端口或常驻解密进程，模型请求继续由 Gateway 直接发往原上游，现有出站请求头代理未改变。Main 的模型发现、标题生成和就绪探测在各自直接请求边界解析内置引用，不将真实值回写产品配置。退出登录通过既有强制失效流程停止旧 Gateway，并移除不再引用的二进制凭据；Key 轮换可 `secrets.reload`，无需冷重启。当前加密只满足防直接查看，不替代后续服务端 JWT。
+内置模型（含 memory embedding）使用 `justdo_login` 原生 exec SecretRef，Main 将已校验的短期 JWT/account/到期时间原子写入 `<stateDir>/credentials/credentials.bin`，沿用 dev 的 AES-GCM 包装和私有 ACL。Gateway 在启动或凭据刷新时通过 stdin/stdout 取得 JWT/account，解析器拒绝未知 id 和临近过期的快照；JSON 只保存引用，`models.json` 由原生来源快照机制保存 `secretref-managed`，环境变量及命令行不携带 JWT。Windows 沿用系统 PowerShell 启动器以支持中文路径，未新增常驻进程或转发端口。退出或到期清理内置 provider、memory search、secret provider 及派生快照，按新版原生配置热更新处理会话。JWT 值轮换由 `secretsChanged` 触发 `secrets.reload`；模型列表同时变化时由 config watcher 处理。二进制包装不构成防逆向边界，服务端 JWT 验签、有效期和 Team 权限才是认证边界。
 
 `phase=running` 只表示受管进程/readiness 达标，不保证每个 adapter consumer 的 WebSocket 仍健康。配置、代理以及 extension 配置/启停/导入/删除触发的自动 hard restart 都进入 `OpenClawConfigSyncService` 的 exclusive queue 与原生 suspension 屏障，由同一路径 disconnect 旧 client、restart Gateway、再 connect Cowork service；最后一步失败时停止 Gateway，避免留下假健康状态。Skill/Extension 的 Windows 目录锁恢复也在同一 exclusive queue 中，只有原生 suspension 返回 ready 才能 stop/mutate/start；Gateway 忙碌时操作失败并提示稍后重试，不能直接中断 active run。
 

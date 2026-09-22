@@ -1,7 +1,8 @@
-__pycache__/
-*.pyc
 .env
-activity.env
-config.yaml
+groups.json
+.pytest_cache/
+__pycache__/
 .venv/
+*.pyc
+activity.env
 *.log

@@ -22,8 +22,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 return Lease()
         store.pool = Pool()
         try:
-            await connection.execute('CREATE TEMP TABLE "LiteLLM_EndUserTable" (user_id text PRIMARY KEY, metadata jsonb)')
-            await connection.execute('INSERT INTO "LiteLLM_EndUserTable" VALUES ($1, $2::jsonb)', 'test', '{"other":true}')
+            await connection.execute('CREATE TEMP TABLE "LiteLLM_EndUserTable" (user_id text PRIMARY KEY, metadata jsonb, blocked boolean DEFAULT false, spend float DEFAULT 0, alias text)')
+            await connection.execute('INSERT INTO "LiteLLM_EndUserTable" (user_id, metadata) VALUES ($1, $2::jsonb)', 'test', '{"other":true}')
             event = validate_event({'event_id': str(uuid4()), 'user_id': 'test', 'event_type': 'startup'})
             await store.record(event)
             await store.record(event)
@@ -33,5 +33,16 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(day['start_count'], 1)
             with self.assertRaises(LookupError):
                 await store.record(validate_event({'event_id': str(uuid4()), 'user_id': 'missing', 'event_type': 'startup'}))
+            new_event = validate_event({'event_id': str(uuid4()), 'user_id': 'new-user',
+                                        'event_type': 'startup',
+                                        'metadata': {'productName': 'Example', 'version': '2'}})
+            await store.record(new_event, authenticated=True)
+            await store.record(new_event, authenticated=True)
+            row = await connection.fetchrow('SELECT * FROM "LiteLLM_EndUserTable" WHERE user_id=$1', 'new-user')
+            self.assertEqual(row['alias'], 'Example 2')
+            self.assertEqual(next(iter(json.loads(row['metadata'])['customer_activity']['days'].values()))['start_count'], 1)
+            await connection.execute('UPDATE "LiteLLM_EndUserTable" SET blocked=true WHERE user_id=$1', 'new-user')
+            with self.assertRaises(PermissionError):
+                await store.record(new_event, authenticated=True)
         finally:
             await connection.close()

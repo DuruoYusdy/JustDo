@@ -2,11 +2,12 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { BUILTIN_CREDENTIAL_MARKER } from '../../cowork/builtinModelProviderConfig';
+import { type BuiltinModelCredential } from '../../cowork/builtinModelCredential';
 import { restrictCredentialFile } from './providerSecretFile';
 
-export const BUILTIN_SECRET_SOURCE = 'justdo-builtin';
-export const BUILTIN_SECRET_ID = 'model-api-key';
+export const BUILTIN_SECRET_SOURCE = 'justdo_login';
+export const BUILTIN_SECRET_ID = 'X-JustDo-JWT';
+export const BUILTIN_ACCOUNT_SECRET_ID = 'X-User-Account';
 // Public wrapping material: protects against direct inspection, not reverse engineering.
 const WRAPPING_CONTEXT = 'justdo/builtin-credential-file/v1';
 const MAGIC = Buffer.from('JDCR1');
@@ -47,7 +48,8 @@ process.stdin.on('end', () => {
   try {
     const request = JSON.parse(input);
     if (request.protocolVersion !== 1 || request.provider !== ${JSON.stringify(BUILTIN_SECRET_SOURCE)} ||
-        !Array.isArray(request.ids) || request.ids.length !== 1 || request.ids[0] !== ${JSON.stringify(BUILTIN_SECRET_ID)}) throw new Error();
+        !Array.isArray(request.ids) || request.ids.length < 1 || request.ids.length > 2 ||
+        request.ids.some(id => ![${JSON.stringify(BUILTIN_SECRET_ID)}, ${JSON.stringify(BUILTIN_ACCOUNT_SECRET_ID)}].includes(id))) throw new Error();
     const file = path.join(__dirname, 'credentials.bin');
     if (fs.statSync(file).size > 65536) throw new Error();
     const data = fs.readFileSync(file);
@@ -58,8 +60,16 @@ process.stdin.on('end', () => {
     cipher.setAAD(magic);
     cipher.setAuthTag(data.subarray(17, 33));
     const value = Buffer.concat([cipher.update(data.subarray(33)), cipher.final()]).toString('utf8');
-    if (!value) throw new Error();
-    process.stdout.write(JSON.stringify({ protocolVersion: 1, values: { [request.ids[0]]: value } }));
+    const credential = JSON.parse(value);
+    if (!credential || typeof credential.accessToken !== 'string' || !credential.accessToken ||
+        typeof credential.userAccount !== 'string' ||
+        !Number.isInteger(credential.expiresAt) || credential.expiresAt <= Date.now() / 1000 + 15 ||
+        (credential.authType === 'api-key' ? credential.userAccount !== '' : !credential.userAccount)) throw new Error();
+    const available = {
+      [${JSON.stringify(BUILTIN_SECRET_ID)}]: credential.accessToken,
+      [${JSON.stringify(BUILTIN_ACCOUNT_SECRET_ID)}]: credential.userAccount,
+    };
+    process.stdout.write(JSON.stringify({ protocolVersion: 1, values: Object.fromEntries(request.ids.map(id => [id, available[id]])) }));
   } catch {
     process.stderr.write('Builtin credential resolution failed.');
     process.exitCode = 1;
@@ -85,44 +95,37 @@ function publishPrivateFile(file: string, data: Buffer | string, executable = fa
 export function syncBuiltinCredentialFile(
   config: Record<string, unknown>,
   stateDir: string,
-  getApiKey: () => string,
+  credential: BuiltinModelCredential | null,
   runtimePath = process.execPath,
 ): { config: Record<string, unknown>; secretsChanged: boolean } {
   const next = structuredClone(config);
   let referenced = false;
   const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
-    for (const [key, child] of Object.entries(value)) {
-      if (key === 'apiKey' && child === BUILTIN_CREDENTIAL_MARKER) {
-        (value as Record<string, unknown>)[key] = {
-          source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID,
-        };
-        referenced = true;
-      } else if (child && typeof child === 'object' &&
-        (child as Record<string, unknown>).source === 'exec' &&
-        (child as Record<string, unknown>).provider === BUILTIN_SECRET_SOURCE &&
-        (child as Record<string, unknown>).id === BUILTIN_SECRET_ID) {
-        referenced = true;
-      } else visit(child);
-    }
+    const record = value as Record<string, unknown>;
+    if (record.source === 'exec' && record.provider === BUILTIN_SECRET_SOURCE &&
+      [BUILTIN_SECRET_ID, BUILTIN_ACCOUNT_SECRET_ID].includes(String(record.id))) referenced = true;
+    for (const child of Object.values(record)) visit(child);
   };
   visit(next);
   const directory = path.join(stateDir, 'credentials');
   const credentialFile = path.join(directory, 'credentials.bin');
   if (!referenced) {
-    // Logout revokes the on-disk credential; no old key remains resolvable.
+    // Logout removes the snapshot so the old JWT cannot be resolved again.
     const existed = fs.existsSync(credentialFile);
     if (existed) fs.unlinkSync(credentialFile);
+    const providers = (next.secrets as { providers?: Record<string, unknown> } | undefined)?.providers;
+    if (providers) delete providers[BUILTIN_SECRET_SOURCE];
     return { config: next, secretsChanged: existed };
   }
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error('Builtin credential is unavailable.');
+  if (!credential || credential.expiresAt <= Date.now() / 1000 + 15) throw new Error('Builtin credential is unavailable.');
+  const serializedCredential = JSON.stringify(credential);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   let secretsChanged = true;
   if (fs.existsSync(credentialFile)) {
-    try { secretsChanged = openBuiltinCredential(fs.readFileSync(credentialFile)) !== apiKey; } catch { /* Replace corrupted ciphertext. */ }
+    try { secretsChanged = openBuiltinCredential(fs.readFileSync(credentialFile)) !== serializedCredential; } catch { /* Replace corrupted ciphertext. */ }
   }
-  if (secretsChanged) publishPrivateFile(credentialFile, sealBuiltinCredential(apiKey));
+  if (secretsChanged) publishPrivateFile(credentialFile, sealBuiltinCredential(serializedCredential));
   const resolver = path.join(directory, 'read-builtin.cjs');
   publishPrivateFile(resolver, builtinCredentialResolverSource());
   let command = runtimePath;

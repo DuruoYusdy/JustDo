@@ -20,6 +20,7 @@ const { pipeline } = require('stream/promises');
 const { createZstdDecompress } = require('zlib');
 const asar = require('@electron/asar');
 const yaml = require('js-yaml');
+const ts = require('typescript');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { ensurePortableGit } = require('./setup-mingit.js');
 const { ensureLocalTts } = require('./setup-local-tts.js');
@@ -32,10 +33,62 @@ const { precompileOpenClawExtensions } = require('./precompile-openclaw-extensio
 const { readBundledSkillConfig, syncBundledSkills } = require('./sync-bundled-skills.cjs');
 const { compressTarArchive, packMultipleSources } = require('./pack-openclaw-tar.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
+
+function readBuiltinModelDevelopmentAuthConfig(projectDir) {
+  const configPath = path.join(projectDir, 'src', 'config', 'builtinModelAuth.ts');
+  const sourceFile = ts.createSourceFile(
+    configPath,
+    readFileSync(configPath, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let configObject;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'BUILTIN_MODEL_AUTH_CONFIG') continue;
+      let initializer = declaration.initializer;
+      if (initializer && ts.isCallExpression(initializer) && initializer.arguments.length === 1) {
+        initializer = initializer.arguments[0];
+      }
+      if (initializer && ts.isObjectLiteralExpression(initializer)) configObject = initializer;
+    }
+  }
+  if (!configObject) {
+    throw new Error('[electron-builder-hooks] Cannot read the built-in model authentication config.');
+  }
+  const readStringProperty = name => {
+    const property = configObject.properties.find(candidate =>
+      ts.isPropertyAssignment(candidate) &&
+      ((ts.isIdentifier(candidate.name) && candidate.name.text === name) ||
+        (ts.isStringLiteral(candidate.name) && candidate.name.text === name)),
+    );
+    if (!property || !ts.isPropertyAssignment(property) ||
+      (!ts.isStringLiteral(property.initializer) && !ts.isNoSubstitutionTemplateLiteral(property.initializer))) {
+      throw new Error(`[electron-builder-hooks] ${name} must be a string literal.`);
+    }
+    return property.initializer.text;
+  };
+  return {
+    developmentAuthMode: readStringProperty('developmentAuthMode'),
+    developmentApiKey: readStringProperty('developmentApiKey'),
+  };
+}
+
+function verifyPackagedBuiltinModelAuthConfig(projectDir) {
+  const config = readBuiltinModelDevelopmentAuthConfig(projectDir);
+  if (config.developmentAuthMode !== 'jwt' || config.developmentApiKey !== '') {
+    throw new Error(
+      '[electron-builder-hooks] Packaging requires developmentAuthMode "jwt" and an empty developmentApiKey.',
+    );
+  }
+}
 const {
   getRuntimeCompanionPathsReferencedByBundle: getRuntimeCompanionPathsFromContent,
 } = require('./openclaw-runtime-companions.cjs');
-const { releaseHistory: releaseHistoryLimits } = require('../src/shared/app/appUpdateConfig.json');
+const { APP_UPDATE_CONFIG } = require('../src/config/appUpdate.ts');
+const releaseHistoryLimits = APP_UPDATE_CONFIG.releaseHistory;
 const {
   prepareBrowserExtension,
   verifyBrowserExtension,
@@ -785,6 +838,7 @@ function installSkillDependencies() {
 }
 
 async function beforePack(context) {
+  verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '..'));
   prepareBrowserExtension();
   if (isWindowsTarget(context)) compileBrowserExtensionNativeHost();
   rebuildElectronNativeModules(context);
@@ -1629,6 +1683,8 @@ async function verifyPackagedOpenClawRuntime(context) {
 
 module.exports = {
   beforePack,
+  readBuiltinModelDevelopmentAuthConfig,
+  verifyPackagedBuiltinModelAuthConfig,
   afterPack,
   artifactBuildCompleted,
   afterAllArtifactBuild,

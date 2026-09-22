@@ -14,6 +14,10 @@ import {
   ProviderName,
   ProviderRegistry,
 } from '../../../shared/providers';
+import {
+  clearActiveBuiltinModelCredential,
+  setActiveBuiltinModelDevelopmentApiKey,
+} from '../../cowork/builtinModelCredential';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {
   applyDefaultOpenClawPluginEntries,
@@ -143,7 +147,11 @@ describe('OpenClaw provider config', () => {
       model: 'embedding-a',
       remote: {
         baseUrl: 'http://127.0.0.1:4000/v1',
-        apiKey: 'justdo-builtin-credential',
+        apiKey: {
+          source: 'exec',
+          provider: 'justdo_login',
+          id: 'X-JustDo-JWT',
+        },
         headers: {
           'User-Agent': 'OpenAI/JS 6.39.1',
         },
@@ -197,6 +205,55 @@ describe('OpenClaw provider config', () => {
     });
   });
 
+  test('adds JWT identity placeholders only to the built-in provider', () => {
+    const selection = buildProviderSelection({
+      apiKey: 'justdo-jwt-auth',
+      baseURL: 'https://models.example.test/v1',
+      modelId: 'team-model',
+      apiType: 'openai',
+      providerName: ProviderName.BuiltinModels,
+    });
+
+    expect(selection.providerConfig.headers).toEqual({
+      'X-JustDo-JWT': {
+        source: 'exec',
+        provider: 'justdo_login',
+        id: 'X-JustDo-JWT',
+      },
+      'X-User-Account': {
+        source: 'exec',
+        provider: 'justdo_login',
+        id: 'X-User-Account',
+      },
+    });
+    expect(selection.providerConfig.apiKey).toEqual({
+      source: 'exec',
+      provider: 'justdo_login',
+      id: 'X-JustDo-JWT',
+    });
+  });
+
+  test('omits JWT identity headers for a development API key', () => {
+    setActiveBuiltinModelDevelopmentApiKey('sk-development');
+    try {
+      const selection = buildProviderSelection({
+        apiKey: 'justdo-jwt-auth',
+        baseURL: 'http://127.0.0.1:9108/v1',
+        modelId: 'development-model',
+        apiType: 'openai',
+        providerName: ProviderName.BuiltinModels,
+      });
+      expect(selection.providerConfig.headers).toBeUndefined();
+      expect(selection.providerConfig.apiKey).toEqual({
+        source: 'exec',
+        provider: 'justdo_login',
+        id: 'X-JustDo-JWT',
+      });
+    } finally {
+      clearActiveBuiltinModelCredential();
+    }
+  });
+
   test('sets a provider idle timeout above the OpenClaw default', () => {
     const selection = buildProviderSelection({
       apiKey: 'sk-test',
@@ -220,7 +277,10 @@ describe('OpenClaw provider config', () => {
       headers: { 'X-Must-Not-Leak': 'value' },
     });
 
-    expect(selection.providerConfig.headers).toBeUndefined();
+    expect(selection.providerConfig.headers).toEqual({
+      'X-JustDo-JWT': { source: 'exec', provider: 'justdo_login', id: 'X-JustDo-JWT' },
+      'X-User-Account': { source: 'exec', provider: 'justdo_login', id: 'X-User-Account' },
+    });
   });
 });
 

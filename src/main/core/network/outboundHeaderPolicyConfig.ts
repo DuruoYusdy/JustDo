@@ -3,69 +3,16 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import {
+  DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
+  type OutboundHeaderPolicyConfig,
+} from '../../../config/outboundHeaders';
 import { USER_DATA_DIRECTORY_NAME } from '../../../shared/productMetadata';
 
-export type OutboundHeaderPolicyGroup = {
-  /** URLs handled by this group. */
-  baseUrlWhitelist: readonly string[];
-  /** Header names injected when a request matches this group. */
-  headerNames: readonly string[];
-};
-
-export type OutboundHeaderPolicyConfig = {
-  /**
-   * Deprecated compatibility field. Existing manual files are never
-   * overwritten during startup or Extension reconciliation.
-   */
-  overwrite: boolean;
-  /**
-   * Whether outbound header injection is enabled.
-   */
-  enabled: boolean;
-  /**
-   * Each group independently maps a list of base URLs to a list of headers.
-   * When multiple groups match, their header names are merged in group order.
-   *
-   * Matching rules:
-   * - Every entry must be an absolute URL and must include `http://` or `https://`.
-   * - HTTP and HTTPS are different. `http://api.example.com/` does not match
-   *   `https://api.example.com/`; add both entries when both protocols are needed.
-   * - Hostnames must match exactly. `https://example.com/` does not match
-   *   `https://api.example.com/` or any other subdomain.
-   * - Ports must match exactly. An omitted port means the protocol default
-   *   (80 for HTTP, 443 for HTTPS). `http://127.0.0.1:4000/` only matches port 4000.
-   * - Paths are matched on segment boundaries after protocol, hostname, and port match.
-   *   `https://api.example.com/v1` and `https://api.example.com/v1/` both match
-   *   `/v1/models`, but neither matches `/v10/models`.
-   * - Query strings and URL fragments are not part of the whitelist prefix check.
-   * - Invalid entries, relative paths, and non-HTTP protocols are ignored.
-   * - Local loopback addresses are not supported. Entries such as `localhost`,
-   *   `127.0.0.1` (or any `127.x.x.x` address), `0.0.0.0`, `::1`, and
-   *   IPv4-mapped IPv6 loopback addresses are ignored. Loopback traffic remains
-   *   direct and never receives injected headers.
-   * - An empty list disables header injection for every URL.
-   *
-   * Examples:
-   * - `https://api.example.com/` matches every HTTPS endpoint on that exact host.
-   * - `https://api.example.com/v1/` restricts injection to the `/v1/` API.
-   * - To allow both protocols, add:
-   *   `http://api.example.com/` and `https://api.example.com/`.
-   * - To allow two subdomains, add each explicitly:
-   *   `https://api.example.com/` and `https://files.example.com/`.
-   */
-  groups: readonly OutboundHeaderPolicyGroup[];
-};
-
-export const DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
-  overwrite: false,
-  enabled: true,
-  groups: Object.freeze([
-    Object.freeze({
-      baseUrlWhitelist: Object.freeze([]),
-      headerNames: Object.freeze(['X-User-Account', 'X-Cookie']),
-    }),
-  ]),
-});
+export type {
+  OutboundHeaderPolicyConfig,
+  OutboundHeaderPolicyGroup,
+} from '../../../config/outboundHeaders';
 
 const DISABLED_OUTBOUND_HEADER_POLICY_CONFIG: OutboundHeaderPolicyConfig = Object.freeze({
   overwrite: false,

@@ -33,75 +33,67 @@ vi.mock('../../core/network/mainProcessFetch', () => ({
   },
 }));
 
-import {
-  BUILTIN_CREDENTIAL_MARKER,
-  BUILTIN_MODEL_PROVIDER_CONFIG,
-  getBuiltinModelProviderApiKey,
-} from '../../cowork/builtinModelProviderConfig';
+import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
+import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../cowork/builtinModelCredential';
 import { registerNetworkHandlers } from './network';
 
 type ApiFetchHandler = (event: unknown, options: ApiFetchOptions) => Promise<unknown>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearActiveBuiltinModelCredential();
 });
 
-test.each(['authorization', 'Authorization'])(
-  'resolves builtin %s only in Main and refuses redirects',
-  async headerName => {
-    mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
-    let correctCredential = false;
-    let refusesRedirects = false;
-    mocks.fetch.mockImplementation(async (_url, init) => {
-      correctCredential = init.headers[headerName] === `Bearer ${getBuiltinModelProviderApiKey()}`;
-      refusesRedirects = init.redirect === 'error';
-      return new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } });
-    });
-    registerNetworkHandlers();
-    const handler = mocks.handle.mock.calls.find(
-      ([channel]) => channel === 'api:fetch',
-    )![1] as ApiFetchHandler;
-    const headers = { [headerName]: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` };
-    const result = await handler(
-      {},
-      { url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST', headers },
-    );
-    // Never include a real credential in assertion output.
-    mocks.fetch.mockClear();
-    expect(correctCredential).toBe(true);
-    expect(refusesRedirects).toBe(true);
-    expect(headers[headerName]).toBe(`Bearer ${BUILTIN_CREDENTIAL_MARKER}`);
-    expect(result).toMatchObject({ ok: true });
-  },
-);
+const probeBody = JSON.stringify({ model: 'team-model', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 1 });
+const installJwt = () => {
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const token = [encode({ alg: 'RS256', kid: 'fixture' }), encode({
+    sub: 'test-user', iss: 'https://login.test', aud: 'litellm', iat: now, exp: now + 300, jti: 'fixture',
+  }), 'signature'].join('.');
+  setActiveBuiltinModelCredential({ accessToken: token, userAccount: 'test-user', expiresAt: now + 300 });
+  return token;
+};
 
-test('does not send builtin credentials to another origin or endpoint', async () => {
+test('authenticates a built-in probe in Main without exposing its JWT to Renderer', async () => {
+  const token = installJwt();
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  mocks.fetch.mockResolvedValue(new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } }));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+  const headers = { 'x-justdo-jwt': 'untrusted', 'x-user-account': 'wrong-account' };
+  const result = await handler({}, {
+    url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST',
+    headers, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
+  });
+  expect(result).toMatchObject({ ok: true });
+  expect(JSON.stringify(result)).not.toContain(token);
+  expect(mocks.fetch.mock.calls[0][1]).toMatchObject({
+    redirect: 'error', headers: { 'X-JustDo-JWT': token, 'X-User-Account': 'test-user' },
+  });
+  expect(mocks.fetch.mock.calls[0][1].headers).not.toHaveProperty('x-justdo-jwt');
+  expect(headers['x-justdo-jwt']).toBe('untrusted');
+});
+
+test('does not inject a JWT into custom model requests', async () => {
+  const token = installJwt();
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  mocks.fetch.mockResolvedValue(new Response('{}'));
+  registerNetworkHandlers();
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+  await handler({}, { url: 'https://custom.test/v1/chat/completions', method: 'POST',
+    headers: {}, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest });
+  expect(JSON.stringify(mocks.fetch.mock.calls)).not.toContain(token);
+});
+
+test('refuses a built-in probe when login credentials are unavailable', async () => {
   mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
   registerNetworkHandlers();
-  const handler = mocks.handle.mock.calls.find(
-    ([channel]) => channel === 'api:fetch',
-  )![1] as ApiFetchHandler;
-  for (const url of [
-    'https://untrusted.invalid/chat/completions',
-    `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/other`,
-  ]) {
-    expect(
-      await handler(
-        {},
-        { url, method: 'POST', headers: { Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` } },
-      ),
-    ).toMatchObject({ ok: false });
-  }
-  expect(
-    await handler(
-      {},
-      {
-        url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`,
-        method: 'GET',
-        headers: { Authorization: `Bearer ${BUILTIN_CREDENTIAL_MARKER}` },
-      },
-    ),
-  ).toMatchObject({ ok: false });
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
+  expect(await handler({}, {
+    url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST',
+    headers: {}, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
+  })).toMatchObject({ ok: false });
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 

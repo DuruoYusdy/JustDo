@@ -24,11 +24,11 @@
 
 ## 2. SQLite 参数
 
-`SqliteStore` 将 `app_config.providers.builtin_models.apiKey` 规范化为非秘密凭据引用，legacy `app_config.api.key` 若与旧内置值相同也一并改为引用。无关的用户自定义 legacy API Key 保持原有存储契约，不新增 OS 密钥服务依赖，避免没有系统密钥库的 Linux 用户无法启动。读取此前已保存的 OS 加密 legacy 记录仍需 Electron `safeStorage`，解密不可用时明确报错；不把密文当作 Key 使用。打开已有数据库时转换内置旧值，并尝试通过 secure-delete 和 WAL truncate 清理本次转换的数据库残留；历史备份、旧导出及存储介质残留不在该保证内。
+`SqliteStore` 将 `app_config.providers.builtin_models.apiKey` 规范化为空字符串，legacy `app_config.api.key` 若与旧内置值相同或默认模型属于内置 provider 也一并清空。无关的用户自定义 legacy API Key 保持原有存储契约，不新增 OS 密钥服务依赖，避免没有系统密钥库的 Linux 用户无法启动。读取此前已保存的 OS 加密 legacy 记录仍需 Electron `safeStorage`，解密不可用时明确报错；不把密文当作 Key 使用。打开已有数据库时转换内置旧值，并尝试通过 secure-delete 和 WAL truncate 清理本次转换的数据库残留；历史备份、旧导出及存储介质残留不在该保证内。
 
-内置模型不增加本地转发服务。真实 Key 派生为 `<openclawStateDir>/credentials/credentials.bin`，采用带版本头、随机 nonce 和认证标签的 AES-256-GCM 二进制格式，设置与上文相同的私有文件权限。app config 仅存 `justdo-builtin-credential` 非秘密引用，Gateway JSON 仅存原生 exec SecretRef，不存 Key 或密文；历史数据库真实凭据仍受上述 OS 加密保护。原生解析器在启动/刷新时通过 stdin/stdout 调用私有目录中的解密程序，Key 仅在管道和运行时内存中使用，不进入环境变量或命令行。Windows 通过系统 PowerShell 启动 Electron Node 模式以兼容原生 ACL 检查及中文路径，POSIX 使用当前用户拥有的受限启动脚本；没有常驻进程或网络端口。真实运行包测试验证 `models.json` 写入 `secretref-managed` 而非解析后的 Key。退出时不再引用内置凭据会删除二进制文件；凭据轮换保持 JSON 引用稳定，通过 `secrets.reload` 生效。
+内置模型不增加本地转发服务，也不随包携带固定 Key。Main 从登录交接文件取得短期 JWT，校验账号与时间后将 `{accessToken, userAccount, expiresAt}` 原子写入 `<openclawStateDir>/credentials/credentials.bin`。沿用 dev 的 AES-256-GCM 二进制包装和上述私有 ACL；`X-Cookie` 不进入该快照。SQLite builtin `apiKey` 始终为空，Gateway JSON 只存 `justdo_login` 原生 exec SecretRef。解析器通过受限管道返回 JWT/account，拒绝临近过期快照；环境变量和命令行只含运行路径，无 token。Windows 使用系统 PowerShell 启动 Electron Node 模式，POSIX 使用私有启动脚本。真实运行包测试验证中文路径、轮换，以及 `models.json` 不保存已解析 JWT。退出或过期移除快照；轮换由 `secretsChanged` 和 `secrets.reload` 更新运行时。
 
-随包引导凭据和二进制文件的包装材料均可由客户端代码推导，仅用于避免直接打开文件看到明文，不构成防逆向安全边界。未来应由服务端 JWT 替代共享静态凭据；历史备份和旧版本安装包不在本次清理范围内。
+二进制文件的包装材料可由客户端推导，只防止直接打开文件看到明文，不能抵御同一用户的逆向。JWT 本身仍是可在有效期内重放的 bearer token；真实认证由 LiteLLM 服务端验签与 Team 权限完成。旧版固定 Key 仅在服务端以 30 天 Virtual Key 临时兼容，历史安装包及备份不在客户端清理范围内。
 
 | PRAGMA               | 当前值   | 目的                           |
 | -------------------- | -------- | ------------------------------ |
@@ -287,12 +287,13 @@ SQLite transaction 只能保护本数据库，不能回滚 Gateway、文件系�
 
 ## 24. LiteLLM EndUser 活动记录
 
-CustomerRegistrationService 在 Customer 查询/创建/更新成功后调用 `/customer/activity`，
+CustomerRegistrationService 使用当前短期 JWT 调用 `/customer/activity`，服务端校验 JWT、Team 和正文用户一致性后
+在事务内创建或更新 EndUser；客户端不持有 Customer 管理权限。
 首次成功上报 startup，随后每24小时 heartbeat（重新启动仍上报 startup）。每次活动上报保留 loginTime，
 并附带发送时的客户端当前时间 clientTime（UTC ISO格式），与数据库接收时间 last_seen_at 分开记录。账号切换后重新上报 startup；失败时保留事件ID，
 按1、5、15分钟间隔补试，三次仍失败则等待24小时；成功后恢复24小时周期。
 待发事件不跨进程持久化。重复事件仍更新当前活跃时间，但不重复计数启动。
-原 Customer metadata 继续提交，alias 保持产品名和版本。
+活动 metadata 只提交非凭据字段，alias 由服务端更新为产品名和版本。
 
 `deploy/litellm/shared/proxy_hooks/activity.py`（Docker 与 Native 共用）作为 ASGI 扩展，使用独立连接池直接更新远端
 `LiteLLM_EndUserTable.metadata`；唯一数据库变更是增加可空 JSONB 列。
@@ -300,6 +301,7 @@ CustomerRegistrationService 在 Customer 查询/创建/更新成功后调用 `/c
 最近256事件ID、启动数和数据库接收时间。客户端loginTime是声明值，不是服务端认证登录事件。
 原生LiteLLM API/UI不展示该额外列。没有上报可能是离线，不能作为未启动的证明。
 
-活动接口使用由现有API凭据派生的令牌，仅允许写入；共享令牌不能证明用户身份。
+新版活动接口复用 JWT 校验，拒绝正文用户与签名主体不一致；退出登录停止上报。
+旧版派生令牌只允许在单独配置的绝对截止时间前写入已有 EndUser，不能证明用户身份。
 数据库故障返回503，不影响原有模型请求。所有连接实例须检查Prisma迁移策略，
 禁止未经审查的schema同步删除自定义列。部署备份、运行和回滚方式见扩展README。

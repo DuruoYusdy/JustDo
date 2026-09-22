@@ -19,8 +19,10 @@ class DeploymentLayoutTests(unittest.TestCase):
     def test_launchers_reference_shared_sources(self):
         root = Path(__file__).resolve().parent
         script = (root / 'native' / 'start.sh').read_text()
-        self.assertIn('SHARED_DIR="$SCRIPT_DIR/../shared"', script)
-        self.assertIn('--app-dir "$SHARED_DIR"', script)
+        self.assertIn('"$SCRIPT_DIR/start.py"', script)
+        launcher = (root / 'native' / 'start.py').read_text()
+        self.assertIn('ROOT.parent / "shared"', launcher)
+        self.assertIn('"--app-dir", str(shared)', launcher)
 
         dockerfile = (root / 'docker' / 'Dockerfile').read_text()
         for name in ('proxy_app.py', 'proxy_hooks', 'requirements.txt'):

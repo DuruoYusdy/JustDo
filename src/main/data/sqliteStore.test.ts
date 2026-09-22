@@ -37,7 +37,7 @@ test('persists builtin references without changing unrelated legacy credentials'
     const row = store.getDatabase().prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as { value: string };
     expect(row.value).not.toContain('builtin-fixture-key');
     expect(row.value).toContain('legacy-fixture-key');
-    expect(store.get('app_config')).toEqual({ ...config, providers: { builtin_models: { apiKey: 'justdo-builtin-credential' } } });
+    expect(store.get('app_config')).toEqual({ ...config, providers: { builtin_models: { apiKey: '' } } });
   } finally { store.close(); }
 });
 
@@ -52,7 +52,7 @@ test('converts existing plaintext credentials when opening a database', () => {
   try {
     const row = reopened.getDatabase().prepare('SELECT value FROM kv WHERE key = ?').get('app_config') as { value: string };
     expect(row.value).not.toContain('legacy-builtin-fixture');
-    expect(reopened.get('app_config')).toEqual({ providers: { builtin_models: { apiKey: 'justdo-builtin-credential' } } });
+    expect(reopened.get('app_config')).toEqual({ providers: { builtin_models: { apiKey: '' } } });
   } finally { reopened.close(); }
 });
 
