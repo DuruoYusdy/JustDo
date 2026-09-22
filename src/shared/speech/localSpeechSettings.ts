@@ -16,7 +16,7 @@ export const LOCAL_SPEECH_MIN_RATE = 0.5;
 export const LOCAL_SPEECH_MAX_RATE = 2;
 
 export type LocalSpeechInputLanguage = 'auto' | 'app' | 'zh' | 'en' | 'ja' | 'ko' | 'yue';
-export type LocalSpeechInputSource = 'microphone' | 'system' | 'microphone-system' | 'file';
+export type LocalSpeechInputSource = 'microphone' | 'system' | 'microphone-system';
 export type SpeechRecognitionMode = 'local' | 'online';
 export type SpeechSynthesisMode = 'local' | 'online';
 
@@ -92,17 +92,12 @@ export const normalizeLocalSpeechSettings = (value: unknown): LocalSpeechSetting
     recognitionMode === 'online' && selectedInputLanguage === 'yue'
       ? defaultLocalSpeechSettings.inputLanguage
       : selectedInputLanguage;
-  const selectedInputSource =
+  const inputSource =
     candidate.inputSource === 'system' ||
     candidate.inputSource === 'microphone-system' ||
-    candidate.inputSource === 'file' ||
     candidate.inputSource === 'microphone'
       ? candidate.inputSource
       : defaultLocalSpeechSettings.inputSource;
-  const inputSource =
-    recognitionMode === 'online' && selectedInputSource === 'file'
-      ? defaultLocalSpeechSettings.inputSource
-      : selectedInputSource;
   const asrModelId = LOCAL_ASR_MODEL_IDS.includes(candidate.asrModelId as LocalAsrModelId)
     ? (candidate.asrModelId as LocalAsrModelId)
     : defaultLocalSpeechSettings.asrModelId;

@@ -8,6 +8,7 @@ import {
 } from '@shared/speech/localSpeechSettings';
 import type { OnlineAsrEvent, OnlineAsrSession } from '@shared/speech/onlineAsr';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   bytesToBase64,
@@ -105,6 +106,9 @@ export function LocalSpeechInputButton({
     normalizeLocalSpeechSettings(configService.getConfig().voice),
   );
   const [state, setState] = useState<RecordingState>('idle');
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [onlinePartial, setOnlinePartial] = useState('');
   const tracksRef = useRef<CaptureTrack[]>([]);
   const recordersRef = useRef<MediaRecorder[]>([]);
@@ -608,15 +612,17 @@ export function LocalSpeechInputButton({
 
   const transcribeFile = useCallback(
     async (file: File) => {
+      const generation = transcriptionGenerationRef.current;
+      const isCurrent = () =>
+        mountedRef.current && generation === transcriptionGenerationRef.current;
       setState('transcribing');
       try {
         if (file.size > MAX_IMPORTED_MEDIA_BYTES) {
           throw new Error('Imported media exceeds the local size limit.');
         }
-        const generation = transcriptionGenerationRef.current;
         const segments = await recordedAudioToWavSegments(file, settings.meetingSegmentSeconds);
         for (let index = 0; index < segments.length; index += 1) {
-          if (generation !== transcriptionGenerationRef.current) break;
+          if (!isCurrent()) break;
           await transcribeWav(
             segments[index],
             'system',
@@ -625,9 +631,9 @@ export function LocalSpeechInputButton({
           );
         }
       } catch (error) {
-        showTranscriptionFailure(error);
+        if (isCurrent()) showTranscriptionFailure(error);
       } finally {
-        if (mountedRef.current) setState('idle');
+        if (isCurrent()) setState('idle');
       }
     },
     [settings.meetingSegmentSeconds, showTranscriptionFailure, transcribeWav],
@@ -658,19 +664,47 @@ export function LocalSpeechInputButton({
     if (activeCaptureSettingsKeyRef.current !== settingsKey) abortCapture();
   }, [abortCapture, settings, state]);
 
+  useEffect(() => {
+    if (!menuPosition) return;
+    const dismiss = () => setMenuPosition(null);
+    const handlePointer = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) dismiss();
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        dismiss();
+        if (event.key === 'Escape') buttonRef.current?.focus();
+      }
+    };
+    menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    document.addEventListener('pointerdown', handlePointer);
+    document.addEventListener('keydown', handleKey);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('blur', dismiss);
+    document.addEventListener('scroll', dismiss, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointer);
+      document.removeEventListener('keydown', handleKey);
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('blur', dismiss);
+      document.removeEventListener('scroll', dismiss, true);
+    };
+  }, [menuPosition]);
+
+  useEffect(() => {
+    setMenuPosition(null);
+  }, [disabled, available, settings.inputEnabled, settings.recognitionMode, state]);
+
   if (!available || !settings.inputEnabled) return null;
   const recording = state === 'recording';
-  const fileSource = settings.inputSource === 'file';
   const title = i18nService.t(
     state === 'transcribing' || state === 'requesting'
       ? 'localAsrCancel'
       : recording
         ? 'localAsrStop'
-        : fileSource
-          ? 'localAsrImportFile'
-          : settings.meetingMode
-            ? 'localAsrStartMeeting'
-            : 'localAsrStart',
+        : settings.meetingMode
+          ? 'localAsrStartMeeting'
+          : 'localAsrStart',
   );
   return (
     <>
@@ -682,16 +716,31 @@ export function LocalSpeechInputButton({
         onChange={event => {
           const file = event.target.files?.[0];
           event.target.value = '';
-          if (file) void transcribeFile(file);
+          if (file && !disabled && state === 'idle' && settings.recognitionMode === 'local') {
+            void transcribeFile(file);
+          }
         }}
       />
       <span className="relative inline-flex shrink-0">
         <button
+          ref={buttonRef}
           type="button"
+          aria-haspopup="menu"
+          aria-expanded={menuPosition !== null}
+          onContextMenu={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (disabled || state !== 'idle') return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMenuPosition({
+              x: Math.max(8, Math.min(rect.left, window.innerWidth - 256)),
+              y: Math.max(8, rect.top - 48),
+            });
+          }}
           onClick={() => {
+            setMenuPosition(null);
             if (state === 'transcribing' || state === 'requesting') abortCapture();
             else if (recording) stopRecording();
-            else if (fileSource) fileInputRef.current?.click();
             else void startRecording();
           }}
           className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors ${
@@ -709,8 +758,6 @@ export function LocalSpeechInputButton({
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
           ) : recording ? (
             <StopIcon className="h-4 w-4" />
-          ) : fileSource ? (
-            <DocumentArrowUpIcon className="h-4 w-4" />
           ) : (
             <MicrophoneIcon className="h-4 w-4" />
           )}
@@ -724,6 +771,36 @@ export function LocalSpeechInputButton({
           </span>
         ) : null}
       </span>
+      {menuPosition &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            className="fixed z-50 w-60 rounded-lg border border-border bg-surface py-1 shadow-lg"
+            style={{ left: menuPosition.x, top: menuPosition.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={settings.recognitionMode !== 'local'}
+              title={
+                settings.recognitionMode !== 'local'
+                  ? i18nService.t('voiceImportRequiresLocal')
+                  : undefined
+              }
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-raised disabled:opacity-50"
+              onClick={() => {
+                setMenuPosition(null);
+                buttonRef.current?.focus();
+                fileInputRef.current?.click();
+              }}
+            >
+              <DocumentArrowUpIcon className="h-4 w-4 shrink-0" />
+              {i18nService.t('voiceInputSourceFile')}
+            </button>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

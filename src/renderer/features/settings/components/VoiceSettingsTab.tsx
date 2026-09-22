@@ -4,7 +4,10 @@ import {
   LOCAL_ASR_MODEL_IDS,
   type LocalAsrModelId,
 } from '@shared/speech/localAsr';
-import { LocalSpeechModelKind, type LocalSpeechModelStatus } from '@shared/speech/localSpeechModels';
+import {
+  LocalSpeechModelKind,
+  type LocalSpeechModelStatus,
+} from '@shared/speech/localSpeechModels';
 import {
   LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS,
   LOCAL_SPEECH_MAX_RATE,
@@ -16,7 +19,11 @@ import {
   LOCAL_SPEECH_MIN_THREADS,
   type LocalSpeechSettings,
 } from '@shared/speech/localSpeechSettings';
-import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_MODEL_IDS, type LocalTtsModelId } from '@shared/speech/localTts';
+import {
+  LOCAL_TTS_MODEL_ID,
+  LOCAL_TTS_MODEL_IDS,
+  type LocalTtsModelId,
+} from '@shared/speech/localTts';
 import type { OnlineAsrStatus } from '@shared/speech/onlineAsr';
 import type { OnlineTtsStatus } from '@shared/speech/onlineTts';
 import React, { useEffect, useRef, useState } from 'react';
@@ -559,9 +566,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   const nextMode = recognitionMode as LocalSpeechSettings['recognitionMode'];
                   update({
                     recognitionMode: nextMode,
-                    ...(nextMode === 'online' && value.inputSource === 'file'
-                      ? { inputSource: 'microphone' as const }
-                      : {}),
                     ...(nextMode === 'online' && value.inputLanguage === 'yue'
                       ? { inputLanguage: 'app' as const }
                       : {}),
@@ -659,9 +663,6 @@ const VoiceSettingsTab: React.FC<VoiceSettingsTabProps> = ({ value, onChange }) 
                   { value: 'microphone', label: i18nService.t('voiceInputSourceMicrophone') },
                   { value: 'system', label: i18nService.t('voiceInputSourceSystem') },
                   { value: 'microphone-system', label: i18nService.t('voiceInputSourceMixed') },
-                  ...(value.recognitionMode === 'local'
-                    ? [{ value: 'file', label: i18nService.t('voiceInputSourceFile') }]
-                    : []),
                 ]}
               />
             </div>

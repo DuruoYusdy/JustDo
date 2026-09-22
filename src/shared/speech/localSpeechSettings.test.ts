@@ -54,11 +54,15 @@ describe('local speech settings', () => {
     ).toMatchObject({ recognitionMode: 'online', inputLanguage: 'app' });
   });
 
-  it('falls back from file input because OpenClaw Talk accepts live audio streams', () => {
-    expect(
-      normalizeLocalSpeechSettings({ recognitionMode: 'online', inputSource: 'file' }),
-    ).toMatchObject({ recognitionMode: 'online', inputSource: 'microphone' });
-  });
+  it.each(['local', 'online'])(
+    'restores recording for a saved file source in %s mode',
+    recognitionMode => {
+      expect(normalizeLocalSpeechSettings({ recognitionMode, inputSource: 'file' })).toMatchObject({
+        recognitionMode,
+        inputSource: 'microphone',
+      });
+    },
+  );
 
   it('keeps supported model and capture-source selections while rejecting unknown values', () => {
     expect(

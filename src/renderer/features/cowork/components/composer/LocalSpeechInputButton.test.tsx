@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import * as localAudioCapture from '@/shared/audio/localAudioCapture';
 
 import { LocalSpeechInputButton } from './LocalSpeechInputButton';
 
@@ -38,9 +39,167 @@ describe('LocalSpeechInputButton', () => {
 
     render(<LocalSpeechInputButton disabled={false} onTranscript={vi.fn()} />);
 
-    expect(
+    const microphone = await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.contextMenu(microphone);
+    const importItem = screen.getByRole('menuitem', {
+      name: i18nService.t('voiceInputSourceFile'),
+    });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const openPicker = vi.spyOn(input, 'click').mockImplementation(() => undefined);
+    fireEvent.click(importItem);
+    expect(openPicker).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(microphone.getAttribute('aria-label')).toBe(i18nService.t('localAsrStart'));
+
+    fireEvent.contextMenu(microphone);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(microphone);
+    fireEvent.contextMenu(microphone);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it.each([false, true])('imports file segments and respects cancellation (%s)', async cancel => {
+    const currentConfig = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...currentConfig,
+      voice: {
+        ...currentConfig.voice,
+        inputEnabled: true,
+        recognitionMode: 'local',
+        meetingMode: false,
+      },
+    });
+    const segments = [new Uint8Array([1]), new Uint8Array([2])];
+    const decode = vi
+      .spyOn(localAudioCapture, 'recordedAudioToWavSegments')
+      .mockResolvedValue(segments);
+    let finishFirst!: (value: { success: boolean; text: string }) => void;
+    const transcribe = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ success: true, text: 'Second segment' });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localAsr: { getStatus: vi.fn().mockResolvedValue({ available: true }), transcribe },
+        localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
+      },
+    });
+    const onTranscript = vi.fn();
+    render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
+    const microphone = await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    fireEvent.contextMenu(microphone);
+    fireEvent.click(screen.getByRole('menuitem'));
+    const file = new File(['audio'], 'recording.mp3', { type: 'audio/mpeg' });
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
+    expect(decode).toHaveBeenCalledWith(file, currentConfig.voice.meetingSegmentSeconds);
+    fireEvent.contextMenu(microphone);
+    expect(screen.queryByRole('menu')).toBeNull();
+    if (cancel)
+      fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
+    finishFirst({ success: true, text: 'First segment' });
+    await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    if (cancel) {
+      expect(onTranscript).not.toHaveBeenCalled();
+      expect(transcribe).toHaveBeenCalledTimes(1);
+    } else {
+      expect(onTranscript.mock.calls).toEqual([['First segment'], ['Second segment']]);
+      expect(transcribe).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('does not let a cancelled import reset a newer import or report its stale failure', async () => {
+    const currentConfig = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...currentConfig,
+      voice: {
+        ...currentConfig.voice,
+        inputEnabled: true,
+        recognitionMode: 'local',
+        meetingMode: false,
+      },
+    });
+    vi.spyOn(localAudioCapture, 'recordedAudioToWavSegments').mockResolvedValue([
+      new Uint8Array([1]),
+    ]);
+    let finishOld!: (value: { success: boolean; error: string }) => void;
+    let finishNew!: (value: { success: boolean; text: string }) => void;
+    const transcribe = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishOld = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishNew = resolve;
+          }),
+      );
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        localAsr: { getStatus: vi.fn().mockResolvedValue({ available: true }), transcribe },
+        localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
+      },
+    });
+    const onTranscript = vi.fn();
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    render(<LocalSpeechInputButton disabled={false} onTranscript={onTranscript} />);
+    await screen.findByRole('button', { name: i18nService.t('localAsrStart') });
+    const file = new File(['audio'], 'recording.mp3', { type: 'audio/mpeg' });
+    const input = document.querySelector('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [file] } });
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('localAsrCancel') }));
+    fireEvent.change(input, { target: { files: [file] } });
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      finishOld({ success: false, error: 'Old request failed' });
+    });
+    expect(screen.getByRole('button', { name: i18nService.t('localAsrCancel') })).toBeTruthy();
+    expect(dispatch.mock.calls.some(([event]) => event.type === 'app:showToast')).toBe(false);
+    await act(async () => {
+      finishNew({ success: true, text: 'New recording' });
+    });
+    expect(onTranscript.mock.calls).toEqual([['New recording']]);
+    expect(screen.getByRole('button', { name: i18nService.t('localAsrStart') })).toBeTruthy();
+  });
+
+  it('disables file import in online mode and hides the menu when disabled', async () => {
+    const currentConfig = configService.getConfig();
+    vi.spyOn(configService, 'getConfig').mockReturnValue({
+      ...currentConfig,
+      voice: { ...currentConfig.voice, inputEnabled: true, recognitionMode: 'online' },
+    });
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        onlineAsr: {
+          getStatus: vi.fn().mockResolvedValue({ available: true }),
+          onEvent: vi.fn().mockReturnValue(() => undefined),
+        },
+        localSpeechModels: { onChanged: vi.fn().mockReturnValue(() => undefined) },
+      },
+    });
+    const { rerender } = render(<LocalSpeechInputButton disabled={false} onTranscript={vi.fn()} />);
+    fireEvent.contextMenu(
       await screen.findByRole('button', { name: i18nService.t('localAsrStart') }),
-    ).toBeTruthy();
+    );
+    expect((screen.getByRole('menuitem') as HTMLButtonElement).disabled).toBe(true);
+    rerender(<LocalSpeechInputButton disabled onTranscript={vi.fn()} />);
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
   it('stays hidden when the local recognition bundle is unavailable', async () => {
@@ -213,7 +372,8 @@ describe('LocalSpeechInputButton', () => {
       configurable: true,
       value: FakeAudioContext,
     });
-    let emitOnlineEvent: ((event: import('@shared/speech/onlineAsr').OnlineAsrEvent) => void) | undefined;
+    let emitOnlineEvent:
+      ((event: import('@shared/speech/onlineAsr').OnlineAsrEvent) => void) | undefined;
     const appendAudio = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window, 'electron', {
