@@ -1068,6 +1068,19 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       webview.addEventListener('dom-ready', () => {
         registerAgentTab();
         readyGuestsRef.current.add(webview);
+        const retainedTab = tabsRef.current.find(tab => tab.targetId === targetId);
+        const currentUrl = webview.getURL() || retainedTab?.url || 'about:blank';
+        if (retainedTab && isAtSourcePreview({ ...retainedTab, url: currentUrl })) {
+          try {
+            // Electron persists zoom per host. Every isolated local preview is served from
+            // 127.0.0.1, so a zoom chosen for an earlier preview would otherwise leak into
+            // unrelated files (and can break canvas libraries that derive input from DPR).
+            webview.setZoomFactor?.(1);
+            if (activeTargetRef.current === targetId) setZoomFactor(1);
+          } catch {
+            // The guest can detach while its ready event is being delivered.
+          }
+        }
         setReadyTargets(current => new Set(current).add(targetId));
         handleNavigation(targetId, webview);
       });

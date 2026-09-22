@@ -866,7 +866,7 @@ describe('BrowserPanel embedded webview', () => {
       rootPath: 'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d',
       previewRootUrl: 'http://127.0.0.1:43128/token/',
     });
-    render(<BrowserPanelHarness />);
+    const { container } = render(<BrowserPanelHarness />);
     const fileUrl = 'file:///C:/Users/lianghao/justdo/project/ai-assistant-3d/index.html';
 
     fireEvent.change(screen.getByLabelText('Browser address'), {
@@ -879,6 +879,9 @@ describe('BrowserPanel embedded webview', () => {
     expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(
       'C:\\Users\\lianghao\\justdo\\project\\ai-assistant-3d\\index.html',
     );
+
+    fireEvent(container.querySelector('webview')!, new Event('dom-ready'));
+    expect(setZoomFactor).toHaveBeenCalledWith(1);
   });
 
   it('ignores a stale local file preview when a newer address submission finishes first', async () => {
