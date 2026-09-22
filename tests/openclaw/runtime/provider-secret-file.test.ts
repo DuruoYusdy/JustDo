@@ -28,7 +28,7 @@ test.skipIf(!fs.existsSync(dist))('the bundled OpenClaw resolves managed file cr
     expect(resolver).toBeDefined();
     const { config } = syncProviderSecretFile({
       models: { providers: { acme: { apiKey: managedProviderSecretRef('acme') } } },
-    }, directory, { acme: 'native-fixture-key' });
+    }, directory, { acme: { apiKey: 'native-fixture-key', headers: {} } });
     const script = `
       import { resolveSecretRefString } from ${JSON.stringify(pathToFileURL(path.join(dist, resolver!)).href)};
       const config = ${JSON.stringify(config)};
