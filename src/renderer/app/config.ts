@@ -3,15 +3,15 @@ import {
   type BrowserMode as BrowserModeValue,
   BrowserSearchEngine,
   type BrowserSearchEngine as BrowserSearchEngineValue,
-} from '@shared/browser';
-import { defaultLocalSpeechSettings, type LocalSpeechSettings } from '@shared/localSpeechSettings';
+} from '@shared/browser/browser';
+import { defaultProxySettings, type ProxySettings } from '@shared/network/proxy';
 import {
   getDefaultCustomProviderDisplayName,
   isReservedOpenClawProviderId,
   ProviderRegistry,
   validateCustomProviderDisplayName,
 } from '@shared/providers';
-import { defaultProxySettings, type ProxySettings } from '@shared/proxy';
+import { defaultLocalSpeechSettings, type LocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 
 import { type AppearanceConfig, defaultAppearanceConfig } from '@/app/appearance';
 

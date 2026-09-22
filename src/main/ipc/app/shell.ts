@@ -15,7 +15,7 @@ import {
   getPreviewableFileExtension,
   MAX_PREVIEW_FILE_BYTES,
   type WorkspaceDirectoryListResult,
-} from '../../../shared/filePreview';
+} from '../../../shared/preview/filePreview';
 import {
   isLocalHtmlPreviewUrl,
   resolveLocalHtmlPreviewFilePath,

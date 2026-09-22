@@ -1,4 +1,4 @@
-import type { AppUpdateState } from '@shared/appUpdate';
+import type { AppUpdateState } from '@shared/app/appUpdate';
 
 export type AppUpdateToastState = {
   state: AppUpdateState;

@@ -3,7 +3,7 @@ import {
   type GoalExecutionSnapshot,
   SessionGoalMutationAction,
   type SessionGoalMutationResult,
-} from '@shared/sessionGoal';
+} from '@shared/cowork/sessionGoal';
 
 export function acceptedGoalResumeRunId(
   result: {

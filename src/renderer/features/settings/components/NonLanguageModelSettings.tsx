@@ -8,7 +8,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
-import { type ApiFetchOptions, NetworkFetchPurpose } from '@shared/network';
+import { type ApiFetchOptions, NetworkFetchPurpose } from '@shared/network/network';
 import { normalizeOpenClawProviderId, validateCustomProviderDisplayName } from '@shared/providers';
 import { parseProviderModelsResponse } from '@shared/providers/modelDiscovery';
 import React, { useEffect, useRef, useState } from 'react';

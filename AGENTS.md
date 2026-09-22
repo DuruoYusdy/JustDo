@@ -88,7 +88,10 @@ flowchart LR
 
 Main-process domains:
 
-- `core/`: constants, logging, tray, auto-launch, proxy/runtime helpers, i18n.
+- `core/`: shared constants, logging, and i18n at the root; app lifecycle in
+  `app/`, window/session policies in `window/`, proxy/HTTP/TLS in `network/`,
+  bundled dependencies in `runtime/`, file operations in `filesystem/`, and
+  development startup/config in `development/`. Keep tests beside their modules.
 - `data/`: SQLite wrapper/stores (`sqliteStore.ts`, `coworkStore.ts`, `groupStore.ts`).
 - `ipc/`: app/openclaw/scheduled-task IPC handlers.
 - `engine/`: cowork router, OpenClaw adapter, command safety, gateway types.
@@ -173,6 +176,10 @@ apply the current patch set instead.
 - Main may use Node, Electron main APIs, filesystem, SQLite, child processes.
 - Renderer must use the preload bridge only. No privileged imports.
 - Shared code must not import Electron, Node built-ins, DOM-only APIs, or process state.
+- Shared contracts are grouped by domain: `app/`, `browser/`, `cowork/`,
+  `integrations/`, `network/`, `openclaw/`, `plugins/`, `preview/`, `prompts/`,
+  `providers/`, `scheduledTask/`, `security/`, and `speech/`. Keep tests and JSON
+  config beside their owning modules; only product metadata stays at the root.
 - JustDo owns UX, persistence, permissions, packaging, app shell, and product flows.
 - OpenClaw owns agent execution, Gateway capabilities, tool semantics, and skill runtime behavior.
 - `openclawSkillService.ts` talks to Gateway skill APIs.

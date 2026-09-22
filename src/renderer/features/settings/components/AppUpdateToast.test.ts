@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { AppUpdateState } from '@shared/appUpdate';
+import type { AppUpdateState } from '@shared/app/appUpdate';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';

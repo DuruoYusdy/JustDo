@@ -3,7 +3,7 @@ import type { AppUpdater, UpdateCheckResult } from 'electron-updater';
 import { EventEmitter } from 'events';
 import { describe, expect, test, vi } from 'vitest';
 
-import { AppUpdateCheckFrequency } from '../../shared/appUpdate';
+import { AppUpdateCheckFrequency } from '../../../shared/app/appUpdate';
 import {
   AutoUpdateService,
   parseReleaseHistory,

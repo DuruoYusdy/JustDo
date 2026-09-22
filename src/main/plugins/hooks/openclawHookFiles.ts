@@ -5,8 +5,8 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
-import { cpRecursiveSync } from '../../core/fsCompat';
-import { extractZipSafely } from '../../core/safeZipExtractor';
+import { cpRecursiveSync } from '../../core/filesystem/fsCompat';
+import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
 
 const HOOK_FILE_NAME = 'HOOK.md';
 const HANDLER_FILE_NAMES = ['handler.ts', 'handler.js', 'index.ts', 'index.js'] as const;

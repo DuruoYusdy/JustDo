@@ -1,4 +1,4 @@
-import type { AppUpdateState } from '@shared/appUpdate';
+import type { AppUpdateState } from '@shared/app/appUpdate';
 import { describe, expect, test } from 'vitest';
 
 import { type AppUpdateToastState, selectAppUpdateToastState } from './appUpdateToastState';

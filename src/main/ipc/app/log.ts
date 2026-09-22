@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 
-import { LogIpc } from '../../../shared/logIpc';
+import { LogIpc } from '../../../shared/app/logIpc';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import { getLogFilePath, getRecentMainLogEntries } from '../../core/logger';
 import { getCoworkLogPath } from '../../cowork/coworkLogger';

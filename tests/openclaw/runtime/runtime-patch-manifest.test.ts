@@ -141,8 +141,8 @@ function createFixture() {
     path.join(repoRoot, 'src', 'main', 'openclaw', 'runtime', 'openclawGatewayBundleLauncher.cjs'),
     '// fixture\n',
   );
-  fs.mkdirSync(path.join(repoRoot, 'src', 'shared'), { recursive: true });
-  fs.writeFileSync(path.join(repoRoot, 'src', 'shared', 'mxcNativeBinaries.json'), '{}\n');
+  fs.mkdirSync(path.join(repoRoot, 'src', 'shared', 'security'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'src', 'shared', 'security', 'mxcNativeBinaries.json'), '{}\n');
   fs.mkdirSync(path.join(repoRoot, 'resources'), { recursive: true });
   fs.writeFileSync(path.join(repoRoot, 'resources', 'openclaw-extension-prune.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, 'resources', 'builtin-skills.json'), '{}\n');

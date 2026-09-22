@@ -1,4 +1,4 @@
-import type { BrowserAgentInteractionState, BrowserPanelTab } from '@shared/browser';
+import type { BrowserAgentInteractionState, BrowserPanelTab } from '@shared/browser/browser';
 
 const retainedTabsByDraftKey = new Map<string, BrowserPanelTab[]>();
 

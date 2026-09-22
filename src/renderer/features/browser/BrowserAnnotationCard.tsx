@@ -1,5 +1,5 @@
 import { ExclamationTriangleIcon, GlobeAltIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import type { BrowserAnnotationDraft } from '@shared/browser';
+import type { BrowserAnnotationDraft } from '@shared/browser/browser';
 
 import { i18nService } from '@/services/i18n';
 

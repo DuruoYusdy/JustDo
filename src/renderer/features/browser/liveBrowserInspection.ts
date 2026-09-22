@@ -1,4 +1,4 @@
-import type { BrowserInspectedElement } from '@shared/browser';
+import type { BrowserInspectedElement } from '@shared/browser/browser';
 
 const text = (value: unknown, maxLength: number): string =>
   (typeof value === 'string' ? value : '').replace(/\s+/g, ' ').trim().slice(0, maxLength);

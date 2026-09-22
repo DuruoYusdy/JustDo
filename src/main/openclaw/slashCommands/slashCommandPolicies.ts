@@ -1,4 +1,4 @@
-import { SlashCommandBlacklist } from '../../../shared/slashCommands';
+import { SlashCommandBlacklist } from '../../../shared/cowork/slashCommands';
 import type { SlashCommandPolicy } from './slashCommandService';
 
 export const justDoSlashCommandPolicy: SlashCommandPolicy = {

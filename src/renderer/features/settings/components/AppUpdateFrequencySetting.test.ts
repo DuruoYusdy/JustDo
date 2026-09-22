@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { AppUpdateCheckFrequency } from '@shared/appUpdate';
+import { AppUpdateCheckFrequency } from '@shared/app/appUpdate';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

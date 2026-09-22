@@ -6,7 +6,7 @@ import {
   DEVELOPER_CONFIG_DIRECTORY_NAME,
   DEVELOPER_CONFIG_FILE_NAME,
   type DeveloperConfig,
-} from '../../shared/developerConfig';
+} from '../../../shared/app/developerConfig';
 
 export const getDeveloperConfigPath = (userDataPath: string): string =>
   path.join(userDataPath, DEVELOPER_CONFIG_DIRECTORY_NAME, DEVELOPER_CONFIG_FILE_NAME);

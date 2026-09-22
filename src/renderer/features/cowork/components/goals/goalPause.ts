@@ -1,4 +1,4 @@
-import type { SessionGoal } from '@shared/sessionGoal';
+import type { SessionGoal } from '@shared/cowork/sessionGoal';
 
 /**
  * Native Goal mutations fence the displayed Goal ID, so a pause remains safe

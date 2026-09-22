@@ -1,4 +1,4 @@
-import { type BrowserAnnotationDraft, parseBrowserAnnotationPrompt } from '@shared/browser';
+import { type BrowserAnnotationDraft, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 

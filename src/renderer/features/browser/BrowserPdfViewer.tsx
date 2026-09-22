@@ -4,7 +4,7 @@ import {
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
 } from '@heroicons/react/24/outline';
-import type { BrowserAgentProfile } from '@shared/browser';
+import type { BrowserAgentProfile } from '@shared/browser/browser';
 import {
   getDocument,
   GlobalWorkerOptions,

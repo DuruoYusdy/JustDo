@@ -1,6 +1,6 @@
 import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/outline';
-import type { LocalSpeechSettings } from '@shared/localSpeechSettings';
-import { resolveLocalSpeechInputLanguage } from '@shared/localSpeechSettings';
+import type { LocalSpeechSettings } from '@shared/speech/localSpeechSettings';
+import { resolveLocalSpeechInputLanguage } from '@shared/speech/localSpeechSettings';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

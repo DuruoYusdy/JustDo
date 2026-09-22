@@ -1,11 +1,11 @@
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import { BuiltinModelIpc } from '@shared/builtinModels';
 import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ApprovalResolved,
 } from '@shared/openclaw/approvals';
 import { CoworkInteractionKind } from '@shared/openclaw/extensions';
+import { BuiltinModelIpc } from '@shared/providers/builtinModels';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 

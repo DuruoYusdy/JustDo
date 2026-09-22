@@ -17,7 +17,7 @@ import {
   type BrowserImportSource,
   browserPartitionForProfile,
   isBrowserAgentProfile,
-} from '../../shared/browser';
+} from '../../shared/browser/browser';
 import {
   buildChromeCookieDetails,
   chromeTimestampToUnixMs,

@@ -5,8 +5,8 @@ import {
   type BrowserPdfLoadRequest,
   type BrowserPdfLoadResult,
   isBrowserAgentProfile,
-} from '../../shared/browser';
-import { isAllowedBrowserPanelUrl } from '../core/browserPanelSecurity';
+} from '../../shared/browser/browser';
+import { isAllowedBrowserPanelUrl } from '../core/window/browserPanelSecurity';
 
 export const MAX_BROWSER_PDF_BYTES = 64 * 1024 * 1024;
 export const BROWSER_PDF_TIMEOUT_MS = 60_000;

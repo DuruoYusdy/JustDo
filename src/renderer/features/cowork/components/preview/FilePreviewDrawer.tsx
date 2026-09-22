@@ -13,7 +13,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react';
-import { getPreviewableFileExtension } from '@shared/filePreview';
+import { getPreviewableFileExtension } from '@shared/preview/filePreview';
 import {
   forwardRef,
   useCallback,

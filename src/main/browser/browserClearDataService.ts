@@ -10,7 +10,7 @@ import {
   type BrowserClearDataSummaryResult,
   browserPartitionForProfile,
   isBrowserClearDataRange,
-} from '../../shared/browser';
+} from '../../shared/browser/browser';
 import {
   clearBrowserDownloadsSince,
   clearBrowserHistorySince,

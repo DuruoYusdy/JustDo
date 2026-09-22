@@ -8,7 +8,7 @@ import {
   type OnlineAsrSession,
   type OnlineAsrStartOptions,
   type OnlineAsrStatus,
-} from '../../../shared/onlineAsr';
+} from '../../../shared/speech/onlineAsr';
 import type { GatewayEventFrame } from '../../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 

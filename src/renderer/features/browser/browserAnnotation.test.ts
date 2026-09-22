@@ -4,7 +4,7 @@ import {
   extractBrowserAnnotationUserText,
   parseBrowserAnnotationPrompt,
   serializeBrowserAnnotationContext,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 import { describe, expect, test } from 'vitest';
 
 import { browserAnnotationDataBytes, buildBrowserAnnotationDraft } from './browserAnnotation';

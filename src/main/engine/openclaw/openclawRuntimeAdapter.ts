@@ -4,13 +4,32 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
-import { parseBrowserAnnotationPrompt } from '../../../shared/browser';
+import { parseBrowserAnnotationPrompt } from '../../../shared/browser/browser';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
 import {
   type CoworkPlanArtifactReference,
   type CoworkPlanHandoff,
   CoworkPlanHandoffState,
 } from '../../../shared/cowork/planHandoff';
+import {
+  GoalExecutionIpc,
+  GoalExecutionPhase,
+  type GoalExecutionSnapshot,
+  type GoalFeedbackPreparationResult,
+  isDefinitiveSessionGoalGatewayError,
+  normalizeSessionGoal,
+  type SessionGoal,
+  SessionGoalIpc,
+  type SessionGoalMutationOutcome,
+  type SessionGoalMutationRequest,
+  type SessionGoalMutationResult,
+  SessionGoalStatus,
+} from '../../../shared/cowork/sessionGoal';
+import {
+  hasSlashCommandBeforeSendHook,
+  parseGoalStartObjective,
+  SlashCommandBeforeSendHook,
+} from '../../../shared/cowork/slashCommands';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
@@ -57,25 +76,6 @@ import {
 import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
 import { WORKBOARD_CHANGED_EVENT } from '../../../shared/openclaw/workboard';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
-import {
-  GoalExecutionIpc,
-  GoalExecutionPhase,
-  type GoalExecutionSnapshot,
-  type GoalFeedbackPreparationResult,
-  isDefinitiveSessionGoalGatewayError,
-  normalizeSessionGoal,
-  type SessionGoal,
-  SessionGoalIpc,
-  type SessionGoalMutationOutcome,
-  type SessionGoalMutationRequest,
-  type SessionGoalMutationResult,
-  SessionGoalStatus,
-} from '../../../shared/sessionGoal';
-import {
-  hasSlashCommandBeforeSendHook,
-  parseGoalStartObjective,
-  SlashCommandBeforeSendHook,
-} from '../../../shared/slashCommands';
 import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../../cowork/providerApiConfig';

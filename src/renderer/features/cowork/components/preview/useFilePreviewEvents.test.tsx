@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import type { FilePreviewReadResult } from '@shared/filePreview';
+import type { FilePreviewReadResult } from '@shared/preview/filePreview';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';

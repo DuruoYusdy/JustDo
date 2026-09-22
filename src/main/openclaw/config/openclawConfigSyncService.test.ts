@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
-} from '../../core/managedDirectoryOperations';
+} from '../../core/filesystem/managedDirectoryOperations';
 import {
   OpenClawConfigSyncService,
   resolveDeferredGatewayRestartAction,

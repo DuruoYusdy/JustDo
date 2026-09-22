@@ -6,12 +6,12 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
-import mxcNativeBinaries from '../../shared/mxcNativeBinaries.json';
+import mxcNativeBinaries from '../../shared/security/mxcNativeBinaries.json';
 import {
   type WindowsSandboxOperationResult,
   type WindowsSandboxStatus,
   WindowsSandboxStatusCode,
-} from '../../shared/windowsSandbox';
+} from '../../shared/security/windowsSandbox';
 
 const execFileAsync = promisify(execFile);
 const MXC_PLUGIN_DIRECTORY = 'mxc';

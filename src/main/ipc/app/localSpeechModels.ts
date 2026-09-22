@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import { LocalSpeechModelIpc } from '../../../shared/localSpeechModels';
+import { LocalSpeechModelIpc } from '../../../shared/speech/localSpeechModels';
 import type { LocalSpeechModelService } from '../../speech/localSpeechModelService';
 
 interface LocalSpeechModelHandlerDependencies {

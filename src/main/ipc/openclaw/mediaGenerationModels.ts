@@ -6,7 +6,7 @@ import {
   type MediaGenerationModelKind,
   MediaGenerationModelsIpc,
   OpenAiCompatibleMediaConfigProviderIds,
-} from '../../../shared/mediaGenerationModels';
+} from '../../../shared/providers/mediaGenerationModels';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 
 interface Dependencies {

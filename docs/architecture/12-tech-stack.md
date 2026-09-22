@@ -231,7 +231,7 @@ MinGit 是 Windows 打包资源，不应在运行时静默回退到任意用户 
 
 ## 20. Electron 安全构建配置
 
-`src/main/core/mainWindowFactory.ts` 是 BrowserWindow webPreferences 的实现入口，preload path 由 composition root 注入。检查 Electron 升级时至少复核 context isolation、Node integration、navigation/window-open policy、CSP 注入和 custom protocol。
+`src/main/core/window/mainWindowFactory.ts` 是 BrowserWindow webPreferences 的实现入口，preload path 由 composition root 注入。检查 Electron 升级时至少复核 context isolation、Node integration、navigation/window-open policy、CSP 注入和 custom protocol。
 
 当前 Linux/Windows Main 使用 `no-sandbox`，不是推荐的长期安全终点；它不能成为在 Renderer 暴露 Node 或通用 IPC 的理由。生产 sourcemap 关闭减少源码暴露，但不替代输入验证、HTML 清洗或 secret 管理。
 

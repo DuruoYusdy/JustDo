@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import { MulticaIntegrationIpc } from '../../shared/multica';
+import { MulticaIntegrationIpc } from '../../shared/integrations/multica';
 import type { MulticaIntegrationService } from '../integrations/multica/multicaIntegrationService';
 
 export const registerMulticaIntegrationHandlers = (

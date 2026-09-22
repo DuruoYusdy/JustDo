@@ -13,7 +13,7 @@ import {
   type LocalAsrLanguage,
   type LocalAsrModelId,
   type LocalAsrStatus,
-} from '../../shared/localAsr';
+} from '../../shared/speech/localAsr';
 import {
   isLocalSpeechRuntimeReady,
   type LocalSpeechPathOptions,

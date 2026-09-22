@@ -8,7 +8,12 @@ import {
 import {
   MAX_MAX_RETAINED_DISPLAY_TABS,
   MIN_MAX_RETAINED_DISPLAY_TABS,
-} from '@shared/displayTabRetention';
+} from '@shared/cowork/displayTabRetention';
+import {
+  MAX_MAX_GOAL_CONTINUATION_TURNS,
+  MIN_MAX_GOAL_CONTINUATION_TURNS,
+  normalizeMaxGoalContinuationTurns,
+} from '@shared/cowork/sessionGoal';
 import {
   AGENT_RUNTIME_LIMITS,
   AgentRuntimeDelegationMode,
@@ -17,11 +22,6 @@ import {
   AgentRuntimeThinkingLevel,
   AUTOMATION_APPROVAL_TIMEOUT_MINUTES,
 } from '@shared/openclaw/agentRuntimeSettings';
-import {
-  MAX_MAX_GOAL_CONTINUATION_TURNS,
-  MIN_MAX_GOAL_CONTINUATION_TURNS,
-  normalizeMaxGoalContinuationTurns,
-} from '@shared/sessionGoal';
 import React, { useMemo, useState } from 'react';
 
 import type { Model } from '@/features/models/modelSlice';

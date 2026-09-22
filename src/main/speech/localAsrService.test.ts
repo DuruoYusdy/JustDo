@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/localAsr';
+import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/speech/localAsr';
 import {
   buildLocalAsrModelArgs,
   getLocalAsrStatus,

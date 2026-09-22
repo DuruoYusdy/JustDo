@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { USER_DATA_DIRECTORY_NAME } from '../../shared/productMetadata';
+import { USER_DATA_DIRECTORY_NAME } from '../../../shared/productMetadata';
 
 export type OutboundHeaderPolicyGroup = {
   /** URLs handled by this group. */

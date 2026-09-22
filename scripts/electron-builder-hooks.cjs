@@ -35,7 +35,7 @@ const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const {
   getRuntimeCompanionPathsReferencedByBundle: getRuntimeCompanionPathsFromContent,
 } = require('./openclaw-runtime-companions.cjs');
-const { releaseHistory: releaseHistoryLimits } = require('../src/shared/appUpdateConfig.json');
+const { releaseHistory: releaseHistoryLimits } = require('../src/shared/app/appUpdateConfig.json');
 const {
   prepareBrowserExtension,
   verifyBrowserExtension,

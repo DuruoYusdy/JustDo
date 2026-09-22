@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import type { BrowserExtensionStreamEvent } from '../../shared/browserExtensionStream';
+import type { BrowserExtensionStreamEvent } from '../../shared/browser/browserExtensionStream';
 import { parseCoworkAttachments } from '../../shared/cowork/attachments';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
 import { isPermissionMode, resolvePermissionMode } from '../../shared/openclaw/approvals';
 import { normalizeMessageSessionKey } from '../../shared/openclaw/messageDomain';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
-import { resolveTaskWorkingDirectory } from '../core/taskWorkspace';
+import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
 import type { CoworkStore } from '../data/coworkStore';
 import type { CoworkEngineRouter } from '../engine';
 import type { GatewayEventFrame } from '../engine/gateway/types';

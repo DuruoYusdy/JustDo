@@ -6,7 +6,7 @@ import {
   normalizeSessionGoal,
   type SessionGoal,
   SessionGoalStatus,
-} from '../../../shared/sessionGoal';
+} from '../../../shared/cowork/sessionGoal';
 import { coworkLog } from '../../cowork/coworkLogger';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 

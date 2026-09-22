@@ -1,4 +1,4 @@
-import type { BrowserExtensionStreamEvent } from '@shared/browserExtensionStream';
+import type { BrowserExtensionStreamEvent } from '@shared/browser/browserExtensionStream';
 import { readTerminalGuardObservation } from '@shared/openclaw/agentEvent';
 
 import { reduceAgentEvent, reduceChatEvent } from './agent-event-reducer';

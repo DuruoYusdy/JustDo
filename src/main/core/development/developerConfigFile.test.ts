@@ -3,13 +3,13 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import packageJson from '../../../package.json';
+import packageJson from '../../../../package.json';
 import {
   defaultDeveloperConfig,
   DEVELOPER_CONFIG_DIRECTORY_NAME,
   DEVELOPER_CONFIG_FILE_NAME,
-} from '../../shared/developerConfig';
-import { USER_DATA_DIRECTORY_NAME } from '../../shared/productMetadata';
+} from '../../../shared/app/developerConfig';
+import { USER_DATA_DIRECTORY_NAME } from '../../../shared/productMetadata';
 import { getDeveloperConfigPath, loadDeveloperConfig } from './developerConfigFile';
 
 const tempDirectories: string[] = [];

@@ -123,7 +123,7 @@ function resolveBundledCandidates(): string[] {
     ];
   }
 
-  const projectRoot = path.resolve(__dirname, '..', '..', '..');
+  const projectRoot = path.resolve(__dirname, '..', '..', '..', '..');
   return [
     path.join(projectRoot, 'resources', PYTHON_RUNTIME_DIR_NAME),
     path.join(process.cwd(), 'resources', PYTHON_RUNTIME_DIR_NAME),

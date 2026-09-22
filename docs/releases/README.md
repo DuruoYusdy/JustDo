@@ -19,7 +19,7 @@ use only `latest.yml`; newer clients fetch the JSON history only when the user
 opens release history.
 
 Generation fails if the history exceeds the client limits defined in
-`src/shared/appUpdateConfig.json`, preventing a package that clients cannot
+`src/shared/app/appUpdateConfig.json`, preventing a package that clients cannot
 display.
 
 Upload the versioned installer and `release-history.json` to the Generic update

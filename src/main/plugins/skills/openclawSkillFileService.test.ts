@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { ManagedDirectoryOperationCoordinator } from '../../core/managedDirectoryOperations';
+import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { LocalSkillFileResult, OpenClawSkillFiles } from './openclawSkillFiles';
 import { OpenClawSkillFileService } from './openclawSkillFileService';

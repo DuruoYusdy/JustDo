@@ -213,7 +213,7 @@ describe('LocalSpeechInputButton', () => {
       configurable: true,
       value: FakeAudioContext,
     });
-    let emitOnlineEvent: ((event: import('@shared/onlineAsr').OnlineAsrEvent) => void) | undefined;
+    let emitOnlineEvent: ((event: import('@shared/speech/onlineAsr').OnlineAsrEvent) => void) | undefined;
     const appendAudio = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window, 'electron', {

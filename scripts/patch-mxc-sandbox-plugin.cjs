@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const nativeBinaries = require('../src/shared/mxcNativeBinaries.json');
+const nativeBinaries = require('../src/shared/security/mxcNativeBinaries.json');
 
 const SUPPORTED_VERSION = nativeBinaries.pluginVersion;
 const MARKER = 'JUSTDO_MXC_EXTERNAL_READONLY_SKILLS_V2026_9_2';

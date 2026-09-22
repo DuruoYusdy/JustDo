@@ -7,7 +7,7 @@ import {
   PlayIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
-import type { BrowserDownloadEntry } from '@shared/browser';
+import type { BrowserDownloadEntry } from '@shared/browser/browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

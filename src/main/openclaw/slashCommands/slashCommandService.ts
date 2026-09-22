@@ -5,7 +5,7 @@ import {
   type SlashCommandCategory as SlashCommandCategoryValue,
   SlashCommandTier,
   type SlashCommandTier as SlashCommandTierValue,
-} from '../../../shared/slashCommands';
+} from '../../../shared/cowork/slashCommands';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 
 type GatewayCommandArg = {

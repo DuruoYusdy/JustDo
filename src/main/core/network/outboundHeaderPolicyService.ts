@@ -1,10 +1,10 @@
 import crypto from 'crypto';
 
-import type { InstalledOpenClawExtension } from '../../shared/openclaw/extensions';
+import type { InstalledOpenClawExtension } from '../../../shared/openclaw/extensions';
 import {
   type ExtensionNetworkPolicyInspection,
   inspectExtensionNetworkPolicyManifest,
-} from '../plugins/extensions/extensionNetworkPolicyManifest';
+} from '../../plugins/extensions/extensionNetworkPolicyManifest';
 import {
   activateOutboundHeaderPolicyConfig,
   type OutboundHeaderPolicyConfig,

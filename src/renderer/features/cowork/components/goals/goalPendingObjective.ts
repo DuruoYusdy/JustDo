@@ -1,4 +1,4 @@
-import { parseGoalStartObjective } from '@shared/slashCommands';
+import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
 
 export const inferInitialGoalObjective = (
   prompt: string,

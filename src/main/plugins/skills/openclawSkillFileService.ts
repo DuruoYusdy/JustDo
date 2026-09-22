@@ -1,14 +1,14 @@
 import path from 'path';
 
-import { t } from '../../core/i18n';
 import {
   managedDirectoryFailure,
   managedDirectoryFailureFromError,
   managedDirectoryFailureFromMessage,
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
-} from '../../core/managedDirectoryOperations';
-import { findWindowsLockingProcesses } from '../../core/windowsFileLockDiagnostics';
+} from '../../core/filesystem/managedDirectoryOperations';
+import { findWindowsLockingProcesses } from '../../core/filesystem/windowsFileLockDiagnostics';
+import { t } from '../../core/i18n';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { type LocalSkillFileResult, OpenClawSkillFiles } from './openclawSkillFiles';
 

@@ -1,6 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 
-import { resolveBrowserPanelShortcutAction } from '@shared/browser';
+import { resolveBrowserPanelShortcutAction } from '@shared/browser/browser';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';

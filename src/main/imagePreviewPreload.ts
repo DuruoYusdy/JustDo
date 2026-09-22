@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import { type ImagePreviewDocument, ImagePreviewIpc } from '../shared/imagePreview';
+import { type ImagePreviewDocument, ImagePreviewIpc } from '../shared/preview/imagePreview';
 
 contextBridge.exposeInMainWorld('imagePreviewWindow', {
   getCurrent: (): Promise<ImagePreviewDocument | null> =>

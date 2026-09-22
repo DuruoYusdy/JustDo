@@ -44,7 +44,7 @@ vi.mock('electron', () => ({
   shell: electronMocks.shell,
 }));
 
-import { ImagePreviewIpc } from '../../../shared/imagePreview';
+import { ImagePreviewIpc } from '../../../shared/preview/imagePreview';
 import { normalizeImagePreviewRequest, registerImagePreviewHandlers } from './imagePreview';
 
 beforeEach(() => {

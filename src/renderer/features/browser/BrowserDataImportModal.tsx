@@ -5,7 +5,7 @@ import {
   ShieldCheckIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import type { BrowserImportResult } from '@shared/browser';
+import type { BrowserImportResult } from '@shared/browser/browser';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 

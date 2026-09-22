@@ -4,7 +4,7 @@ import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
-import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
+import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';

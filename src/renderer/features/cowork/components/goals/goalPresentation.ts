@@ -1,4 +1,4 @@
-import { type SessionGoal, SessionGoalStatus } from '@shared/sessionGoal';
+import { type SessionGoal, SessionGoalStatus } from '@shared/cowork/sessionGoal';
 
 export type GoalTone = 'active' | 'muted' | 'warning' | 'danger' | 'success';
 

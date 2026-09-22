@@ -23,7 +23,7 @@ import {
   type BrowserSearchEngine as BrowserSearchEngineValue,
   normalizeBrowserMode,
   normalizeBrowserSearchEngine,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import {

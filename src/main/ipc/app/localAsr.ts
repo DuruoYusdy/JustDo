@@ -5,8 +5,8 @@ import {
   LocalAsrIpc,
   type LocalAsrTranscribeOptions,
   type LocalAsrTranscribeResult,
-} from '../../../shared/localAsr';
-import { normalizeLocalSpeechSettings } from '../../../shared/localSpeechSettings';
+} from '../../../shared/speech/localAsr';
+import { normalizeLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
 import {
   getLocalAsrStatus,
   isLocalAsrModelId,

@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 
-import { normalizeMaxRetainedDisplayTabs } from '../../../shared/displayTabRetention';
+import { normalizeMaxRetainedDisplayTabs } from '../../../shared/cowork/displayTabRetention';
+import { normalizeMaxGoalContinuationTurns } from '../../../shared/cowork/sessionGoal';
 import {
   AgentRuntimeSettingsIpc,
   validateAgentRuntimeSettings,
@@ -12,7 +13,6 @@ import {
   type ExternalAgentTestResult,
   validateExternalAgentSettings,
 } from '../../../shared/openclaw/externalAgents';
-import { normalizeMaxGoalContinuationTurns } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
 import type {

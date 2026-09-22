@@ -2,7 +2,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import { LOCAL_TTS_RUNTIME_VERSION } from '../../shared/localTts';
+import { LOCAL_TTS_RUNTIME_VERSION } from '../../shared/speech/localTts';
 
 export const LOCAL_SPEECH_RUNTIME_MARKER = `sherpa-onnx=${LOCAL_TTS_RUNTIME_VERSION}\n`;
 

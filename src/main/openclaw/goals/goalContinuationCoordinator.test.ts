@@ -4,7 +4,7 @@ import {
   GoalExecutionPhase,
   type SessionGoal,
   SessionGoalStatus,
-} from '../../../shared/sessionGoal';
+} from '../../../shared/cowork/sessionGoal';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import { GoalContinuationCoordinator } from './goalContinuationCoordinator';
 

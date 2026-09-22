@@ -1,8 +1,8 @@
-import type { BrowserPanelTab } from '@shared/browser';
+import type { BrowserPanelTab } from '@shared/browser/browser';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
-} from '@shared/displayTabRetention';
+} from '@shared/cowork/displayTabRetention';
 import {
   type Dispatch,
   type SetStateAction,

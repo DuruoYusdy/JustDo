@@ -6,7 +6,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
-const { releaseHistory: releaseHistoryLimits } = require('../src/shared/appUpdateConfig.json');
+const { releaseHistory: releaseHistoryLimits } = require('../src/shared/app/appUpdateConfig.json');
 
 const UPDATE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 

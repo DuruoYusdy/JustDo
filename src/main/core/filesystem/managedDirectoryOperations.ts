@@ -2,8 +2,8 @@ import childProcess from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { t } from '../i18n';
 import { cpRecursiveSync } from './fsCompat';
-import { t } from './i18n';
 import {
   findWindowsLockingProcesses,
   type WindowsLockingProcess,

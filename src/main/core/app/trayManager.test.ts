@@ -40,7 +40,7 @@ vi.mock('electron', () => ({
   }),
 }));
 
-import { setLanguage } from './i18n';
+import { setLanguage } from '../i18n';
 import { createTray, destroyTray, updateTrayMenu } from './trayManager';
 
 describe('trayManager', () => {

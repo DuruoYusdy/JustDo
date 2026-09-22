@@ -3,14 +3,14 @@ import { session } from 'electron';
 import {
   BROWSER_IMPORTED_PROFILE_PARTITION,
   BROWSER_PANEL_PARTITION,
-} from '../../shared/browser';
+} from '../../../shared/browser/browser';
 import {
   type CustomProxyConfig,
   defaultCustomProxyConfig,
   ProxyMode,
   ProxyProtocol,
   type ProxySettings,
-} from '../../shared/proxy';
+} from '../../../shared/network/proxy';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrl,

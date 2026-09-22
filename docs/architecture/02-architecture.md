@@ -57,7 +57,7 @@ flowchart TB
 
 | 目录         | 职责                                                                | 代表入口                                                 |
 | ------------ | ------------------------------------------------------------------- | -------------------------------------------------------- |
-| `core/`      | app/window/tray/update/log、CSP、本地协议、代理、Python、受管目录   | `mainWindowFactory.ts`、`outboundHeaderProxy.ts`         |
+| `core/`      | 按 app/window/network/runtime/filesystem/development 分组的主进程基础能力 | `window/mainWindowFactory.ts`、`network/outboundHeaderProxy.ts` |
 | `data/`      | SQLite schema 和面向领域的 store                                    | `sqliteStore.ts`、`coworkStore.ts`、`groupStore.ts`      |
 | `engine/`    | Cowork router、Gateway adapter、事件转发、命令安全                  | `coworkEngineRouter.ts`、`openclawRuntimeAdapter.ts`     |
 | `cowork/`    | provider 配置、内置模型、日志、模型 API/readiness                   | `providerApiConfig.ts`、`builtinModelLifecycle.ts`       |
@@ -67,6 +67,19 @@ flowchart TB
 | `scheduler/` | Gateway cron 映射、轮询、结果同步和本地 receipt                     | `cronJobService.ts`、`scheduledTaskResultSyncService.ts` |
 
 `src/main/main.ts` 仅是 composition root：创建单例、注入依赖、注册 handler、绑定事件和管理应用生命周期。新增领域逻辑不应继续堆入该文件。
+
+`core/` 按职责保留一层分组，测试与所属模块同目录：
+
+| 分组 | 职责 |
+| --- | --- |
+| `app/` | 应用退出、自启动、更新、安装识别、客户注册与托盘生命周期 |
+| `window/` | 主窗口、浏览器面板请求状态与安全策略、媒体权限、CSP 和本地文件协议 |
+| `network/` | Main HTTP 请求、系统代理、出站请求头策略、证书与 Gateway 网络环境 |
+| `runtime/` | 随应用提供的 Python、Git 和包管理器配置 |
+| `filesystem/` | 受管目录操作、文件复制、ZIP 解压、任务工作目录和 Windows 文件锁诊断 |
+| `development/` | 开发配置、开发服务器交接与会话生命周期 |
+
+根目录仅保留跨组使用的 `appConstants.ts`、`i18n.ts` 和 `logger.ts` 及其测试。调用方直接引用所属模块；新增代码按职责归组，避免再次向根目录堆积。该分组不改变进程边界或服务生命周期；`window/` 管理 Electron 窗口与 session 策略，`src/main/browser/` 继续承载浏览器业务服务。
 
 ### 3.2 `src/renderer/`
 
@@ -84,6 +97,26 @@ flowchart TB
 ### 3.3 `src/shared/`
 
 Shared 由两个进程共同编译，适合放：IPC channel 常量、可序列化 interface/type、验证/normalize 函数、稳定 discriminant。禁止放 Electron、Node 内置模块、DOM-only API、环境变量读取和有副作用的单例。
+
+共享合约按业务领域组织，测试和 JSON 配置就近放置。根目录仅保留跨领域的 `productMetadata.ts` 及其测试；调用方通过具体模块路径引用，例如 `@shared/speech/localTts`，主进程使用对应的相对路径。
+
+| 分组 | 共享职责 |
+| --- | --- |
+| `app/` | 应用更新及配置、开发配置、对话框、日志、快捷键、终端和媒体捕获 IPC |
+| `browser/` | 浏览器合约与扩展流事件 |
+| `cowork/` | 会话、附件、计划、目标、斜杠命令和展示标签保留策略 |
+| `integrations/` | 外部集成状态与会话元数据 |
+| `network/` | HTTP 请求与代理配置合约 |
+| `openclaw/` | Gateway、agent、历史、权限及运行时能力合约 |
+| `plugins/` | 插件、技能与市场管理合约 |
+| `preview/` | 文件和图片预览合约及纯函数 |
+| `prompts/` | 跨进程复用的提示词构造 |
+| `providers/` | 模型供应商、内置模型、媒体生成模型和请求头策略 |
+| `scheduledTask/` | 定时任务类型、常量与结果展示辅助逻辑 |
+| `security/` | Windows 沙箱合约与原生二进制清单 |
+| `speech/` | 本地/在线 ASR、TTS、语音模型和设置 |
+
+构建脚本直接读取 `app/appUpdateConfig.json` 与 `security/mxcNativeBinaries.json`，与应用代码共用同一配置源。目录分组不改变 IPC 名称、数据结构或进程权限边界。
 
 ## 4. 依赖规则
 

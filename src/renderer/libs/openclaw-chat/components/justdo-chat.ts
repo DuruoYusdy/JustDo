@@ -7,8 +7,8 @@
  * 2. Via a ChatController reference (controller property)
  */
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
-import { LocalSpeechModelKind } from '@shared/localSpeechModels';
-import { normalizeLocalSpeechSettings } from '@shared/localSpeechSettings';
+import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
+import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 import katexStyles from 'katex/dist/katex.min.css?inline';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';

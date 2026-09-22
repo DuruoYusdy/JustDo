@@ -9,7 +9,7 @@ import {
   type BrowserImportedCredential,
   isBrowserGuestCommand,
   resolveBrowserGuestWheelZoomDirection,
-} from '../shared/browser';
+} from '../shared/browser/browser';
 
 type InspectionPoint = { x: number; y: number };
 const MAX_SIBLINGS_SCANNED = 512;

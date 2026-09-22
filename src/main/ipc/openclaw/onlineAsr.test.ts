@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { OnlineAsrIpc } from '../../../shared/onlineAsr';
+import { OnlineAsrIpc } from '../../../shared/speech/onlineAsr';
 import { registerOnlineAsrHandlers } from './onlineAsr';
 
 describe('OpenClaw online transcription IPC', () => {

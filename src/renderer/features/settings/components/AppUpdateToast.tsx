@@ -5,7 +5,7 @@ import {
   ExclamationTriangleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import type { AppUpdateState } from '@shared/appUpdate';
+import type { AppUpdateState } from '@shared/app/appUpdate';
 import React from 'react';
 
 import { i18nService } from '@/services/i18n';

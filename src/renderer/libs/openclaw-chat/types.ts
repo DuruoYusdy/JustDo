@@ -3,7 +3,7 @@
  * These are the types used by the rendering pipeline and ordinary Content renderer.
  */
 
-import type { BrowserAnnotationDisplay } from '@shared/browser';
+import type { BrowserAnnotationDisplay } from '@shared/browser/browser';
 
 export type UserMessageHistoryAction = 'edit' | 'withdraw';
 

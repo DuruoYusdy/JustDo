@@ -3,9 +3,9 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../../shared/localAsr';
-import { defaultLocalSpeechSettings } from '../../../shared/localSpeechSettings';
-import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_PROVIDER_ID } from '../../../shared/localTts';
+import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../../shared/speech/localAsr';
+import { defaultLocalSpeechSettings } from '../../../shared/speech/localSpeechSettings';
+import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
 import {
   buildManagedLocalTtsConfig,
   getLocalTtsStatus,

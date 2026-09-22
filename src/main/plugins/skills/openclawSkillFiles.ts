@@ -4,15 +4,15 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
-import { t } from '../../core/i18n';
 import {
   findFileSystemErrorDetails,
   managedDirectoryFailureFromError,
   removeDirectoryTransactional,
   removeDirectoryWithRetry,
   replaceDirectoryTransactional,
-} from '../../core/managedDirectoryOperations';
-import { extractZipSafely } from '../../core/safeZipExtractor';
+} from '../../core/filesystem/managedDirectoryOperations';
+import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
+import { t } from '../../core/i18n';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const SUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.tar.gz', '.tgz'];

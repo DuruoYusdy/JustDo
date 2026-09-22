@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   eventSourceFetch: undefined as unknown,
 }));
 
-vi.mock('../../core/mainProcessFetch', () => ({
+vi.mock('../../core/network/mainProcessFetch', () => ({
   mainProcessMcpProbeFetch: mocks.mcpProbeFetch,
 }));
 

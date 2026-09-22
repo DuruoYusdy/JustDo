@@ -6,7 +6,7 @@ import {
   MagnifyingGlassIcon,
   TrashIcon,
 } from '@heroicons/react/24/outline';
-import type { BrowserHistoryEntry } from '@shared/browser';
+import type { BrowserHistoryEntry } from '@shared/browser/browser';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

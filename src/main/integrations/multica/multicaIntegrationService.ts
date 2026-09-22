@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
-import type { MulticaIntegrationResult, MulticaIntegrationStatus } from '../../../shared/multica';
+import type { MulticaIntegrationResult, MulticaIntegrationStatus } from '../../../shared/integrations/multica';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
 import type { SqliteStore } from '../../data/sqliteStore';
 import { MULTICA_BRIDGE_PROTOCOL_VERSION } from './multicaBridgeProtocol';

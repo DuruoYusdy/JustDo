@@ -1,7 +1,6 @@
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
-import { composeBrowserGatewayPrompt } from '@shared/browser';
-import type { OpenClawModelChoice } from '@shared/openclaw/models';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
@@ -10,14 +9,15 @@ import {
   SessionGoalMutationAction,
   type SessionGoalMutationRequest,
   SessionGoalStatus,
-} from '@shared/sessionGoal';
+} from '@shared/cowork/sessionGoal';
 import {
   isGoalClearCommand,
   isGoalSlashCommand,
   parseGoalStartObjective,
   parsePlanSlashCommandPrompt,
   shouldClearSlashCommandComposerBeforeExecution,
-} from '@shared/slashCommands';
+} from '@shared/cowork/slashCommands';
+import type { OpenClawModelChoice } from '@shared/openclaw/models';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 

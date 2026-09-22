@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { OnlineTtsIpc } from '../../../shared/onlineTts';
+import { OnlineTtsIpc } from '../../../shared/speech/onlineTts';
 import { registerOnlineTtsHandlers } from './onlineTts';
 
 describe('OpenClaw online speech IPC', () => {

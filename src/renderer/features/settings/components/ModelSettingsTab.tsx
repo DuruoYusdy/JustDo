@@ -1,4 +1,4 @@
-import { normalizeModelProviderHeaders } from '@shared/modelProviderHeaders';
+import { normalizeModelProviderHeaders } from '@shared/providers/modelProviderHeaders';
 import React, { useRef, useState } from 'react';
 
 import { APP_NAME, EXPORT_PASSWORD } from '@/app/constants/app';

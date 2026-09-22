@@ -2,7 +2,7 @@ import { clipboard } from 'electron';
 import path from 'path';
 import { describe, expect, test, vi } from 'vitest';
 
-import { BrowserMode } from '../../../shared/browser';
+import { BrowserMode } from '../../../shared/browser/browser';
 import {
   applyBrowserModeChange,
   buildBrowserExtensionPairingCommandArgs,

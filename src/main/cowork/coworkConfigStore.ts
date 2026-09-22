@@ -2,7 +2,7 @@ import { app } from 'electron';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { normalizeModelProviderHeaders } from '../../shared/modelProviderHeaders';
+import { normalizeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
 
 export type CoworkApiType = 'openai';
 

@@ -1,6 +1,6 @@
 import { connect } from 'node:net';
 
-import { DEV_SERVER_URL_SWITCH } from './appConstants';
+import { DEV_SERVER_URL_SWITCH } from '../appConstants';
 import { getDevServerUrlFromCommandLine } from './devServerHandoff';
 
 const CHECK_INTERVAL_MS = 1_000;

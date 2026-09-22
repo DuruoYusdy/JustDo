@@ -1,4 +1,4 @@
-import { BuiltinModelSyncReason } from '../../shared/builtinModels';
+import { BuiltinModelSyncReason } from '../../shared/providers/builtinModels';
 import type { SqliteStore } from '../data/sqliteStore';
 import {
   BuiltinModelAccess,

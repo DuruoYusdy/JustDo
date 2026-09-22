@@ -18,13 +18,13 @@ import type {
 } from '../../../shared/openclaw/sessionMigration';
 import type { SystemPromptReplacementRule } from '../../../shared/openclaw/systemPromptReplacements';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
-import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
-import { applyPortableGitRuntimeEnv } from '../../core/portableGitRuntime';
-import { appendPythonRuntimeToEnv } from '../../core/pythonRuntime';
 import {
   applyTrustedCertificateEnv,
   buildTrustedCaBundle,
-} from '../../core/trustedCertificates';
+} from '../../core/network/trustedCertificates';
+import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
+import { applyPortableGitRuntimeEnv } from '../../core/runtime/portableGitRuntime';
+import { appendPythonRuntimeToEnv } from '../../core/runtime/pythonRuntime';
 import { syncLocalOpenClawExtensionsIntoRuntime } from '../../plugins/extensions';
 import {
   appendNodeRequireOption,

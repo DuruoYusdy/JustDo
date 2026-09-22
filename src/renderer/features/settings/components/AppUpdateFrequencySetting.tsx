@@ -2,7 +2,7 @@ import {
   AppUpdateCheckFrequency,
   type AppUpdateCheckFrequency as AppUpdateCheckFrequencyValue,
   DEFAULT_APP_UPDATE_CHECK_FREQUENCY,
-} from '@shared/appUpdate';
+} from '@shared/app/appUpdate';
 import React, { useEffect, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

@@ -1,10 +1,10 @@
-import { normalizeModelProviderHeaders } from '../../shared/modelProviderHeaders';
 import {
   getEffectiveCustomProviderDisplayName,
   isJustDoCustomProviderKey,
   normalizeOpenClawProviderId,
   validateCustomProviderDisplayName,
 } from '../../shared/providers';
+import { normalizeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
 import type { SqliteStore } from '../data/sqliteStore';
 import type { CoworkApiConfig } from './coworkConfigStore';
 

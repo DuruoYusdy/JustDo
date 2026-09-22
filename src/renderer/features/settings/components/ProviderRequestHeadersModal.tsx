@@ -4,7 +4,7 @@ import {
   normalizeModelProviderHeaders,
   validateModelProviderHeaderName,
   validateModelProviderHeaderValue,
-} from '@shared/modelProviderHeaders';
+} from '@shared/providers/modelProviderHeaders';
 import React, { useEffect, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

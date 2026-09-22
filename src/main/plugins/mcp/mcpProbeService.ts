@@ -8,8 +8,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
-import { applyDependencyManagerConfigEnv } from '../../core/dependencyManagerConfig';
-import { mainProcessMcpProbeFetch } from '../../core/mainProcessFetch';
+import { mainProcessMcpProbeFetch } from '../../core/network/mainProcessFetch';
+import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
 import type { McpServerRecord } from './mcpStore';
 
 const MCP_PROBE_TIMEOUT_MS = 8_000;

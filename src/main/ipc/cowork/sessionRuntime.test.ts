@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { SessionGoalIpc } from '../../../shared/sessionGoal';
+import { SessionGoalIpc } from '../../../shared/cowork/sessionGoal';
 
 const electronMocks = vi.hoisted(() => ({ handle: vi.fn() }));
 

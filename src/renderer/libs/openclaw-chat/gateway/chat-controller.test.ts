@@ -1,4 +1,4 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { readModelRef } from '@shared/openclaw/modelRef';
 import { ProgressCardStepStatus } from '@shared/openclaw/progressCard';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';

@@ -4,21 +4,26 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
+  DEFAULT_MAX_RETAINED_DISPLAY_TABS,
+  normalizeMaxRetainedDisplayTabs,
+} from '../../shared/cowork/displayTabRetention';
+import {
   type CoworkPlanHandoff,
   CoworkPlanHandoffState,
   type CreateCoworkPlanHandoffInput,
   type TransitionCoworkPlanHandoffInput,
 } from '../../shared/cowork/planHandoff';
+import {
+  GoalExecutionPhase,
+  type GoalExecutionSnapshot,
+  normalizeMaxGoalContinuationTurns,
+} from '../../shared/cowork/sessionGoal';
 import type {
   BeginSessionRunInput,
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
-import {
-  DEFAULT_MAX_RETAINED_DISPLAY_TABS,
-  normalizeMaxRetainedDisplayTabs,
-} from '../../shared/displayTabRetention';
-import type { ExternalSessionMetadata, ExternalSessionStatus } from '../../shared/multica';
+import type { ExternalSessionMetadata, ExternalSessionStatus } from '../../shared/integrations/multica';
 import {
   type AgentRuntimeSettings,
   parseAgentRuntimeSettings,
@@ -37,11 +42,6 @@ import {
 } from '../../shared/openclaw/externalAgents';
 import { DEFAULT_WORKSPACE_DIRECTORY_NAME } from '../../shared/productMetadata';
 import { rewriteOpenClawModelProviderId } from '../../shared/providers';
-import {
-  GoalExecutionPhase,
-  type GoalExecutionSnapshot,
-  normalizeMaxGoalContinuationTurns,
-} from '../../shared/sessionGoal';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {

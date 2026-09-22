@@ -7,7 +7,7 @@ import {
   SaveTextFileErrorCode,
   type SaveTextFileOptions,
   type SaveTextFileResult,
-} from '../../../shared/dialogIpc';
+} from '../../../shared/app/dialogIpc';
 
 type FileFilters = { name: string; extensions: string[] }[];
 

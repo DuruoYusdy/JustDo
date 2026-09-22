@@ -6,16 +6,16 @@ import { pipeline } from 'stream/promises';
 import * as tar from 'tar';
 import { createZstdDecompress } from 'zlib';
 
-import appUpdateConfig from '../../shared/appUpdateConfig.json';
-import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/localAsr';
+import appUpdateConfig from '../../shared/app/appUpdateConfig.json';
+import { LOCAL_ASR_DEFAULT_MODEL_ID } from '../../shared/speech/localAsr';
 import {
   type LocalSpeechModelInstallResult,
   LocalSpeechModelKind,
   type LocalSpeechModelKind as LocalSpeechModelKindValue,
   type LocalSpeechModelListResult,
   type LocalSpeechModelStatus,
-} from '../../shared/localSpeechModels';
-import { LOCAL_TTS_MODEL_ID } from '../../shared/localTts';
+} from '../../shared/speech/localSpeechModels';
+import { LOCAL_TTS_MODEL_ID } from '../../shared/speech/localTts';
 import { resolveLocalSpeechModelDir, resolveLocalSpeechModelsRoot } from './localSpeechPaths';
 
 export interface LocalSpeechModelArtifact {

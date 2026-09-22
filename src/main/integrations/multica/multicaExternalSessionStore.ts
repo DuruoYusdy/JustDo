@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-import type { ExternalSessionStatus } from '../../../shared/multica';
+import type { ExternalSessionStatus } from '../../../shared/integrations/multica';
 
 export interface MulticaExternalSession {
   externalSessionKey: string;

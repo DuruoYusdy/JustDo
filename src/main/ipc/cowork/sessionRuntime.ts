@@ -10,7 +10,7 @@ import {
   normalizeSessionGoalMutationRequest,
   type SessionGoal,
   SessionGoalIpc,
-} from '../../../shared/sessionGoal';
+} from '../../../shared/cowork/sessionGoal';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
 import {

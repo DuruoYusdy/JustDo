@@ -1,4 +1,4 @@
-import { DEV_SERVER_URL_SWITCH } from './appConstants';
+import { DEV_SERVER_URL_SWITCH } from '../appConstants';
 
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 

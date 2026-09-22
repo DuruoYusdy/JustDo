@@ -5,7 +5,7 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 import { fileURLToPath } from 'url';
 
-import type { BrowserLocalHtmlPreviewResult } from '../../shared/browser';
+import type { BrowserLocalHtmlPreviewResult } from '../../shared/browser/browser';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const MAX_PREVIEWS = 1_024;

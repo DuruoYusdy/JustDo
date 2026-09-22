@@ -1,4 +1,4 @@
-import { SessionGoalStatus } from '@shared/sessionGoal';
+import { SessionGoalStatus } from '@shared/cowork/sessionGoal';
 import { describe, expect, it, vi } from 'vitest';
 
 import { pauseGoalRun, shouldSendGoalPauseCommand } from './goalPause';

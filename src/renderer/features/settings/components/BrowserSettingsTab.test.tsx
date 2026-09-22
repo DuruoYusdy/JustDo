@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { type BrowserConnectionStatus, BrowserMode } from '@shared/browser';
+import { type BrowserConnectionStatus, BrowserMode } from '@shared/browser/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

@@ -1,6 +1,6 @@
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
-import type { ExternalSessionMetadata } from '@shared/multica';
+import type { ExternalSessionMetadata } from '@shared/integrations/multica';
 import type { CoworkInteractionKind } from '@shared/openclaw/extensions';
 
 export type { CoworkAttachmentPayload } from '@shared/cowork/attachments';

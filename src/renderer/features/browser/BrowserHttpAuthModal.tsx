@@ -1,5 +1,5 @@
 import { KeyIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import type { BrowserPanelHttpAuthRequest, BrowserPanelHttpAuthResponse } from '@shared/browser';
+import type { BrowserPanelHttpAuthRequest, BrowserPanelHttpAuthResponse } from '@shared/browser/browser';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 

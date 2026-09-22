@@ -12,10 +12,10 @@ import {
   BrowserIpc,
   browserPartitionForProfile,
   isBrowserAgentProfile,
-} from '../../shared/browser';
-import { isBlockedBrowserMetadataHost } from '../core/browserPanelSecurity';
+} from '../../shared/browser/browser';
 import { t } from '../core/i18n';
-import { registerBrowserProxySession } from '../core/systemProxyPreference';
+import { registerBrowserProxySession } from '../core/network/systemProxyPreference';
+import { isBlockedBrowserMetadataHost } from '../core/window/browserPanelSecurity';
 import {
   armBrowserAgentDownload,
   beginBrowserAgentDownload,

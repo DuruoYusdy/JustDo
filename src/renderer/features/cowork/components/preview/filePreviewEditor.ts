@@ -1,4 +1,4 @@
-import type { PreviewableFileExtension } from '@shared/filePreview';
+import type { PreviewableFileExtension } from '@shared/preview/filePreview';
 
 export type FilePreviewEditorLanguage =
   | 'bat'

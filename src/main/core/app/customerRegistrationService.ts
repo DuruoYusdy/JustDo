@@ -1,6 +1,6 @@
 import fs from 'fs';
 
-import { mainProcessFetch } from './mainProcessFetch';
+import { mainProcessFetch } from '../network/mainProcessFetch';
 
 const DEFAULT_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;

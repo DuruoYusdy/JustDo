@@ -2,7 +2,7 @@
  * Message normalization utilities for chat rendering.
  */
 
-import { type BrowserAnnotationDisplay, parseBrowserAnnotationPrompt } from '@shared/browser';
+import { type BrowserAnnotationDisplay, parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/openclaw/modelRef';
 
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';

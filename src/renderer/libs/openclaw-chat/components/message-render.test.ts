@@ -1,4 +1,4 @@
-import { composeBrowserGatewayPrompt } from '@shared/browser';
+import { composeBrowserGatewayPrompt } from '@shared/browser/browser';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('./markdown', () => ({

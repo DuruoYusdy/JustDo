@@ -1,4 +1,4 @@
-import { parseBrowserAnnotationPrompt } from '@shared/browser';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { OPENCLAW_HISTORY_DETAIL_MAX_IDS } from '@shared/openclaw/historyIpc';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';

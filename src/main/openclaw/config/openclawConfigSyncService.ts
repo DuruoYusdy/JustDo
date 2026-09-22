@@ -1,9 +1,9 @@
-import type { BrowserMode } from '../../../shared/browser';
-import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+import type { BrowserMode } from '../../../shared/browser/browser';
 import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
+import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
-import type { WindowsSandboxStatus } from '../../../shared/windowsSandbox';
-import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/managedDirectoryOperations';
+import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
+import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
 import {
   parseModelReferenceV2026_9_2,

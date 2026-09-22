@@ -14,6 +14,7 @@ import {
 import fs from 'fs';
 import path from 'path';
 
+import { MediaCaptureIpc } from '../../../shared/app/mediaCapture';
 import {
   BROWSER_GUEST_COMMAND_CHANNEL,
   BROWSER_IMPORTED_PROFILE_PARTITION,
@@ -26,27 +27,28 @@ import {
   normalizeBrowserPanelShortcutSettings,
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
-} from '../../shared/browser';
-import { MediaCaptureIpc } from '../../shared/mediaCapture';
+} from '../../../shared/browser/browser';
 import {
   cancelAllBrowserAgentDownloads,
   claimBrowserAgentDownload,
-} from '../browser/browserAgentDownloadCoordinator';
+} from '../../browser/browserAgentDownloadCoordinator';
 import {
   recordBrowserDownload,
   recordBrowserHistory,
   updateBrowserDownload,
-} from '../browser/browserDataImportService';
-import { sanitizeBrowserUrl } from '../browser/browserDataSanitizers';
+} from '../../browser/browserDataImportService';
+import { sanitizeBrowserUrl } from '../../browser/browserDataSanitizers';
 import {
   resolveAvailableBrowserDownloadPath,
   resolveBrowserDownloadDirectory,
-} from '../browser/browserDownloadPath';
+} from '../../browser/browserDownloadPath';
 import {
   isAllowedLocalHtmlPreviewResource,
   isLocalHtmlPreviewUrl,
   isSameLocalHtmlPreviewScope,
-} from '../browser/localHtmlPreviewServer';
+} from '../../browser/localHtmlPreviewServer';
+import { t } from '../i18n';
+import { registerBrowserProxySession } from '../network/systemProxyPreference';
 import { BrowserHttpAuthRequests, BrowserPermissionState } from './browserPanelRequestState';
 import {
   browserPermissionKeys,
@@ -58,13 +60,11 @@ import {
   shouldAllowBrowserPanelPermission,
   shouldPromptBrowserPanelPermission,
 } from './browserPanelSecurity';
-import { t } from './i18n';
 import {
   shouldAllowAudioMediaCheck,
   shouldAllowAudioMediaRequest,
   shouldAllowSystemAudioCapture,
 } from './mediaPermission';
-import { registerBrowserProxySession } from './systemProxyPreference';
 
 type MainWindowFactoryOptions = {
   appName: string;

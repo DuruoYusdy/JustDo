@@ -6,7 +6,7 @@ import {
   resolveBrowserGuestWheelZoomDirection,
   resolveBrowserPanelShortcutAction,
   stepBrowserZoomFactor,
-} from '../../shared/browser';
+} from '../../../shared/browser/browser';
 import {
   browserPermissionKeys,
   isAllowedBrowserPanelUrl,

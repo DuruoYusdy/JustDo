@@ -4,9 +4,9 @@ type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessio
 type SessionRunBeginErrorCode = import('../../shared/cowork/sessionRun').SessionRunBeginErrorCode;
 type SessionRunTiming = import('../../shared/cowork/sessionRun').SessionRunTiming;
 type SessionRuntimeSnapshot = import('../../shared/cowork/sessionRun').SessionRuntimeSnapshot;
-type ExternalSessionMetadata = import('../../shared/multica').ExternalSessionMetadata;
-type MulticaIntegrationResult = import('../../shared/multica').MulticaIntegrationResult;
-type MulticaIntegrationStatus = import('../../shared/multica').MulticaIntegrationStatus;
+type ExternalSessionMetadata = import('../../shared/integrations/multica').ExternalSessionMetadata;
+type MulticaIntegrationResult = import('../../shared/integrations/multica').MulticaIntegrationResult;
+type MulticaIntegrationStatus = import('../../shared/integrations/multica').MulticaIntegrationStatus;
 type CoworkSessionDetailsResult =
   import('../../shared/cowork/sessionDetails').CoworkSessionDetailsResult<CoworkSession>;
 type CoworkSubagentDetailsResult =
@@ -17,15 +17,15 @@ type CoworkSubtaskChangedEvent =
   import('../../shared/cowork/subagentDetails').CoworkSubtaskChangedEvent;
 type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
-type SaveTextFileOptions = import('../../shared/dialogIpc').SaveTextFileOptions;
-type SaveTextFileResult = import('../../shared/dialogIpc').SaveTextFileResult;
-type TerminalActionResult = import('../../shared/terminal').TerminalActionResult;
-type TerminalCreateRequest = import('../../shared/terminal').TerminalCreateRequest;
-type TerminalCreateResult = import('../../shared/terminal').TerminalCreateResult;
-type TerminalDataEvent = import('../../shared/terminal').TerminalDataEvent;
-type TerminalExitEvent = import('../../shared/terminal').TerminalExitEvent;
-type TerminalResizeRequest = import('../../shared/terminal').TerminalResizeRequest;
-type TerminalWriteRequest = import('../../shared/terminal').TerminalWriteRequest;
+type SaveTextFileOptions = import('../../shared/app/dialogIpc').SaveTextFileOptions;
+type SaveTextFileResult = import('../../shared/app/dialogIpc').SaveTextFileResult;
+type TerminalActionResult = import('../../shared/app/terminal').TerminalActionResult;
+type TerminalCreateRequest = import('../../shared/app/terminal').TerminalCreateRequest;
+type TerminalCreateResult = import('../../shared/app/terminal').TerminalCreateResult;
+type TerminalDataEvent = import('../../shared/app/terminal').TerminalDataEvent;
+type TerminalExitEvent = import('../../shared/app/terminal').TerminalExitEvent;
+type TerminalResizeRequest = import('../../shared/app/terminal').TerminalResizeRequest;
+type TerminalWriteRequest = import('../../shared/app/terminal').TerminalWriteRequest;
 type ExtensionImportProgress = import('../../shared/openclaw/extensions').ExtensionImportProgress;
 type ExtensionChangedEvent = import('../../shared/openclaw/extensions').ExtensionChangedEvent;
 type ExtensionImportRequest = import('../../shared/openclaw/extensions').ExtensionImportRequest;
@@ -67,47 +67,47 @@ type OpenClawSessionMigrationConfirmRequest =
   import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationConfirmRequest;
 type OpenClawSessionMigrationResult =
   import('../../shared/openclaw/sessionMigration').OpenClawSessionMigrationResult;
-type AppUpdateActionResult = import('../../shared/appUpdate').AppUpdateActionResult;
-type AppUpdateState = import('../../shared/appUpdate').AppUpdateState;
-type BrowserActionResult = import('../../shared/browser').BrowserActionResult;
-type BrowserAgentInteractionState = import('../../shared/browser').BrowserAgentInteractionState;
-type BrowserAgentInteractionReady = import('../../shared/browser').BrowserAgentInteractionReady;
-type BrowserImportRequest = import('../../shared/browser').BrowserImportRequest;
-type BrowserImportResult = import('../../shared/browser').BrowserImportResult;
-type BrowserImportSourcesResult = import('../../shared/browser').BrowserImportSourcesResult;
-type BrowserLocalHtmlPreviewResult = import('../../shared/browser').BrowserLocalHtmlPreviewResult;
-type BrowserHistoryListResult = import('../../shared/browser').BrowserHistoryListResult;
-type BrowserDownloadListResult = import('../../shared/browser').BrowserDownloadListResult;
-type BrowserConnectionTestResult = import('../../shared/browser').BrowserConnectionTestResult;
-type BrowserClearDataRange = import('../../shared/browser').BrowserClearDataRange;
-type BrowserClearDataRequest = import('../../shared/browser').BrowserClearDataRequest;
-type BrowserClearDataResult = import('../../shared/browser').BrowserClearDataResult;
-type BrowserClearDataSummaryResult = import('../../shared/browser').BrowserClearDataSummaryResult;
-type BrowserMode = import('../../shared/browser').BrowserMode;
+type AppUpdateActionResult = import('../../shared/app/appUpdate').AppUpdateActionResult;
+type AppUpdateState = import('../../shared/app/appUpdate').AppUpdateState;
+type BrowserActionResult = import('../../shared/browser/browser').BrowserActionResult;
+type BrowserAgentInteractionState = import('../../shared/browser/browser').BrowserAgentInteractionState;
+type BrowserAgentInteractionReady = import('../../shared/browser/browser').BrowserAgentInteractionReady;
+type BrowserImportRequest = import('../../shared/browser/browser').BrowserImportRequest;
+type BrowserImportResult = import('../../shared/browser/browser').BrowserImportResult;
+type BrowserImportSourcesResult = import('../../shared/browser/browser').BrowserImportSourcesResult;
+type BrowserLocalHtmlPreviewResult = import('../../shared/browser/browser').BrowserLocalHtmlPreviewResult;
+type BrowserHistoryListResult = import('../../shared/browser/browser').BrowserHistoryListResult;
+type BrowserDownloadListResult = import('../../shared/browser/browser').BrowserDownloadListResult;
+type BrowserConnectionTestResult = import('../../shared/browser/browser').BrowserConnectionTestResult;
+type BrowserClearDataRange = import('../../shared/browser/browser').BrowserClearDataRange;
+type BrowserClearDataRequest = import('../../shared/browser/browser').BrowserClearDataRequest;
+type BrowserClearDataResult = import('../../shared/browser/browser').BrowserClearDataResult;
+type BrowserClearDataSummaryResult = import('../../shared/browser/browser').BrowserClearDataSummaryResult;
+type BrowserMode = import('../../shared/browser/browser').BrowserMode;
 type BrowserModeSwitchAvailabilityResult =
-  import('../../shared/browser').BrowserModeSwitchAvailabilityResult;
-type BrowserModeUpdateResult = import('../../shared/browser').BrowserModeUpdateResult;
-type BrowserPdfLoadRequest = import('../../shared/browser').BrowserPdfLoadRequest;
-type BrowserPdfLoadResult = import('../../shared/browser').BrowserPdfLoadResult;
-type BrowserPanelOpenTabEvent = import('../../shared/browser').BrowserPanelOpenTabEvent;
-type BrowserPanelHttpAuthRequest = import('../../shared/browser').BrowserPanelHttpAuthRequest;
-type BrowserPanelHttpAuthResponse = import('../../shared/browser').BrowserPanelHttpAuthResponse;
-type BrowserPanelPdfDetectedEvent = import('../../shared/browser').BrowserPanelPdfDetectedEvent;
-type BrowserAgentSessionEvent = import('../../shared/browser').BrowserAgentSessionEvent;
-type BrowserAgentTabReference = import('../../shared/browser').BrowserAgentTabReference;
-type BrowserAgentTabRegistration = import('../../shared/browser').BrowserAgentTabRegistration;
-type BrowserPanelShortcutAction = import('../../shared/browser').BrowserPanelShortcutAction;
-type BrowserPanelShortcutSettings = import('../../shared/browser').BrowserPanelShortcutSettings;
-type BrowserStatusResult = import('../../shared/browser').BrowserStatusResult;
-type ApiFetchOptions = import('../../shared/network').ApiFetchOptions;
-type FilePreviewReadResult = import('../../shared/filePreview').FilePreviewReadResult;
+  import('../../shared/browser/browser').BrowserModeSwitchAvailabilityResult;
+type BrowserModeUpdateResult = import('../../shared/browser/browser').BrowserModeUpdateResult;
+type BrowserPdfLoadRequest = import('../../shared/browser/browser').BrowserPdfLoadRequest;
+type BrowserPdfLoadResult = import('../../shared/browser/browser').BrowserPdfLoadResult;
+type BrowserPanelOpenTabEvent = import('../../shared/browser/browser').BrowserPanelOpenTabEvent;
+type BrowserPanelHttpAuthRequest = import('../../shared/browser/browser').BrowserPanelHttpAuthRequest;
+type BrowserPanelHttpAuthResponse = import('../../shared/browser/browser').BrowserPanelHttpAuthResponse;
+type BrowserPanelPdfDetectedEvent = import('../../shared/browser/browser').BrowserPanelPdfDetectedEvent;
+type BrowserAgentSessionEvent = import('../../shared/browser/browser').BrowserAgentSessionEvent;
+type BrowserAgentTabReference = import('../../shared/browser/browser').BrowserAgentTabReference;
+type BrowserAgentTabRegistration = import('../../shared/browser/browser').BrowserAgentTabRegistration;
+type BrowserPanelShortcutAction = import('../../shared/browser/browser').BrowserPanelShortcutAction;
+type BrowserPanelShortcutSettings = import('../../shared/browser/browser').BrowserPanelShortcutSettings;
+type BrowserStatusResult = import('../../shared/browser/browser').BrowserStatusResult;
+type ApiFetchOptions = import('../../shared/network/network').ApiFetchOptions;
+type FilePreviewReadResult = import('../../shared/preview/filePreview').FilePreviewReadResult;
 type FilePreviewEditAuthorizationRequest =
-  import('../../shared/filePreview').FilePreviewEditAuthorizationRequest;
+  import('../../shared/preview/filePreview').FilePreviewEditAuthorizationRequest;
 type FilePreviewEditAuthorizationResult =
-  import('../../shared/filePreview').FilePreviewEditAuthorizationResult;
-type FilePreviewWriteRequest = import('../../shared/filePreview').FilePreviewWriteRequest;
-type FilePreviewWriteResult = import('../../shared/filePreview').FilePreviewWriteResult;
-type WorkspaceDirectoryListResult = import('../../shared/filePreview').WorkspaceDirectoryListResult;
+  import('../../shared/preview/filePreview').FilePreviewEditAuthorizationResult;
+type FilePreviewWriteRequest = import('../../shared/preview/filePreview').FilePreviewWriteRequest;
+type FilePreviewWriteResult = import('../../shared/preview/filePreview').FilePreviewWriteResult;
+type WorkspaceDirectoryListResult = import('../../shared/preview/filePreview').WorkspaceDirectoryListResult;
 type WorkboardCard = import('../../shared/openclaw/workboard').WorkboardCard;
 type WorkboardCardInput = import('../../shared/openclaw/workboard').WorkboardCardInput;
 type WorkboardCardPatch = import('../../shared/openclaw/workboard').WorkboardCardPatch;
@@ -446,7 +446,7 @@ interface IElectronAPI {
     ) => () => void;
     respondToPanelHttpAuth: (response: BrowserPanelHttpAuthResponse) => void;
     onPanelHttpAuthDismissed: (
-      callback: (event: import('../../shared/browser').BrowserPanelHttpAuthDismissed) => void,
+      callback: (event: import('../../shared/browser/browser').BrowserPanelHttpAuthDismissed) => void,
     ) => () => void;
     onPanelPdfDetected: (callback: (event: BrowserPanelPdfDetectedEvent) => void) => () => void;
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) => void;
@@ -581,8 +581,8 @@ interface IElectronAPI {
   };
   slashCommands: {
     list: (
-      options?: import('@shared/slashCommands').ListSlashCommandsOptions,
-    ) => Promise<import('@shared/slashCommands').ListSlashCommandsResult>;
+      options?: import('@shared/cowork/slashCommands').ListSlashCommandsOptions,
+    ) => Promise<import('@shared/cowork/slashCommands').ListSlashCommandsResult>;
   };
   mcp: {
     list: () => Promise<{
@@ -896,7 +896,7 @@ interface IElectronAPI {
     ) => Promise<import('@shared/cowork/sessionSearch').CoworkSessionMessageSearchResult>;
     getSessionGoal: (sessionId: string) => Promise<{
       success: boolean;
-      goal?: import('@shared/sessionGoal').SessionGoal;
+      goal?: import('@shared/cowork/sessionGoal').SessionGoal;
       error?: string;
     }>;
     getPlanMode: (
@@ -908,22 +908,22 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
     mutateSessionGoal: (
       sessionId: string,
-      request: import('@shared/sessionGoal').SessionGoalMutationRequest,
+      request: import('@shared/cowork/sessionGoal').SessionGoalMutationRequest,
     ) => Promise<{
       success: boolean;
-      mutation?: import('@shared/sessionGoal').SessionGoalMutationResult;
-      goal?: import('@shared/sessionGoal').SessionGoal | null;
-      execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
+      mutation?: import('@shared/cowork/sessionGoal').SessionGoalMutationResult;
+      goal?: import('@shared/cowork/sessionGoal').SessionGoal | null;
+      execution?: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot;
       error?: string;
     }>;
     getGoalExecution: (sessionId: string) => Promise<{
       success: boolean;
-      execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
+      execution?: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot;
       error?: string;
     }>;
     continueGoal: (sessionId: string) => Promise<{
       success: boolean;
-      execution?: import('@shared/sessionGoal').GoalExecutionSnapshot;
+      execution?: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot;
       error?: string;
     }>;
     restartCompletedGoalForFeedback: (
@@ -956,12 +956,12 @@ interface IElectronAPI {
       error?: string;
       engineStatus?: OpenClawEngineStatus;
     }>;
-    getWindowsSandboxStatus: () => Promise<import('@shared/windowsSandbox').WindowsSandboxStatus>;
+    getWindowsSandboxStatus: () => Promise<import('@shared/security/windowsSandbox').WindowsSandboxStatus>;
     initializeWindowsSandbox: () => Promise<
-      import('@shared/windowsSandbox').WindowsSandboxOperationResult
+      import('@shared/security/windowsSandbox').WindowsSandboxOperationResult
     >;
     repairWindowsSandbox: () => Promise<
-      import('@shared/windowsSandbox').WindowsSandboxOperationResult
+      import('@shared/security/windowsSandbox').WindowsSandboxOperationResult
     >;
     openWindowsSandboxDiagnostics: () => Promise<{ success: boolean; error?: string }>;
     setDefaultModel: (options: {
@@ -986,7 +986,7 @@ interface IElectronAPI {
     onStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void;
     onSessionsChanged: (callback: () => void) => () => void;
     onGoalExecutionChanged: (
-      callback: (snapshot: import('@shared/sessionGoal').GoalExecutionSnapshot) => void,
+      callback: (snapshot: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot) => void,
     ) => () => void;
     onSessionGoalChanged: (callback: (data: { sessionId: string }) => void) => () => void;
     getSubTaskStatus: (
@@ -1030,71 +1030,71 @@ interface IElectronAPI {
   };
   localTts: {
     getStatus: (
-      modelId: import('../../shared/localTts').LocalTtsModelId,
-    ) => Promise<import('../../shared/localTts').LocalTtsStatus>;
+      modelId: import('../../shared/speech/localTts').LocalTtsModelId,
+    ) => Promise<import('../../shared/speech/localTts').LocalTtsStatus>;
   };
   localAsr: {
     getStatus: (
-      modelId: import('../../shared/localAsr').LocalAsrModelId,
-    ) => Promise<import('../../shared/localAsr').LocalAsrStatus>;
+      modelId: import('../../shared/speech/localAsr').LocalAsrModelId,
+    ) => Promise<import('../../shared/speech/localAsr').LocalAsrStatus>;
     transcribe: (
       audio: Uint8Array,
-      options: import('../../shared/localAsr').LocalAsrTranscribeOptions,
-    ) => Promise<import('../../shared/localAsr').LocalAsrTranscribeResult>;
+      options: import('../../shared/speech/localAsr').LocalAsrTranscribeOptions,
+    ) => Promise<import('../../shared/speech/localAsr').LocalAsrTranscribeResult>;
   };
   onlineAsr: {
-    getStatus: () => Promise<import('../../shared/onlineAsr').OnlineAsrStatus>;
-    getConfiguration: () => Promise<import('../../shared/onlineAsr').OnlineAsrConfiguration>;
+    getStatus: () => Promise<import('../../shared/speech/onlineAsr').OnlineAsrStatus>;
+    getConfiguration: () => Promise<import('../../shared/speech/onlineAsr').OnlineAsrConfiguration>;
     saveConfiguration: (
-      update: import('../../shared/onlineAsr').OnlineAsrConfigurationUpdate,
+      update: import('../../shared/speech/onlineAsr').OnlineAsrConfigurationUpdate,
     ) => Promise<void>;
     clearConfiguration: () => Promise<void>;
     start: (
-      options: import('../../shared/onlineAsr').OnlineAsrStartOptions,
-    ) => Promise<import('../../shared/onlineAsr').OnlineAsrSession>;
+      options: import('../../shared/speech/onlineAsr').OnlineAsrStartOptions,
+    ) => Promise<import('../../shared/speech/onlineAsr').OnlineAsrSession>;
     appendAudio: (sessionId: string, audioBase64: string) => Promise<void>;
     close: (sessionId: string) => Promise<void>;
     onEvent: (
-      callback: (event: import('../../shared/onlineAsr').OnlineAsrEvent) => void,
+      callback: (event: import('../../shared/speech/onlineAsr').OnlineAsrEvent) => void,
     ) => () => void;
   };
   onlineTts: {
-    getStatus: () => Promise<import('../../shared/onlineTts').OnlineTtsStatus>;
-    getConfiguration: () => Promise<import('../../shared/onlineTts').OnlineTtsConfiguration>;
+    getStatus: () => Promise<import('../../shared/speech/onlineTts').OnlineTtsStatus>;
+    getConfiguration: () => Promise<import('../../shared/speech/onlineTts').OnlineTtsConfiguration>;
     saveConfiguration: (
-      update: import('../../shared/onlineTts').OnlineTtsConfigurationUpdate,
+      update: import('../../shared/speech/onlineTts').OnlineTtsConfigurationUpdate,
     ) => Promise<void>;
     clearConfiguration: () => Promise<void>;
   };
   speechSynthesis: {
-    speak: (text: string) => Promise<import('../../shared/speechSynthesis').SpeechSynthesisResult>;
+    speak: (text: string) => Promise<import('../../shared/speech/speechSynthesis').SpeechSynthesisResult>;
   };
   mediaGenerationModels: {
     getConfiguration: (
-      kind: import('../../shared/mediaGenerationModels').MediaGenerationModelKind,
+      kind: import('../../shared/providers/mediaGenerationModels').MediaGenerationModelKind,
     ) => Promise<
-      import('../../shared/mediaGenerationModels').MediaGenerationModelConfigurationResult
+      import('../../shared/providers/mediaGenerationModels').MediaGenerationModelConfigurationResult
     >;
     saveConfiguration: (
-      kind: import('../../shared/mediaGenerationModels').MediaGenerationModelKind,
-      configuration: import('../../shared/mediaGenerationModels').MediaGenerationModelConfiguration,
+      kind: import('../../shared/providers/mediaGenerationModels').MediaGenerationModelKind,
+      configuration: import('../../shared/providers/mediaGenerationModels').MediaGenerationModelConfiguration,
     ) => Promise<void>;
   };
   mediaCapture: {
     armSystemAudio: () => Promise<void>;
   };
   localSpeechModels: {
-    list: () => Promise<import('../../shared/localSpeechModels').LocalSpeechModelListResult>;
+    list: () => Promise<import('../../shared/speech/localSpeechModels').LocalSpeechModelListResult>;
     install: (
-      kind: import('../../shared/localSpeechModels').LocalSpeechModelKind,
+      kind: import('../../shared/speech/localSpeechModels').LocalSpeechModelKind,
       id: string,
-    ) => Promise<import('../../shared/localSpeechModels').LocalSpeechModelInstallResult>;
+    ) => Promise<import('../../shared/speech/localSpeechModels').LocalSpeechModelInstallResult>;
     remove: (
-      kind: import('../../shared/localSpeechModels').LocalSpeechModelKind,
+      kind: import('../../shared/speech/localSpeechModels').LocalSpeechModelKind,
       id: string,
-    ) => Promise<import('../../shared/localSpeechModels').LocalSpeechModelInstallResult>;
+    ) => Promise<import('../../shared/speech/localSpeechModels').LocalSpeechModelInstallResult>;
     onChanged: (
-      callback: (status: import('../../shared/localSpeechModels').LocalSpeechModelStatus) => void,
+      callback: (status: import('../../shared/speech/localSpeechModels').LocalSpeechModelStatus) => void,
     ) => () => void;
   };
   sessionGroup: {
@@ -1176,8 +1176,8 @@ interface IElectronAPI {
   };
   imagePreview: {
     open: (
-      request: import('../../shared/imagePreview').ImagePreviewOpenRequest,
-    ) => Promise<import('../../shared/imagePreview').ImagePreviewOpenResult>;
+      request: import('../../shared/preview/imagePreview').ImagePreviewOpenRequest,
+    ) => Promise<import('../../shared/preview/imagePreview').ImagePreviewOpenResult>;
   };
   autoLaunch: {
     get: () => Promise<{ enabled: boolean }>;
@@ -1188,7 +1188,7 @@ interface IElectronAPI {
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   };
   developerConfig: {
-    get: () => Promise<import('../../shared/developerConfig').DeveloperConfig>;
+    get: () => Promise<import('../../shared/app/developerConfig').DeveloperConfig>;
   };
   appInfo: {
     getVersion: () => Promise<string>;
@@ -1200,11 +1200,11 @@ interface IElectronAPI {
     check: () => Promise<AppUpdateState>;
     download: () => Promise<AppUpdateActionResult>;
     quitAndInstall: () => Promise<AppUpdateActionResult>;
-    getPreferences: () => Promise<import('../../shared/appUpdate').AppUpdatePreferences>;
+    getPreferences: () => Promise<import('../../shared/app/appUpdate').AppUpdatePreferences>;
     setCheckFrequency: (
-      frequency: import('../../shared/appUpdate').AppUpdateCheckFrequency,
-    ) => Promise<import('../../shared/appUpdate').AppUpdatePreferences>;
-    getReleaseHistory: () => Promise<import('../../shared/appUpdate').AppReleaseHistoryResult>;
+      frequency: import('../../shared/app/appUpdate').AppUpdateCheckFrequency,
+    ) => Promise<import('../../shared/app/appUpdate').AppUpdatePreferences>;
+    getReleaseHistory: () => Promise<import('../../shared/app/appUpdate').AppReleaseHistoryResult>;
     onStateChanged: (callback: (state: AppUpdateState) => void) => () => void;
   };
   builtinModels: {

@@ -1,4 +1,4 @@
-import type { BrowserExtensionStreamEvent } from '@shared/browserExtensionStream';
+import type { BrowserExtensionStreamEvent } from '@shared/browser/browserExtensionStream';
 import { describe, expect, it } from 'vitest';
 
 import { prepareBrowserExtensionStreamEvent as prepare } from './browser-extension-display';

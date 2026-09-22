@@ -9,14 +9,14 @@ import type {
   AppUpdateErrorCode,
   AppUpdatePreferences,
   AppUpdateState,
-} from '../../shared/appUpdate';
+} from '../../../shared/app/appUpdate';
 import {
   AppUpdateCheckFrequency as CheckFrequency,
   AppUpdateIpc,
   DEFAULT_APP_UPDATE_CHECK_FREQUENCY,
-} from '../../shared/appUpdate';
-import appUpdateConfig from '../../shared/appUpdateConfig.json';
-import { log } from './logger';
+} from '../../../shared/app/appUpdate';
+import appUpdateConfig from '../../../shared/app/appUpdateConfig.json';
+import { log } from '../logger';
 
 const STARTUP_CHECK_DELAY_MS = 10_000;
 const SCHEDULED_CHECK_HOUR = 10;

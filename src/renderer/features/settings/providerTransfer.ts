@@ -1,9 +1,9 @@
+import { normalizeOpenClawProviderId } from '@shared/providers';
 import {
   MODEL_PROVIDER_HEADER_LIMITS,
   validateModelProviderHeaderName,
   validateModelProviderHeaderValue,
-} from '@shared/modelProviderHeaders';
-import { normalizeOpenClawProviderId } from '@shared/providers';
+} from '@shared/providers/modelProviderHeaders';
 
 import {
   type AppConfig,

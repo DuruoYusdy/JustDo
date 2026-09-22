@@ -1,15 +1,15 @@
 import { ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
 
+import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network/network';
 import {
   MODEL_PROVIDER_HEADER_LIMITS,
   normalizeModelProviderHeaders,
-} from '../../../shared/modelProviderHeaders';
-import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network';
+} from '../../../shared/providers/modelProviderHeaders';
 import { t } from '../../core/i18n';
 import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
-} from '../../core/mainProcessFetch';
+} from '../../core/network/mainProcessFetch';
 import {
   BUILTIN_CREDENTIAL_MARKER,
   BUILTIN_MODEL_PROVIDER_CONFIG,

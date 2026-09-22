@@ -9,6 +9,7 @@ import {
   CoworkSessionForkIpc,
   type ForkCoworkSessionInput,
 } from '../../../shared/cowork/sessionFork';
+import { normalizeSessionGoal } from '../../../shared/cowork/sessionGoal';
 import {
   type BeginSessionRunInput,
   SessionRunBeginErrorCode,
@@ -25,7 +26,6 @@ import {
   toOpenClawSessionPermissionMode,
 } from '../../../shared/openclaw/approvals';
 import { OpenClawExtensionId, parsePlanModeState } from '../../../shared/openclaw/extensions';
-import { normalizeSessionGoal } from '../../../shared/sessionGoal';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';

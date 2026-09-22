@@ -1,1 +1,1 @@
-export { matchesShortcut, parseShortcut } from '@shared/shortcuts';
+export { matchesShortcut, parseShortcut } from '@shared/app/shortcuts';

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { type ApiFetchOptions, NetworkFetchPurpose } from '../../../shared/network';
+import { type ApiFetchOptions, NetworkFetchPurpose } from '../../../shared/network/network';
 
 const mocks = vi.hoisted(() => ({
   applyMainProcessOutboundHeaderPolicy: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-vi.mock('../../core/mainProcessFetch', () => ({
+vi.mock('../../core/network/mainProcessFetch', () => ({
   applyMainProcessOutboundHeaderPolicy: mocks.applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource: {
     ModelProbe: 'model-probe',

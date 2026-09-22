@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('electron', () => ({ ipcMain: mocks.ipcMain }));
 vi.mock('node-pty', () => ({ spawn: mocks.spawn }));
 
-import { TerminalIpc } from '../../../shared/terminal';
+import { TerminalIpc } from '../../../shared/app/terminal';
 import { registerTerminalHandlers } from './terminal';
 
 describe('terminal IPC', () => {

@@ -125,7 +125,7 @@ UI要区分：登录状态、provider enabled、发现中/失败、模型为空�
 
 | 层               | 文件                                            | 责任                                             |
 | ---------------- | ----------------------------------------------- | ------------------------------------------------ |
-| 共享事件         | `src/shared/builtinModels.ts`                   | refresh/changed channel 和 sync reason           |
+| 共享事件         | `src/shared/providers/builtinModels.ts`                   | refresh/changed channel 和 sync reason           |
 | 受管静态配置     | `src/main/cowork/builtinModelProviderConfig.ts` | enabled、baseUrl、apiKey                         |
 | Provider 同步    | `src/main/cowork/builtinModelProvider.ts`       | 发现、归一化、写 app_config、取消竞态            |
 | 生命周期         | `src/main/cowork/builtinModelLifecycle.ts`      | login/logout、config sync queue、通知            |

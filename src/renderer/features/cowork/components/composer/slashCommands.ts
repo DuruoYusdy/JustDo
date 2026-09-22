@@ -1,8 +1,8 @@
-import type { SlashCommandCategory, SlashCommandTier } from '@shared/slashCommands';
-import { SlashCommandBlacklist } from '@shared/slashCommands';
+import type { SlashCommandCategory, SlashCommandTier } from '@shared/cowork/slashCommands';
+import { SlashCommandBlacklist } from '@shared/cowork/slashCommands';
 
 export type { SlashCommandCategory, SlashCommandTier };
-export type SlashCommandDef = import('@shared/slashCommands').SlashCommand;
+export type SlashCommandDef = import('@shared/cowork/slashCommands').SlashCommand;
 
 export const SlashCommandCategoryLabels: Record<SlashCommandCategory, string> = {
   session: 'Session',

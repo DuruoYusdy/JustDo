@@ -4,7 +4,7 @@ import {
   type ListSlashCommandsOptions,
   type ListSlashCommandsResult,
   SlashCommandIpc,
-} from '../../../shared/slashCommands';
+} from '../../../shared/cowork/slashCommands';
 import {
   SlashCommandService,
   type SlashCommandServiceOptions,

@@ -38,8 +38,8 @@ method、允许的模型 endpoint、header 与 body，并重建固定的连接�
 | 组件                | 代码                                                               | 职责                                              |
 | ------------------- | ------------------------------------------------------------------ | ------------------------------------------------- |
 | 配置解析            | `outboundHeaderPolicyConfig.ts` / `outboundHeaderPolicyService.ts` | 合并手工配置与已启用 Extension 声明               |
-| 本地代理            | `src/main/core/outboundHeaderProxy.ts`                             | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
-| OpenClaw 环境       | `src/main/core/gatewayNetworkEnvironment.ts`                       | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
+| 本地代理            | `src/main/core/network/outboundHeaderProxy.ts`                             | 认证、CONNECT 判别、MITM/raw tunnel、注入         |
+| OpenClaw 环境       | `src/main/core/network/gatewayNetworkEnvironment.ts`                       | 为 Gateway/opt-in CLI 生成 proxy/CA/NO_PROXY env  |
 | Embedding transport | `runtime-services` extension                                       | 让 guarded fetch 使用 eligible env proxy          |
 | Manual reindex      | runtime patch `009` + 原生 forced CLI rebuild intent               | 跳过旧向量 cache，确保按钮触发真实 embedding 请求 |
 | Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                             | 先起代理、再 spawn Gateway；退出时反序停止        |
@@ -252,4 +252,4 @@ Policy匹配必须基于规范化URL/host/port和明确规则；不能按字符�
 
 ## 18. 证据地图与完成条件
 
-`src/main/core/outboundHeaderProxy.ts` 是数据面，`outboundHeaderPolicyConfig.ts` 读取策略，Main负责启动/停止与Gateway环境，相关tests覆盖HTTP/CONNECT/raw tunnel、NO_PROXY、capability、并发和日志脱敏。发布验收还需真实Node/curl/bundled Python/OpenClaw客户端经HTTPS echo验证；mock通过不能证明证书和packaged网络栈兼容。
+`src/main/core/network/outboundHeaderProxy.ts` 是数据面，`outboundHeaderPolicyConfig.ts` 读取策略，Main负责启动/停止与Gateway环境，相关tests覆盖HTTP/CONNECT/raw tunnel、NO_PROXY、capability、并发和日志脱敏。发布验收还需真实Node/curl/bundled Python/OpenClaw客户端经HTTPS echo验证；mock通过不能证明证书和packaged网络栈兼容。

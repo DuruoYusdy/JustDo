@@ -15,16 +15,14 @@ import os from 'os';
 import path from 'path';
 
 import packageJson from '../../package.json';
-import appUpdateConfig from '../shared/appUpdateConfig.json';
-import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser';
-import { BuiltinModelIpc } from '../shared/builtinModels';
+import appUpdateConfig from '../shared/app/appUpdateConfig.json';
+import type { DeveloperConfig } from '../shared/app/developerConfig';
+import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
-import type { DeveloperConfig } from '../shared/developerConfig';
-import { HOME_WORKSPACE_SESSION_ID } from '../shared/filePreview';
-import { LocalSpeechModelIpc } from '../shared/localSpeechModels';
-import { normalizeLocalSpeechSettings } from '../shared/localSpeechSettings';
+import type { ProxySettings } from '../shared/network/proxy';
 import { EmbeddedBrowserGateway } from '../shared/openclaw/extensions';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
+import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
 import {
   DEFAULT_WORKSPACE_DIRECTORY_NAME,
   USER_DATA_DIRECTORY_NAME,
@@ -34,7 +32,9 @@ import {
   listRetiredOpenClawProviderIds,
   ProviderName,
 } from '../shared/providers';
-import type { ProxySettings } from '../shared/proxy';
+import { BuiltinModelIpc } from '../shared/providers/builtinModels';
+import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
+import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
 import { BrowserExtensionChatController } from './browser/browserExtensionChatController';
 import { BrowserExtensionChatServer } from './browser/browserExtensionChatServer';
@@ -44,34 +44,34 @@ import {
   publishBrowserExtensionAppServer,
   registerBrowserExtensionNativeHost,
 } from './browser/browserExtensionNativeMessaging';
+import { registerAppShutdown } from './core/app/appShutdown';
+import { isAutoLaunched } from './core/app/autoLaunchManager';
+import { AutoUpdateService } from './core/app/autoUpdateService';
+import { CustomerRegistrationService } from './core/app/customerRegistrationService';
+import { isNsisInstalledApp } from './core/app/installedApp';
+import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
-import { registerAppShutdown } from './core/appShutdown';
-import { isAutoLaunched } from './core/autoLaunchManager';
-import { AutoUpdateService } from './core/autoUpdateService';
-import { registerContentSecurityPolicy } from './core/contentSecurityPolicy';
-import { CustomerRegistrationService } from './core/customerRegistrationService';
-import { applyDependencyManagerConfigEnv } from './core/dependencyManagerConfig';
-import { loadDeveloperConfig } from './core/developerConfigFile';
-import { getDevServerUrlFromCommandLine } from './core/devServerHandoff';
-import { createDevSessionLifecycle } from './core/devSessionLifecycle';
+import { loadDeveloperConfig } from './core/development/developerConfigFile';
+import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
+import { createDevSessionLifecycle } from './core/development/devSessionLifecycle';
+import { ManagedDirectoryOperationCoordinator } from './core/filesystem/managedDirectoryOperations';
 import { setLanguage } from './core/i18n';
-import { isNsisInstalledApp } from './core/installedApp';
-import { registerLocalFileProtocol } from './core/localFileProtocol';
 import { initLogger } from './core/logger';
-import { mainProcessFetch, mainProcessTitleFetch } from './core/mainProcessFetch';
-import { createMainWindow } from './core/mainWindowFactory';
-import { ManagedDirectoryOperationCoordinator } from './core/managedDirectoryOperations';
-import { resolveOutboundHeaderUserInfoPath } from './core/outboundHeaderPolicyConfig';
-import { OutboundHeaderPolicyService } from './core/outboundHeaderPolicyService';
-import { OutboundHeaderProxy } from './core/outboundHeaderProxy';
-import { ensurePythonRuntimeReady } from './core/pythonRuntime';
-import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/systemProxy';
+import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
+import { resolveOutboundHeaderUserInfoPath } from './core/network/outboundHeaderPolicyConfig';
+import { OutboundHeaderPolicyService } from './core/network/outboundHeaderPolicyService';
+import { OutboundHeaderProxy } from './core/network/outboundHeaderProxy';
+import { isLoopbackBaseUrl, setProcessProxyRouting } from './core/network/systemProxy';
 import {
   applySystemProxyPreference,
   getProxyPreferenceSignature,
-} from './core/systemProxyPreference';
-import { createTray, destroyTray, updateTrayMenu } from './core/trayManager';
-import { enableSystemCaForCurrentProcess } from './core/trustedCertificates';
+} from './core/network/systemProxyPreference';
+import { enableSystemCaForCurrentProcess } from './core/network/trustedCertificates';
+import { applyDependencyManagerConfigEnv } from './core/runtime/dependencyManagerConfig';
+import { ensurePythonRuntimeReady } from './core/runtime/pythonRuntime';
+import { registerContentSecurityPolicy } from './core/window/contentSecurityPolicy';
+import { registerLocalFileProtocol } from './core/window/localFileProtocol';
+import { createMainWindow } from './core/window/mainWindowFactory';
 import { BuiltinModelLifecycle } from './cowork/builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './cowork/builtinModelProvider';
 import {

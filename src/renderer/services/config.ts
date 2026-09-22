@@ -1,7 +1,7 @@
-import { normalizeBrowserDownloadSettings, normalizeBrowserSearchEngine } from '@shared/browser';
-import { normalizeLocalSpeechSettings } from '@shared/localSpeechSettings';
+import { normalizeBrowserDownloadSettings, normalizeBrowserSearchEngine } from '@shared/browser/browser';
+import { ProxyMode, ProxyProtocol } from '@shared/network/proxy';
 import { isLegacyCustomProviderKey } from '@shared/providers';
-import { ProxyMode, ProxyProtocol } from '@shared/proxy';
+import { normalizeLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 
 import { normalizeAppearanceConfig } from '@/app/appearance';
 import {

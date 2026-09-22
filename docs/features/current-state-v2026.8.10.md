@@ -180,7 +180,7 @@ sequenceDiagram
 
 ## 10. 关闭生命周期
 
-关闭由 `src/main/core/appShutdown.ts` 统一协调，`runAppCleanup` 保持以下依赖顺序：
+关闭由 `src/main/core/app/appShutdown.ts` 统一协调，`runAppCleanup` 保持以下依赖顺序：
 
 1. 停止 customer registration，销毁 tray。
 2. 停止 cron polling，阻止清理期间再派生计划任务工作。
@@ -290,7 +290,7 @@ sequenceDiagram
 
 | 结论                       | 实现入口                                                                    | 重点测试/校验                               |
 | -------------------------- | --------------------------------------------------------------------------- | ------------------------------------------- |
-| 启动和清理顺序             | `src/main/main.ts`、`src/main/core/appShutdown.ts`                          | `src/main/core/appShutdown.test.ts`         |
+| 启动和清理顺序             | `src/main/main.ts`、`src/main/core/app/appShutdown.ts`                          | `src/main/core/app/appShutdown.test.ts`         |
 | SQLite schema 与恢复       | `src/main/data/sqliteStore.ts`、`coworkStore.ts`                            | 对应 `*.test.ts`，含 stale run/session 恢复 |
 | Cowork 执行适配            | `src/main/engine/cowork/coworkEngineRouter.ts`、`openclawRuntimeAdapter.ts` | engine/router/IPC 测试                      |
 | Config projection          | `src/main/openclaw/config/openclawConfigSync.ts`                            | `openclawConfigSync*.test.ts`               |

@@ -1,4 +1,4 @@
-import { defaultLocalSpeechSettings } from '@shared/localSpeechSettings';
+import { defaultLocalSpeechSettings } from '@shared/speech/localSpeechSettings';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { defaultAppearanceConfig } from '@/app/appearance';

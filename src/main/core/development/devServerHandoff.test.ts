@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { DEV_SERVER_URL_SWITCH } from './appConstants';
+import { DEV_SERVER_URL_SWITCH } from '../appConstants';
 import { getDevServerUrlFromCommandLine } from './devServerHandoff';
 
 describe('development server handoff', () => {

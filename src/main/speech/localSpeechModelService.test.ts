@@ -7,7 +7,7 @@ import * as tar from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createZstdCompress } from 'zlib';
 
-import { LocalSpeechModelKind } from '../../shared/localSpeechModels';
+import { LocalSpeechModelKind } from '../../shared/speech/localSpeechModels';
 import {
   type LocalSpeechModelArtifact,
   LocalSpeechModelService,

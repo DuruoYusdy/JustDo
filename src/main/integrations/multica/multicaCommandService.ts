@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
-import { resolveTaskWorkingDirectory } from '../../core/taskWorkspace';
+import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import type { Agent, CoworkStore } from '../../data/coworkStore';
 import { MulticaExternalSessionStore } from './multicaExternalSessionStore';
 

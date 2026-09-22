@@ -6,7 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   BROWSER_EXTENSION_STREAM_METHOD,
   type BrowserExtensionStreamEvent,
-} from '../../shared/browserExtensionStream';
+} from '../../shared/browser/browserExtensionStream';
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import type { PermissionMode } from '../../shared/openclaw/approvals';
 import { PRODUCT_NAME } from '../../shared/productMetadata';

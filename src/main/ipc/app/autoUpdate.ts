@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
-import { AppUpdateIpc } from '../../../shared/appUpdate';
-import type { AutoUpdateService } from '../../core/autoUpdateService';
+import { AppUpdateIpc } from '../../../shared/app/appUpdate';
+import type { AutoUpdateService } from '../../core/app/autoUpdateService';
 
 export const registerAutoUpdateHandlers = (service: AutoUpdateService): void => {
   ipcMain.handle(AppUpdateIpc.GetState, () => service.getState());

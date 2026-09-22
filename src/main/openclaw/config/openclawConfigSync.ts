@@ -7,10 +7,8 @@ import {
   BrowserMode,
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
-} from '../../../shared/browser';
-import { BuiltinModelSyncReason } from '../../../shared/builtinModels';
+} from '../../../shared/browser/browser';
 import { OPENAI_REQUEST_USER_AGENT } from '../../../shared/cowork/modelRequestHeaders';
-import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/localTts';
 import { normalizeOpenClawAgentId } from '../../../shared/openclaw/agentId';
 import {
   type AgentRuntimeSettings,
@@ -36,8 +34,10 @@ import {
   OpenClawProviderId,
   ProviderName,
 } from '../../../shared/providers';
+import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
-import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/windowsSandbox';
+import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/security/windowsSandbox';
+import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
 import { BUILTIN_CREDENTIAL_MARKER, getBuiltinModelProviderApiKey } from '../../cowork/builtinModelProviderConfig';
 import type { ProviderRawConfig } from '../../cowork/providerApiConfig';
 import {

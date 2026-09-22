@@ -35,7 +35,7 @@ vi.mock('electron', () => ({
   webContents: { fromId: (id: number) => electron.guests.get(id) ?? null },
 }));
 
-import { BROWSER_AGENT_PANEL_TARGET_ID, BrowserIpc } from '../../shared/browser';
+import { BROWSER_AGENT_PANEL_TARGET_ID, BrowserIpc } from '../../shared/browser/browser';
 import { BrowserAgentBridge } from './browserAgentBridge';
 import { claimBrowserAgentDownload } from './browserAgentDownloadCoordinator';
 

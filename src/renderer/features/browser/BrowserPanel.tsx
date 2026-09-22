@@ -25,7 +25,7 @@ import type {
   BrowserPanelHttpAuthRequest,
   BrowserPanelHttpAuthResponse,
   BrowserPanelTab,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 import {
   BROWSER_AGENT_PANEL_TARGET_ID,
   BROWSER_GUEST_COMMAND_CHANNEL,
@@ -40,7 +40,7 @@ import {
   resolveBrowserGuestShortcut,
   resolveBrowserPanelShortcutAction,
   stepBrowserZoomFactor,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 import React, {
   forwardRef,
   lazy,

@@ -148,9 +148,9 @@ credential 对象、URL query 或代理认证信息。
 
 - `src/shared/openclaw/outboundHeaderPolicy.ts`：sidecar 类型和文件名；
 - `src/main/plugins/extensions/extensionNetworkPolicyManifest.ts`：解析、规范化和校验；
-- `src/main/core/outboundHeaderPolicyService.ts`：手工配置与 Extension 规则合并；
-- `src/main/core/outboundHeaderProxy.ts`：Gateway/子进程数据面；
-- `src/main/core/mainProcessFetch.ts`：Main 自有请求数据面；
+- `src/main/core/network/outboundHeaderPolicyService.ts`：手工配置与 Extension 规则合并；
+- `src/main/core/network/outboundHeaderProxy.ts`：Gateway/子进程数据面；
+- `src/main/core/network/mainProcessFetch.ts`：Main 自有请求数据面；
 - `src/main/plugins/extensions/openclawExtensionImportService.ts`：安装、启停、卸载后的 reconcile；
 - `src/main/main.ts`：代理与 Gateway generation 生命周期。
 

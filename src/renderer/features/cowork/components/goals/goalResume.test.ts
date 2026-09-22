@@ -1,4 +1,4 @@
-import { GoalExecutionPhase, SessionGoalMutationAction } from '@shared/sessionGoal';
+import { GoalExecutionPhase, SessionGoalMutationAction } from '@shared/cowork/sessionGoal';
 import { describe, expect, test } from 'vitest';
 
 import { acceptedGoalResumeRunId } from './goalResume';

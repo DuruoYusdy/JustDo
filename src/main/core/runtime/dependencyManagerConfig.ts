@@ -30,6 +30,11 @@ const resolveDefaultResourceDir = (): string | null => {
       'resources',
       DEPENDENCY_CONFIG_DIR_NAME,
     ),
+    path.join(
+      path.resolve(__dirname, '..', '..', '..', '..', '..'),
+      'resources',
+      DEPENDENCY_CONFIG_DIR_NAME,
+    ),
   ].filter((value): value is string => Boolean(value));
 
   for (const candidate of candidates) {

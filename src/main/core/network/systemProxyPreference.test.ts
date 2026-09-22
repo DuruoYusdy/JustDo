@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { ProxyMode, ProxyProtocol } from '../../shared/proxy';
+import { ProxyMode, ProxyProtocol } from '../../../shared/network/proxy';
 
 const mocks = vi.hoisted(() => ({
   applySystemProxyEnv: vi.fn(),

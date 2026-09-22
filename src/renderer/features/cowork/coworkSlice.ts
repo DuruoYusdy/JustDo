@@ -1,9 +1,9 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { BrowserAnnotationDraft } from '@shared/browser';
+import type { BrowserAnnotationDraft } from '@shared/browser/browser';
+import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
+import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
-import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/displayTabRetention';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/openclaw/approvals';
-import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/sessionGoal';
 
 import {
   removeSessionFromState,

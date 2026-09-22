@@ -5,7 +5,7 @@ import type {
   BrowserInspectedElement,
   BrowserPanelFrame,
   BrowserPanelTabs,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 
 export const BROWSER_ANNOTATION_MAX_COUNT = 4;
 export const BROWSER_ANNOTATION_MAX_IMAGE_BYTES = 20 * 1024 * 1024;

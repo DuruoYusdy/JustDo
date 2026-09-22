@@ -6,7 +6,21 @@ import {
   AppUpdateIpc,
   type AppUpdatePreferences,
   type AppUpdateState,
-} from '../shared/appUpdate';
+} from '../shared/app/appUpdate';
+import { DeveloperConfigIpc } from '../shared/app/developerConfig';
+import { DialogIpc, type SaveTextFileOptions } from '../shared/app/dialogIpc';
+import { LogIpc } from '../shared/app/logIpc';
+import { MediaCaptureIpc } from '../shared/app/mediaCapture';
+import {
+  type TerminalActionResult,
+  type TerminalCreateRequest,
+  type TerminalCreateResult,
+  type TerminalDataEvent,
+  type TerminalExitEvent,
+  TerminalIpc,
+  type TerminalResizeRequest,
+  type TerminalWriteRequest,
+} from '../shared/app/terminal';
 import {
   type BrowserActionResult,
   type BrowserAgentInteractionReady,
@@ -43,63 +57,31 @@ import {
   normalizeBrowserPanelHttpAuthResponse,
   normalizeBrowserPanelOpenTabEvent,
   normalizeBrowserPanelPdfDetectedEvent,
-} from '../shared/browser';
+} from '../shared/browser/browser';
 import type { CoworkAttachmentPayload } from '../shared/cowork/attachments';
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../shared/cowork/sessionDetails';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../shared/cowork/sessionFork';
+import {
+  GoalExecutionIpc,
+  type GoalExecutionSnapshot,
+  SessionGoalIpc,
+  type SessionGoalMutationRequest,
+} from '../shared/cowork/sessionGoal';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
+import { SlashCommandIpc } from '../shared/cowork/slashCommands';
 import {
   CoworkSubagentDetailsIpc,
   type CoworkSubtaskChangedEvent,
 } from '../shared/cowork/subagentDetails';
-import { DeveloperConfigIpc } from '../shared/developerConfig';
-import { DialogIpc, type SaveTextFileOptions } from '../shared/dialogIpc';
-import {
-  type FilePreviewEditAuthorizationRequest,
-  type FilePreviewEditAuthorizationResult,
-  FilePreviewIpc,
-  type FilePreviewWriteRequest,
-  type FilePreviewWriteResult,
-} from '../shared/filePreview';
-import {
-  ImagePreviewIpc,
-  type ImagePreviewOpenRequest,
-  type ImagePreviewOpenResult,
-} from '../shared/imagePreview';
-import {
-  LocalAsrIpc,
-  type LocalAsrModelId,
-  type LocalAsrTranscribeOptions,
-} from '../shared/localAsr';
-import {
-  LocalSpeechModelIpc,
-  type LocalSpeechModelKind,
-  type LocalSpeechModelStatus,
-} from '../shared/localSpeechModels';
-import { LocalTtsIpc, type LocalTtsModelId } from '../shared/localTts';
-import { LogIpc } from '../shared/logIpc';
-import { MediaCaptureIpc } from '../shared/mediaCapture';
-import {
-  type MediaGenerationModelConfiguration,
-  type MediaGenerationModelKind,
-  MediaGenerationModelsIpc,
-} from '../shared/mediaGenerationModels';
 import {
   MulticaIntegrationIpc,
   type MulticaIntegrationResult,
   type MulticaIntegrationStatus,
-} from '../shared/multica';
-import { type ApiFetchOptions, NetworkIpc } from '../shared/network';
-import {
-  type OnlineAsrConfigurationUpdate,
-  type OnlineAsrEvent,
-  OnlineAsrIpc,
-  type OnlineAsrStartOptions,
-} from '../shared/onlineAsr';
-import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/onlineTts';
+} from '../shared/integrations/multica';
+import { type ApiFetchOptions, NetworkIpc } from '../shared/network/network';
 import {
   type AgentRuntimeSettings,
   AgentRuntimeSettingsIpc,
@@ -162,6 +144,23 @@ import {
   type MarketplaceUpdateCheckRequest,
 } from '../shared/plugins/marketplace';
 import type { OpenClawSkillSource } from '../shared/plugins/skills';
+import {
+  type FilePreviewEditAuthorizationRequest,
+  type FilePreviewEditAuthorizationResult,
+  FilePreviewIpc,
+  type FilePreviewWriteRequest,
+  type FilePreviewWriteResult,
+} from '../shared/preview/filePreview';
+import {
+  ImagePreviewIpc,
+  type ImagePreviewOpenRequest,
+  type ImagePreviewOpenResult,
+} from '../shared/preview/imagePreview';
+import {
+  type MediaGenerationModelConfiguration,
+  type MediaGenerationModelKind,
+  MediaGenerationModelsIpc,
+} from '../shared/providers/mediaGenerationModels';
 import { IpcChannel as ScheduledTaskIpc } from '../shared/scheduledTask/constants';
 import type {
   ScheduledTaskInput,
@@ -172,28 +171,29 @@ import type {
   ScheduledTaskUnreadCountEvent,
 } from '../shared/scheduledTask/types';
 import {
-  GoalExecutionIpc,
-  type GoalExecutionSnapshot,
-  SessionGoalIpc,
-  type SessionGoalMutationRequest,
-} from '../shared/sessionGoal';
-import { SlashCommandIpc } from '../shared/slashCommands';
-import { SpeechSynthesisIpc } from '../shared/speechSynthesis';
-import {
-  type TerminalActionResult,
-  type TerminalCreateRequest,
-  type TerminalCreateResult,
-  type TerminalDataEvent,
-  type TerminalExitEvent,
-  TerminalIpc,
-  type TerminalResizeRequest,
-  type TerminalWriteRequest,
-} from '../shared/terminal';
-import {
   WindowsSandboxIpc,
   type WindowsSandboxOperationResult,
   type WindowsSandboxStatus,
-} from '../shared/windowsSandbox';
+} from '../shared/security/windowsSandbox';
+import {
+  LocalAsrIpc,
+  type LocalAsrModelId,
+  type LocalAsrTranscribeOptions,
+} from '../shared/speech/localAsr';
+import {
+  LocalSpeechModelIpc,
+  type LocalSpeechModelKind,
+  type LocalSpeechModelStatus,
+} from '../shared/speech/localSpeechModels';
+import { LocalTtsIpc, type LocalTtsModelId } from '../shared/speech/localTts';
+import {
+  type OnlineAsrConfigurationUpdate,
+  type OnlineAsrEvent,
+  OnlineAsrIpc,
+  type OnlineAsrStartOptions,
+} from '../shared/speech/onlineAsr';
+import { type OnlineTtsConfigurationUpdate, OnlineTtsIpc } from '../shared/speech/onlineTts';
+import { SpeechSynthesisIpc } from '../shared/speech/speechSynthesis';
 
 // 暴露安全的 API 到渲染进程
 contextBridge.exposeInMainWorld('electron', {

@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { SpeechSynthesisIpc } from '../../../shared/speechSynthesis';
+import { SpeechSynthesisIpc } from '../../../shared/speech/speechSynthesis';
 import { registerSpeechSynthesisHandlers } from './speechSynthesis';
 
 describe('speech synthesis IPC', () => {

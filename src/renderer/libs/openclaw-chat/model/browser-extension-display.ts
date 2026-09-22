@@ -1,4 +1,4 @@
-import type { BrowserExtensionStreamEvent } from '@shared/browserExtensionStream';
+import type { BrowserExtensionStreamEvent } from '@shared/browser/browserExtensionStream';
 
 import { isTruncatedHistoryMessage } from '../gateway/chat-history-protocol';
 import { stripHeartbeatTokenForDisplay } from '../pipeline/heartbeat-display';

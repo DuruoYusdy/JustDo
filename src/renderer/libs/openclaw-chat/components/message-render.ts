@@ -2,8 +2,8 @@
  * Ordinary message rendering for persisted Content and streaming text.
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
-import { getPreviewableFileExtension } from '@shared/filePreview';
 import { isGatewayInjectedModelRef } from '@shared/openclaw/modelRef';
+import { getPreviewableFileExtension } from '@shared/preview/filePreview';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 

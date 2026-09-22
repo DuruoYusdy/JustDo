@@ -6,7 +6,7 @@ import {
   ImagePreviewIpc,
   type ImagePreviewOpenRequest,
   type ImagePreviewOpenResult,
-} from '../../../shared/imagePreview';
+} from '../../../shared/preview/imagePreview';
 import { t } from '../../core/i18n';
 
 const MAX_IMAGE_SOURCE_LENGTH = 32 * 1024 * 1024;

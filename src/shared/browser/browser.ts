@@ -1,4 +1,4 @@
-import { matchesShortcut, type ShortcutInput } from './shortcuts';
+import { matchesShortcut, type ShortcutInput } from '../app/shortcuts';
 
 export const BrowserIpc = {
   GetStatus: 'browser:getStatus',

@@ -13,10 +13,21 @@
  * omits from bounded history payloads.
  */
 
-import { parseBrowserAnnotationPrompt } from '@shared/browser';
+import { parseBrowserAnnotationPrompt } from '@shared/browser/browser';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '@shared/cowork/attachments';
 import { isPresentPlanToolName } from '@shared/cowork/planPreview';
-import type { LocalTtsSpeakResult } from '@shared/localTts';
+import {
+  isDefinitiveSessionGoalGatewayError,
+  normalizeSessionGoal,
+  type SessionGoalMutationResult,
+  SessionGoalStatus,
+} from '@shared/cowork/sessionGoal';
+import {
+  parseGoalStartObjective,
+  resolveSlashCommandBehavior,
+  SlashCommandBeforeSendHook,
+  SlashCommandExecution,
+} from '@shared/cowork/slashCommands';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
@@ -38,18 +49,7 @@ import {
   progressCardIsComplete,
 } from '@shared/openclaw/progressCard';
 import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
-import {
-  isDefinitiveSessionGoalGatewayError,
-  normalizeSessionGoal,
-  type SessionGoalMutationResult,
-  SessionGoalStatus,
-} from '@shared/sessionGoal';
-import {
-  parseGoalStartObjective,
-  resolveSlashCommandBehavior,
-  SlashCommandBeforeSendHook,
-  SlashCommandExecution,
-} from '@shared/slashCommands';
+import type { LocalTtsSpeakResult } from '@shared/speech/localTts';
 
 import {
   getTranscriptMedia,

@@ -8,7 +8,7 @@ import {
   InformationCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import type { AppReleaseHistory, AppUpdateState } from '@shared/appUpdate';
+import type { AppReleaseHistory, AppUpdateState } from '@shared/app/appUpdate';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { selectNewerAppUpdateState } from '@/features/settings/appUpdateState';

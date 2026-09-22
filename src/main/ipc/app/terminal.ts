@@ -10,7 +10,7 @@ import {
   TerminalIpc,
   type TerminalResizeRequest,
   type TerminalWriteRequest,
-} from '../../../shared/terminal';
+} from '../../../shared/app/terminal';
 
 const MAX_TERMINALS_PER_WINDOW = 16;
 const MAX_WRITE_LENGTH = 64 * 1024;

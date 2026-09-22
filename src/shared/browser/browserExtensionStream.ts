@@ -1,4 +1,4 @@
-import type { NormalizedAgentEvent, NormalizedChatEvent } from './openclaw/agentEvent';
+import type { NormalizedAgentEvent, NormalizedChatEvent } from '../openclaw/agentEvent';
 
 /** Product app-server notification; not a native Codex protocol method. */
 export const BROWSER_EXTENSION_STREAM_METHOD = 'thread/stream';

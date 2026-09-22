@@ -1,4 +1,4 @@
-import { BrowserMode } from '@shared/browser';
+import { BrowserMode } from '@shared/browser/browser';
 import { expect, test } from 'vitest';
 
 import {

@@ -3,7 +3,7 @@ import { ipcMain } from 'electron';
 import {
   SpeechSynthesisIpc,
   type SpeechSynthesisResult,
-} from '../../../shared/speechSynthesis';
+} from '../../../shared/speech/speechSynthesis';
 
 const MAX_PREVIEW_TEXT_LENGTH = 500;
 

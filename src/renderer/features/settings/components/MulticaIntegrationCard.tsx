@@ -1,5 +1,5 @@
 import { ArrowPathIcon, CheckIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline';
-import type { MulticaIntegrationStatus } from '@shared/multica';
+import type { MulticaIntegrationStatus } from '@shared/integrations/multica';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

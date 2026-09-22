@@ -1,5 +1,5 @@
+import { GoalExecutionPhase, SessionGoalStatus } from '@shared/cowork/sessionGoal';
 import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
-import { GoalExecutionPhase, SessionGoalStatus } from '@shared/sessionGoal';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';

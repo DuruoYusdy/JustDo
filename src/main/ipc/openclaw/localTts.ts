@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import { LOCAL_TTS_MODEL_ID, LocalTtsIpc } from '../../../shared/localTts';
+import { LOCAL_TTS_MODEL_ID, LocalTtsIpc } from '../../../shared/speech/localTts';
 import { getLocalTtsStatus, isLocalTtsModelId } from '../../openclaw/config/localTtsConfig';
 
 export function registerLocalTtsHandlers(): void {

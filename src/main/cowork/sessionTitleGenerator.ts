@@ -1,5 +1,5 @@
 import { buildOpenAIJsonRequestHeaders } from '../../shared/cowork/modelRequestHeaders';
-import { mergeModelProviderHeaders } from '../../shared/modelProviderHeaders';
+import { mergeModelProviderHeaders } from '../../shared/providers/modelProviderHeaders';
 import { resolveBuiltinRequestApiKey } from './builtinModelProviderConfig';
 import {
   buildOpenAIChatCompletionsUrl,

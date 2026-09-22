@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { MulticaIntegrationStatus } from '../../../shared/multica';
+import type { MulticaIntegrationStatus } from '../../../shared/integrations/multica';
 import type { SqliteStore } from '../../data/sqliteStore';
 import { MulticaIntegrationService } from './multicaIntegrationService';
 

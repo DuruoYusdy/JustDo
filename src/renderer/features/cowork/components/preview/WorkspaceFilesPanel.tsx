@@ -1,5 +1,5 @@
 import { ChevronRightIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
-import type { WorkspaceDirectoryEntry } from '@shared/filePreview';
+import type { WorkspaceDirectoryEntry } from '@shared/preview/filePreview';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

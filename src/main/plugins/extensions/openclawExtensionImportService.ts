@@ -14,15 +14,15 @@ import type {
   OpenClawExtensionConfigurationField,
   OpenClawPluginCapabilityReview,
 } from '../../../shared/openclaw/extensions';
-import { t } from '../../core/i18n';
 import {
   managedDirectoryFailure,
   managedDirectoryFailureFromMessage,
   ManagedDirectoryOperationCoordinator,
   managedDirectorySuccess,
-} from '../../core/managedDirectoryOperations';
-import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/outboundHeaderPolicyService';
-import { extractZipSafely } from '../../core/safeZipExtractor';
+} from '../../core/filesystem/managedDirectoryOperations';
+import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
+import { t } from '../../core/i18n';
+import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
 

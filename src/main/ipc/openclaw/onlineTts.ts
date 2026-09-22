@@ -5,7 +5,7 @@ import {
   type OnlineTtsConfigurationUpdate,
   OnlineTtsIpc,
   type OnlineTtsStatus,
-} from '../../../shared/onlineTts';
+} from '../../../shared/speech/onlineTts';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 
 interface Dependencies {

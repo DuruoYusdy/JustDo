@@ -14,6 +14,7 @@ import {
   XCircleIcon,
 } from '@heroicons/react/24/outline';
 import { PauseCircleIcon as PauseCircleSolidIcon } from '@heroicons/react/24/solid';
+import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
 import {
   BROWSER_AGENT_INTERACTION_ACK_TIMEOUT_MS,
   BROWSER_AGENT_PANEL_TARGET_ID,
@@ -21,19 +22,18 @@ import {
   type BrowserAgentInteractionState,
   type BrowserAnnotationDraft,
   serializeBrowserAnnotationContext,
-} from '@shared/browser';
+} from '@shared/browser/browser';
+import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
-import { SaveTextFileErrorCode } from '@shared/dialogIpc';
-import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/displayTabRetention';
-import { HOME_WORKSPACE_SESSION_ID } from '@shared/filePreview';
+import { isGoalEditCommand } from '@shared/cowork/slashCommands';
 import { CoworkInteractionKind, OpenClawToolName } from '@shared/openclaw/extensions';
 import {
   type ProgressCard,
   progressCardIsComplete,
   type ProgressCardViewState,
 } from '@shared/openclaw/progressCard';
-import { isGoalEditCommand } from '@shared/slashCommands';
+import { HOME_WORKSPACE_SESSION_ID } from '@shared/preview/filePreview';
 import {
   forwardRef,
   useCallback,

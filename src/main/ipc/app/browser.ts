@@ -32,7 +32,7 @@ import {
   isBrowserProfileRunning,
   normalizeBrowserMode,
   parseDevToolsActivePort,
-} from '../../../shared/browser';
+} from '../../../shared/browser/browser';
 import {
   clearBrowserData,
   getBrowserClearDataSummary,

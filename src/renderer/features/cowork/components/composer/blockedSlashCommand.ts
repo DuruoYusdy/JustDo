@@ -1,4 +1,4 @@
-import { resolveSlashCommandBehavior, SlashCommandExecution } from '@shared/slashCommands';
+import { resolveSlashCommandBehavior, SlashCommandExecution } from '@shared/cowork/slashCommands';
 
 import { i18nService } from '@/services/i18n';
 

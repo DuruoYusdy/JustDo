@@ -1,6 +1,6 @@
 'use strict';
 
-const updateConfig = require('../src/shared/appUpdateConfig.json');
+const updateConfig = require('../src/shared/app/appUpdateConfig.json');
 
 const WINDOWS_UPDATE_CONFIG = Object.freeze({ feedUrl: updateConfig.feedUrl });
 

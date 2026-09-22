@@ -5,14 +5,14 @@ import {
   defaultLocalSpeechSettings,
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
-} from '../../../shared/localSpeechSettings';
+} from '../../../shared/speech/localSpeechSettings';
 import {
   LOCAL_TTS_MODEL_ID,
   LOCAL_TTS_MODEL_IDS,
   LOCAL_TTS_PROVIDER_ID,
   type LocalTtsModelId,
   type LocalTtsStatus,
-} from '../../../shared/localTts';
+} from '../../../shared/speech/localTts';
 import {
   isLocalSpeechRuntimeReady,
   type LocalSpeechPathOptions,

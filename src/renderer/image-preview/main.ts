@@ -1,6 +1,6 @@
 import './style.css';
 
-import type { ImagePreviewDocument } from '@shared/imagePreview';
+import type { ImagePreviewDocument } from '@shared/preview/imagePreview';
 
 import {
   createImagePreviewTransform,

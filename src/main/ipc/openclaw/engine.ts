@@ -15,7 +15,7 @@ import {
 } from '../../../shared/openclaw/sessionMigration';
 import { SystemPromptReplacementIpc } from '../../../shared/openclaw/systemPromptReplacements';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
-import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/pythonRuntime';
+import { JUSTDO_MANAGED_PYTHON_USER_BASE_ENV } from '../../core/runtime/pythonRuntime';
 import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,

@@ -16,17 +16,22 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
-} from '@shared/displayTabRetention';
+} from '@shared/cowork/displayTabRetention';
+import { buildOpenAIJsonRequestHeaders } from '@shared/cowork/modelRequestHeaders';
 import {
-  type LocalSpeechSettings,
-  normalizeLocalSpeechSettings,
-} from '@shared/localSpeechSettings';
-import { mergeModelProviderHeaders } from '@shared/modelProviderHeaders';
-import { NetworkFetchPurpose } from '@shared/network';
+  DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
+  normalizeMaxGoalContinuationTurns,
+} from '@shared/cowork/sessionGoal';
+import { NetworkFetchPurpose } from '@shared/network/network';
+import {
+  type CustomProxyConfig,
+  defaultCustomProxyConfig,
+  ProxyMode,
+  ProxyProtocol,
+} from '@shared/network/proxy';
 import {
   type AgentRuntimeSettings,
   createDefaultAgentRuntimeSettings,
@@ -49,16 +54,11 @@ import {
   mergeDiscoveredProviderModels,
   parseProviderModelsResponse,
 } from '@shared/providers/modelDiscovery';
+import { mergeModelProviderHeaders } from '@shared/providers/modelProviderHeaders';
 import {
-  type CustomProxyConfig,
-  defaultCustomProxyConfig,
-  ProxyMode,
-  ProxyProtocol,
-} from '@shared/proxy';
-import {
-  DEFAULT_MAX_GOAL_CONTINUATION_TURNS,
-  normalizeMaxGoalContinuationTurns,
-} from '@shared/sessionGoal';
+  type LocalSpeechSettings,
+  normalizeLocalSpeechSettings,
+} from '@shared/speech/localSpeechSettings';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
 

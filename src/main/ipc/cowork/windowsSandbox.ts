@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 
-import { WindowsSandboxIpc } from '../../../shared/windowsSandbox';
+import { WindowsSandboxIpc } from '../../../shared/security/windowsSandbox';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { WindowsSandboxService } from '../../security/windowsSandboxService';
 

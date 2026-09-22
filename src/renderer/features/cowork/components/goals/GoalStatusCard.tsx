@@ -6,14 +6,14 @@ import {
   PencilSquareIcon,
 } from '@heroicons/react/24/outline';
 import { FlagIcon } from '@heroicons/react/24/solid';
-import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import {
   GoalExecutionPhase,
   type GoalExecutionSnapshot,
   SESSION_GOAL_MAX_OBJECTIVE_LENGTH,
   type SessionGoal,
   SessionGoalStatus,
-} from '@shared/sessionGoal';
+} from '@shared/cowork/sessionGoal';
+import { extractGoalFollowUpRequest } from '@shared/prompts/goalFollowUpPrompt';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { getGoalPresentation, type GoalTone } from '@/features/cowork/components/goals/goalPresentation';

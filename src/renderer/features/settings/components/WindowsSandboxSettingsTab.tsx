@@ -3,7 +3,7 @@ import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
-import type { WindowsSandboxStatus } from '@shared/windowsSandbox';
+import type { WindowsSandboxStatus } from '@shared/security/windowsSandbox';
 import React, { useCallback, useEffect, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';

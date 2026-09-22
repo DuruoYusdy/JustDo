@@ -12,7 +12,7 @@ import type {
   BrowserClearDataResult,
   BrowserClearDataSelection,
   BrowserClearDataSummary,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 

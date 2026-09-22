@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
   },
 }));
 
-import { MediaGenerationModelsIpc } from '../../../shared/mediaGenerationModels';
+import { MediaGenerationModelsIpc } from '../../../shared/providers/mediaGenerationModels';
 import { registerMediaGenerationModelHandlers } from './mediaGenerationModels';
 
 describe('OpenClaw media generation model IPC', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { type SlashCommand, SlashCommandBlacklist } from '../../../shared/slashCommands';
+import { type SlashCommand, SlashCommandBlacklist } from '../../../shared/cowork/slashCommands';
 import { justDoSlashCommandPolicy } from './slashCommandPolicies';
 
 const createCommand = (name: string): SlashCommand => ({

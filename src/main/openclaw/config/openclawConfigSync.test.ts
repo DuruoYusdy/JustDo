@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { BrowserMode } from '../../../shared/browser';
+import { BrowserMode } from '../../../shared/browser/browser';
 import {
   AgentRuntimeDelegationMode,
   AgentRuntimeSessionVisibility,

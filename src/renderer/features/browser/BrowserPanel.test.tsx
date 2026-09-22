@@ -7,7 +7,7 @@ import {
   type BrowserAnnotationDraft,
   type BrowserLocalHtmlPreviewResult,
   type BrowserPanelTab,
-} from '@shared/browser';
+} from '@shared/browser/browser';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { type ComponentProps, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -1,12 +1,12 @@
 import { DocumentArrowUpIcon, MicrophoneIcon, StopIcon } from '@heroicons/react/24/outline';
-import { LocalSpeechModelKind } from '@shared/localSpeechModels';
+import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import {
   type LocalSpeechInputSource,
   type LocalSpeechSettings,
   normalizeLocalSpeechSettings,
   resolveLocalSpeechInputLanguage,
-} from '@shared/localSpeechSettings';
-import type { OnlineAsrEvent, OnlineAsrSession } from '@shared/onlineAsr';
+} from '@shared/speech/localSpeechSettings';
+import type { OnlineAsrEvent, OnlineAsrSession } from '@shared/speech/onlineAsr';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import {

@@ -3,8 +3,8 @@ import {
   isLocalAsrLanguageSupported,
   LOCAL_ASR_MODEL_IDS,
   type LocalAsrModelId,
-} from '@shared/localAsr';
-import { LocalSpeechModelKind, type LocalSpeechModelStatus } from '@shared/localSpeechModels';
+} from '@shared/speech/localAsr';
+import { LocalSpeechModelKind, type LocalSpeechModelStatus } from '@shared/speech/localSpeechModels';
 import {
   LOCAL_SPEECH_MAX_MEETING_SEGMENT_SECONDS,
   LOCAL_SPEECH_MAX_RATE,
@@ -15,10 +15,10 @@ import {
   LOCAL_SPEECH_MIN_RECORDING_SECONDS,
   LOCAL_SPEECH_MIN_THREADS,
   type LocalSpeechSettings,
-} from '@shared/localSpeechSettings';
-import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_MODEL_IDS, type LocalTtsModelId } from '@shared/localTts';
-import type { OnlineAsrStatus } from '@shared/onlineAsr';
-import type { OnlineTtsStatus } from '@shared/onlineTts';
+} from '@shared/speech/localSpeechSettings';
+import { LOCAL_TTS_MODEL_ID, LOCAL_TTS_MODEL_IDS, type LocalTtsModelId } from '@shared/speech/localTts';
+import type { OnlineAsrStatus } from '@shared/speech/onlineAsr';
+import type { OnlineTtsStatus } from '@shared/speech/onlineTts';
 import React, { useEffect, useRef, useState } from 'react';
 
 import { configService } from '@/services/config';
