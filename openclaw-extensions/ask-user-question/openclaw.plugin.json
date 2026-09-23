@@ -1,7 +1,7 @@
 {
   "id": "ask-user-question",
   "name": "AskUserQuestion",
-  "description": "Rich structured questions for the JustDo desktop application.",
+  "description": "Rich structured questions for the desktop application.",
   "activation": {
     "onStartup": true,
     "onCapabilities": ["tool"]

@@ -327,7 +327,7 @@ const plugin = {
     );
 
     // OpenClaw deliberately bounds chat.history and chat.message.get payloads.
-    // Preserve that fast path, while allowing JustDo to recover an explicitly
+    // Preserve that fast path, while allowing the desktop application to recover an explicitly
     // selected oversized transcript row through bounded chunks when necessary.
     api.registerGatewayMethod(
       'runtimeServices.historyMessage',

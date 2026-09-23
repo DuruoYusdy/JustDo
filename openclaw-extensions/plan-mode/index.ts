@@ -329,13 +329,13 @@ const formatPlanResponse = (response: PlanResponse): string => {
 const plugin = {
   id: PLUGIN_ID,
   name: 'Plan Mode',
-  description: 'Session-scoped planning workflow for the JustDo desktop application.',
+  description: 'Session-scoped planning workflow for the desktop application.',
   register(api: OpenClawPluginApi) {
     const manager = new PlanRequestManager(api.logger);
 
     api.session.state.registerSessionExtension({
       namespace: STATE_NAMESPACE,
-      description: 'Whether the JustDo session is currently in Plan mode.',
+      description: 'Whether the session is currently in Plan mode.',
       sessionEntrySlotKey: SESSION_SLOT_KEY,
       project: ({ state }) => state,
     });
@@ -359,7 +359,7 @@ const plugin = {
 
     api.registerTrustedToolPolicy({
       id: POLICY_ID,
-      description: 'Blocks explicit mutation tools while a JustDo session is in Plan mode.',
+      description: 'Blocks explicit mutation tools while a session is in Plan mode.',
       evaluate: (event, context) => {
         const state = context.getSessionExtension?.(STATE_NAMESPACE);
         if (!isRecord(state) || state.enabled !== true || !isMutatingTool(event)) return;

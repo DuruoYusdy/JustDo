@@ -512,7 +512,7 @@ export const ASK_USER_QUESTION_DESCRIPTION = [
 const plugin = {
   id: 'ask-user-question',
   name: 'AskUserQuestion',
-  description: 'Rich structured questions for the JustDo desktop application.',
+  description: 'Rich structured questions for the desktop application.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);

@@ -1,14 +1,14 @@
-# JustDo ACPX runtime
+# ACPX runtime
 
 This directory vendors the OpenClaw `@openclaw/acpx` extension from the
-`v2026.9.2` source tree. It is compiled and packaged with JustDo; the installed
-desktop application does not download the plugin at runtime.
+`v2026.9.2` source tree. It is compiled and packaged with the desktop application,
+which does not download the plugin at runtime.
 
 OpenClaw remains responsible for ACP task scheduling, durable task state,
 session recovery, and delivery. This extension owns the ACP transport,
 adapter processes, isolated adapter state, and permission mediation.
 
-## JustDo customizations
+## Local customizations
 
 - Startup probing is disabled by default so an unavailable optional adapter
   does not mark the entire ACP backend unhealthy.

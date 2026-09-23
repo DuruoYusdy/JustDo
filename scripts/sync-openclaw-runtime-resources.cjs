@@ -254,7 +254,7 @@ function hasMatchingFile(rootDir, pattern) {
 
 function verifyAcpxTargetDependencies(extensionDir, installTarget) {
   const manifest = readJsonFile(path.join(extensionDir, 'package.json'));
-  if (manifest?.name !== 'justdo-openclaw-acpx') return;
+  if (manifest?.name !== 'acpx-runtime') return;
   const dependencies = manifest.dependencies || {};
   const includesClaudeAdapter = Boolean(dependencies['@agentclientprotocol/claude-agent-acp']);
   const includesCodexAdapter = Boolean(dependencies['@agentclientprotocol/codex-acp']);

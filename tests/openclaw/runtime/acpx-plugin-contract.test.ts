@@ -29,8 +29,8 @@ describe('vendored ACPX plugin contract', () => {
     };
 
     expect(packageJson).toMatchObject({
-      name: 'justdo-openclaw-acpx',
-      version: '2026.9.2-justdo.1',
+      name: 'acpx-runtime',
+      version: '2026.9.2-local.1',
       private: true,
     });
     expect(dependencies).toMatchObject({
