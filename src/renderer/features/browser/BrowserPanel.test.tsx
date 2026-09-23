@@ -10,7 +10,7 @@ import {
 } from '@shared/browser/browser';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { type ComponentProps, useState } from 'react';
+import { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
@@ -182,6 +182,35 @@ function BrowserPanelHarness({
 }
 
 describe('BrowserPanel embedded webview', () => {
+  it('keeps the first tab opened by a parent effect during initial mount', () => {
+    function FirstOpen() {
+      const panel = useRef<BrowserPanelHandle | null>(null);
+      const pending = useRef(true);
+      const [tabs, setTabs] = useState<BrowserPanelTab[]>([]);
+      useEffect(() => {
+        if (!pending.current || !panel.current) return;
+        pending.current = false;
+        panel.current.openTab();
+      }, []);
+      return (
+        <BrowserPanelHarness
+          panelRef={instance => {
+            panel.current = instance;
+          }}
+          initialTabs={tabs}
+          retainedTargetIds={tabs.map(tab => tab.targetId)}
+          onTabsChange={setTabs}
+        />
+      );
+    }
+    const { container } = render(
+      <StrictMode>
+        <FirstOpen />
+      </StrictMode>,
+    );
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+  });
+
   beforeEach(() => {
     panelOpenTabListener = null;
     panelPdfDetectedListener = null;

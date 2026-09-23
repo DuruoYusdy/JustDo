@@ -572,8 +572,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, [initialTabs]);
 
   const retainedTargetIdsKey = retainedTargetIds?.join('\0');
+  const appliedRetainedTargetIdsKeyRef = useRef<string>();
   useEffect(() => {
-    if (retainedTargetIdsKey === undefined) return;
+    if (
+      retainedTargetIdsKey === undefined ||
+      appliedRetainedTargetIdsKeyRef.current === retainedTargetIdsKey
+    ) {
+      return;
+    }
+    // StrictMode can replay this effect after the parent opens the first tab.
+    // Apply each retention snapshot once so stale empty IDs cannot remove it.
+    appliedRetainedTargetIdsKeyRef.current = retainedTargetIdsKey;
     const retainedIds = new Set(retainedTargetIdsKey ? retainedTargetIdsKey.split('\0') : []);
     setTabs(current => {
       const retainedTabs = current.filter(tab => retainedIds.has(tab.targetId));
