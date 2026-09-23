@@ -58,6 +58,14 @@ describe('browser extension preparation', () => {
     try {
       const first = prepareBrowserExtension({ repoRoot });
       const second = prepareBrowserExtension({ repoRoot });
+      const appearanceSettings = fs.readFileSync(
+        path.join(second.outputDir, 'options.html'),
+        'utf8',
+      );
+      expect(appearanceSettings).toContain('modules/appearance-settings.js');
+      expect(appearanceSettings).toContain('appearance.css');
+      expect(fs.existsSync(path.join(second.outputDir, 'modules/appearance.js'))).toBe(true);
+
       const manifest = JSON.parse(
         fs.readFileSync(path.join(second.outputDir, 'manifest.json'), 'utf8'),
       ) as {

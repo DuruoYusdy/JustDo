@@ -135,7 +135,7 @@ export class BrowserExtensionStream {
     this.history = { id: threadId, turns: [] };
   }
 
-  start(message: string): void {
+  start(message: string, rawMessage?: Record<string, unknown>): void {
     this.finish();
     this.beforeStart = this.history;
     this.anchor = this.history.turns.length;
@@ -147,7 +147,13 @@ export class BrowserExtensionStream {
         ...this.history.turns,
         {
           id: turnId,
-          items: [{ type: 'userMessage', content: [{ type: 'text', text: message }] }],
+          items: [
+            {
+              type: 'userMessage',
+              content: [{ type: 'text', text: message }],
+              ...(rawMessage ? { rawMessage } : {}),
+            },
+          ],
         },
       ],
     };

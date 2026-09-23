@@ -172,6 +172,7 @@ import {
   registerSlashCommandHandlers,
   registerSpeechSynthesisHandlers,
 } from './ipc/openclaw';
+import { readOpenClawAssistantMedia } from './ipc/openclaw/engine';
 import {
   getCronJobService,
   getScheduledTaskResultStore,
@@ -1826,6 +1827,8 @@ if (multicaBridgeArgv) {
         getRouter: getCoworkEngineRouter,
         getRuntime: getOpenClawRuntimeAdapter,
         getDefaultModelRef: resolveDefaultAgentModelRef,
+        readAssistantMedia: request =>
+          readOpenClawAssistantMedia(getOpenClawEngineManager(), request),
       }),
       browserExtensionChatToken,
       packageJson.version,

@@ -1,3 +1,4 @@
+import { initializeAppearance } from './modules/appearance.js';
 import { AppServerClient } from './modules/conversation-client.js';
 import {
   isCurrentThreadRunning,
@@ -6,8 +7,10 @@ import {
   shouldShowTurnError,
   toolInputSummary,
 } from './modules/sidepanel-state.js';
-import { renderMarkdownHtml } from './modules/sidepanel-markdown.js';
+import { renderRichContent, retryRichImages } from './modules/sidepanel-rich-content.js';
 import { BrowserExtensionStream } from './modules/sidepanel-stream.js';
+
+void initializeAppearance();
 
 const sessionSelect = document.getElementById('session');
 const messages = document.getElementById('messages');
@@ -170,9 +173,11 @@ function renderMessages(entries) {
     messages.replaceChildren(empty);
     return;
   }
-  for (const [index, entry] of entries.entries()) {
+  for (const entry of entries) {
+    const index = nextNodes.length;
     const signature = JSON.stringify(entry);
     if (previousNodes[index]?.renderSignature === signature) {
+      retryRichImages(previousNodes[index]);
       nextNodes.push(previousNodes[index]);
       continue;
     }
@@ -258,7 +263,12 @@ function renderMessages(entries) {
     }
     const item = document.createElement('div');
     item.className = `message ${entry.role} markdown-content`;
-    item.innerHTML = renderMarkdownHtml(entry.text);
+    const threadId = sessionSelect.value;
+    renderRichContent(item, entry, async source => {
+      const result = await client.request('thread/image', { threadId, source });
+      return result.dataUrl;
+    });
+    if (!item.childElementCount) continue;
     item.renderSignature = signature;
     nextNodes.push(item);
   }
@@ -548,7 +558,20 @@ async function submit() {
       createdThreadId = threadId;
       pendingUserMessage = { threadId, text: message, persistedMatches: 0 };
     }
-    streamView(threadId).start(message);
+    streamView(threadId).start(message, {
+      role: 'user',
+      content: [
+        { type: 'text', text: message },
+        ...attachments.map(attachment => ({
+          type: 'attachment',
+          attachment: {
+            kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
+            label: attachment.name,
+            url: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
+          },
+        })),
+      ],
+    });
     const startedTurn = await client.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: message }],

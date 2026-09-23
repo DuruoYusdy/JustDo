@@ -59,6 +59,41 @@ describe('buildBrowserExtensionContext', () => {
 });
 
 describe('BrowserExtensionChatController', () => {
+  it('reads managed images with the native session scope and propagates authorization failures', async () => {
+    const readAssistantMedia = vi
+      .fn()
+      .mockResolvedValue({ success: true, dataUrl: 'data:image/jpeg;base64,aW1hZ2U=' });
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () =>
+        ({
+          ensureReady: vi.fn(),
+          getSessionKeysForSession: () => ['agent:main:justdo:one'],
+        }) as never,
+      getStore: () =>
+        ({ getSession: (id: string) => (id === 'one' ? { id } : undefined) }) as never,
+      readAssistantMedia,
+    });
+    await expect(
+      controller.readManagedImage('one', 'media://inbound/photo.jpg'),
+    ).resolves.toContain('data:image/jpeg');
+    expect(readAssistantMedia).toHaveBeenCalledWith({
+      source: 'media://inbound/photo.jpg',
+      sessionKey: 'agent:main:justdo:one',
+    });
+    readAssistantMedia.mockResolvedValueOnce({
+      success: false,
+      error: 'Gateway image is unavailable (403)',
+    });
+    await expect(controller.readManagedImage('one', 'media://inbound/private.jpg')).rejects.toThrow(
+      '403',
+    );
+    await expect(controller.readManagedImage('other', 'media://inbound/photo.jpg')).rejects.toThrow(
+      'not found',
+    );
+    expect(readAssistantMedia).toHaveBeenCalledTimes(2);
+  });
   it('subscribes to native live events, isolates sessions and releases listeners', async () => {
     const runtime = Object.assign(new EventEmitter(), {
       ensureReady: vi.fn(async () => {}),
@@ -329,6 +364,131 @@ describe('BrowserExtensionChatController', () => {
       { forceFullSnapshot: true },
     );
   });
+
+  it('preserves image-only content and browser cards through the native history projection', async () => {
+    const image = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'YWJj' },
+    };
+    const annotation = {
+      type: 'browser_annotation',
+      annotation: { title: 'Page', markedRegionCount: 1 },
+    };
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () =>
+        ({
+          ensureReady: vi.fn(async () => undefined),
+          getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+          fetchSessionHistoryByKey: vi.fn(async () => ({
+            messages: [
+              { role: 'user', content: [image, annotation] },
+              {
+                role: 'assistant',
+                content: [{ type: 'thinking', thinking: 'Inspect' }, image],
+                __openclaw: { media: [{ path: '/tmp/shot.png', contentType: 'image/png' }] },
+              },
+            ],
+          })),
+        }) as never,
+      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+    });
+    const messages = await controller.getMessages('session-1');
+    expect(messages[0].rawMessage?.content).toEqual([image, annotation]);
+    expect(
+      messages
+        .filter(message => message.rawMessage)
+        .flatMap(message => (message.rawMessage?.content ?? []) as unknown[]),
+    ).toContainEqual(image);
+    expect(JSON.stringify(messages)).toContain('/tmp/shot.png');
+    expect(messages.filter(message => message.thinking)).toHaveLength(1);
+  });
+
+  it('retains metadata-only images and fallback captions without reviving internal reminder prompts', async () => {
+    const media = { media: [{ path: '/tmp/shot.png', contentType: 'image/png' }] };
+    const controller = new BrowserExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () =>
+        ({
+          ensureReady: vi.fn(async () => undefined),
+          getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+          fetchSessionHistoryByKey: vi.fn(async () => ({
+            messages: [
+              { role: 'assistant', content: [], __openclaw: media },
+              { role: 'assistant', content: [], text: 'Caption', __openclaw: media },
+              {
+                role: 'user',
+                content:
+                  'A scheduled reminder has been triggered. The reminder content is:\nTake a break\nHandle this reminder internally. Do not relay it to the user unless explicitly requested.',
+                __openclaw: media,
+              },
+            ],
+          })),
+        }) as never,
+      getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+    });
+    const messages = await controller.getMessages('session-1');
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toMatchObject({ role: 'assistant', rawMessage: { __openclaw: media } });
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      rawMessage: { content: 'Caption', __openclaw: media },
+    });
+    expect(messages[2]).toEqual({ role: 'system', text: 'Take a break' });
+  });
+
+  it.each([false, true])(
+    'keeps a single native delivery after content blocks (fallback text: %s)',
+    async fallbackText => {
+      const delivery = { mediaUrls: ['./generated.png'] };
+      const controller = new BrowserExtensionChatController({
+        ensureEngineRunning: vi.fn(),
+        getRouter: vi.fn(),
+        getRuntime: () =>
+          ({
+            ensureReady: vi.fn(async () => undefined),
+            getSessionKeysForSession: () => ['agent:main:justdo:session-1'],
+            fetchSessionHistoryByKey: vi.fn(async () => ({
+              messages: [
+                {
+                  role: 'assistant',
+                  openclawDelivery: delivery,
+                  ...(fallbackText ? { text: 'Result\nMEDIA: ./generated.png' } : {}),
+                  content: [
+                    { type: 'thinking', thinking: 'Generate' },
+                    { type: 'text', text: 'Result\nMEDIA: ./generated.png' },
+                    {
+                      type: 'attachment',
+                      attachment: {
+                        kind: 'image',
+                        label: 'Generated',
+                        url: '/api/chat/media/outgoing/id',
+                      },
+                    },
+                  ].slice(0, fallbackText ? 1 : undefined),
+                },
+              ],
+            })),
+          }) as never,
+        getStore: () => ({ getSession: () => ({ id: 'session-1' }) }) as never,
+      });
+      const messages = await controller.getMessages('session-1');
+      expect(messages[0]).toEqual({ role: 'assistant', text: '', thinking: 'Generate' });
+      const rich = messages.filter(message => message.rawMessage);
+      expect(
+        rich
+          .slice(0, -1)
+          .every(message => message.rawMessage?.__browserExtensionOmitDeliveryMedia === true),
+      ).toBe(true);
+      expect(rich.at(-1)?.rawMessage).toEqual({
+        role: 'assistant',
+        content: '',
+        openclawDelivery: delivery,
+      });
+    },
+  );
 
   it('preserves interleaved assistant content block order and thinking counts', async () => {
     const controller = new BrowserExtensionChatController({

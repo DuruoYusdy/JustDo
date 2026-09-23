@@ -78,7 +78,7 @@ ChatGPT 扩展可先发送轻量 tab 状态，再由 Agent 调用 `getTabContext
   Electron GUI 进程不直接充当 Chrome Native Host。
 - app-server 仅监听 `127.0.0.1` 随机端口；URL 含每次启动随机生成的 256-bit capability，握手还校验精确 extension Origin。
 - Gateway token 与 OpenClaw relay key 不向扩展暴露；手动 pairing 只服务浏览器自动化，与侧栏发现通道分离。
-- WebSocket 单消息上限为 8 MiB；附件最多 5 个且原始文件总量最多 4 MiB，prompt、标题、URL、
+- WebSocket 入站请求上限为 8 MiB；附件最多 5 个且原始文件总量最多 4 MiB，prompt、标题、URL、
   可见正文和选中文本还有领域长度限制。
 - 权限与模型在 `composer/options` 返回前保持禁用；从受限模式切换到 Full access 时显示与桌面端
   一致的风险确认。切换会话会清除尚未发送的附件，避免草稿跨会话误发。
@@ -149,3 +149,32 @@ sequenceDiagram
 - 生成的 `modules/sidepanel-stream.js` 来自 `npm run browser-extension:build-stream`，打包浏览器可用的桌面 reducer，不加载 Node/Electron、不从 CDN 拉取代码。修改 reducer 后需重新生成，并运行流式投影、WebSocket 链路和 DOM 回归测试。OpenClaw pairing/relay 基线不参与这些改动。
 
 后续工作包括扩展内的 approval 交互、右键菜单、tab mentions、YouTube transcript、Edge/Brave/Vivaldi 验证，以及 Chrome Web Store 的签名、升级和发布流程；正文、Thinking 与 Tool 的实时输出已实现。打包验收必须覆盖 Native Messaging 注册、应用未启动时的拉起、并发 ensure、断线重连与卸载清理。开发验收还应覆盖动态 Vite 端口写入、工具栏直达对话和设置按钮进入配对页。
+
+### 图片与浏览器卡片
+
+侧栏复用桌面端 `normalizeMessage`、原生媒体元数据读取，以及操作演示和网页标注的 Lit 组件与样式。
+用户/助手消息保留展示所需的结构化内容与媒体引用；纯图片消息不会因缺少文字而被丢弃。
+Markdown、MEDIA、base64 图片和原生历史附件均显示等比缩略图，双击或键盘 Enter/空格打开图片预览，Esc 关闭。
+操作演示保留步骤、页面和元素详情；网页标注保留评论、元素选择器、位置和标注数量，页面 HTML 始终作为文本显示。
+
+图片通过已认证 WebSocket 的 `thread/image` 请求读取：托管输入和输出图片复用桌面的 Gateway 媒体接口，由 Main 解析原生 session key，Gateway 校验会话权限。本地图片每次从该会话原生历史核对引用，
+只接受支持的图片扩展名、普通文件及不超过 20 MiB 的内容，拒绝网络文件路径；相对路径按会话工作目录解析。
+返回 data URL，不向扩展暴露任意文件读取或额外 HTTP 服务，不增加 Main transcript cache。
+网络图片直接加载并禁用 Referer；加载失败显示可读提示。
+
+修改共享解析器或卡片后运行 `npm run browser-extension:build-markdown`，修改流式模型后运行
+`npm run browser-extension:build-stream`，再运行 `npm run browser-extension:prepare` 更新开发扩展目录。
+生成的 rich-content bundle 使用浏览器语言选择中英文，不依赖 Electron 配置服务。配对/relay 基线保持独立。
+
+### 背景主题
+
+扩展设置页的“对话外观”提供深色、浅色、暖纸色、雾蓝和跟随系统。默认浅色，保留已保存的选择；
+选择保存在扩展 `chrome.storage.local` 的 `justdoSidePanelTheme` 中，已打开的侧栏通过
+storage change 即时应用，重新打开后恢复。跟随系统会响应系统明暗变化。
+背景、正文、Thinking/Tool、输入区、代码块和浏览器卡片共同使用主题色，图片预览保持深色。
+设置 UI 与主题模块均位于 `conversation-overlay/`，通过明确构建接入点加入 options 页，
+不修改 OpenClaw 的配对/relay 基线，也不与桌面应用主题联动。
+
+富消息投影保留生成图片的 delivery 地址并在每条原生消息末尾只展示一次；纯媒体历史的空 content
+和顶层 text 也能保留。原生提醒的 system 投影优先，不因附件恢复内部 user 提示。图片实际加载失败后，
+后续历史刷新可重试；多个设置页并发保存主题时，以最新的 storage 变化为准。

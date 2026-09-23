@@ -10,6 +10,7 @@ import {
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import type { PermissionMode } from '../../shared/openclaw/approvals';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
+import { readThreadImage } from './browserExtensionImage';
 
 export const BROWSER_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 export const BROWSER_EXTENSION_NATIVE_HOST = 'com.justdo.browserextension';
@@ -47,6 +48,7 @@ export interface BrowserExtensionThread {
 }
 
 export interface BrowserExtensionMessage {
+  rawMessage?: Record<string, unknown>;
   role: string;
   text: string;
   thinking?: string;
@@ -72,6 +74,7 @@ export interface BrowserExtensionChatApi {
     sessionId: string,
     options?: { forceFullSnapshot?: boolean },
   ) => Promise<BrowserExtensionMessage[]>;
+  readManagedImage?: (sessionId: string, source: string) => Promise<string>;
   startThread: (title?: string) => Promise<BrowserExtensionThread>;
   getComposerOptions: (sessionId?: string) => Promise<BrowserExtensionComposerOptions>;
   sendMessage: (request: BrowserExtensionChatRequest) => Promise<BrowserExtensionTurnResult>;
@@ -175,6 +178,7 @@ const toAppServerTurns = (
     if (message.role === 'user') {
       items.push({
         content: [{ text: message.text, type: 'text' }],
+        ...(message.rawMessage ? { rawMessage: message.rawMessage } : {}),
         id: nextItemId(),
         type: 'userMessage',
       });
@@ -189,8 +193,9 @@ const toAppServerTurns = (
           type: 'reasoning',
         });
       }
-      if (message.text) {
+      if (message.text || message.rawMessage) {
         items.push({
+          ...(message.rawMessage ? { rawMessage: message.rawMessage } : {}),
           id: nextItemId(),
           phase: 'final_answer',
           text: message.text,
@@ -588,6 +593,18 @@ export class BrowserExtensionChatServer {
           data: page.map(thread => toAppServerThread(thread)),
           nextCursor: offset + page.length < threads.length ? String(offset + page.length) : null,
         };
+      }
+      case 'thread/image': {
+        const threadId = typeof params.threadId === 'string' ? params.threadId : '';
+        const source = typeof params.source === 'string' ? params.source : '';
+        const thread = (await this.api.listSessions()).find(candidate => candidate.id === threadId);
+        if (!thread) throw new Error('Thread not found.');
+        if (/^media:/i.test(source) || source.startsWith('/api/chat/media/outgoing/')) {
+          if (!this.api.readManagedImage) throw new Error('Gateway image reader is unavailable.');
+          return { dataUrl: await this.api.readManagedImage(threadId, source) };
+        }
+        const messages = await this.api.getMessages(threadId);
+        return { dataUrl: await readThreadImage(source, thread.cwd, messages) };
       }
       case 'thread/read': {
         const threadId = typeof params.threadId === 'string' ? params.threadId : '';

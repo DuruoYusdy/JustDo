@@ -77,6 +77,63 @@ afterEach(async () => {
 });
 
 describe('BrowserExtensionChatServer', () => {
+  it.each(['media://inbound/photo.jpg', '/api/chat/media/outgoing/session/artifact/full'])(
+    'loads managed images through the session-scoped desktop bridge: %s',
+    async source => {
+      const api = createApi();
+      api.readManagedImage = vi.fn(async () => 'data:image/jpeg;base64,aW1hZ2U=');
+      server = new BrowserExtensionChatServer(api, token, 'test');
+      await server.start();
+      const socket = await connect(server.getCapability().localAppServerUrl);
+      try {
+        await request(socket, 'init', 'initialize', { clientInfo: { name: 'test', version: '1' } });
+        socket.send(JSON.stringify({ method: 'initialized' }));
+        expect(
+          await request(socket, 'image', 'thread/image', { threadId: 'one', source }),
+        ).toMatchObject({ result: { dataUrl: 'data:image/jpeg;base64,aW1hZ2U=' } });
+        expect(api.readManagedImage).toHaveBeenCalledWith('one', source);
+        expect(api.getMessages).not.toHaveBeenCalled();
+      } finally {
+        socket.close();
+      }
+    },
+  );
+  it('returns image-only items and rejects image reads before initialization or for another thread', async () => {
+    const api = createApi();
+    const rawMessage = {
+      role: 'assistant',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'YWJj' } },
+      ],
+    };
+    vi.mocked(api.getMessages).mockResolvedValue([{ role: 'assistant', text: '', rawMessage }]);
+    server = new BrowserExtensionChatServer(api, token, 'test');
+    await server.start();
+    const capability = server.getCapability();
+    const socket = await connect(capability.localAppServerUrl);
+    try {
+      expect(
+        await request(socket, 'early', 'thread/image', { threadId: 'one', source: 'secret.png' }),
+      ).toHaveProperty('error');
+      await request(socket, 'init', 'initialize', { clientInfo: { name: 'test', version: '1' } });
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      const result = await request(socket, 'read', 'thread/read', {
+        threadId: 'one',
+        includeTurns: true,
+      });
+      expect(result).toMatchObject({
+        result: {
+          thread: { turns: [{ items: [{ type: 'agentMessage', text: '', rawMessage }] }] },
+        },
+      });
+      expect(
+        await request(socket, 'image', 'thread/image', { threadId: 'other', source: 'secret.png' }),
+      ).toHaveProperty('error');
+    } finally {
+      socket.close();
+    }
+  });
+
   it('delivers and projects text before the send acknowledgement or persisted assistant reply', async () => {
     const api = createApi();
     let emit: (event: BrowserExtensionStreamEvent) => void = () => {

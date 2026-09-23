@@ -4,6 +4,10 @@ import type { BrowserExtensionStreamEvent } from '../../shared/browser/browserEx
 import { parseCoworkAttachments } from '../../shared/cowork/attachments';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
 import { isPermissionMode, resolvePermissionMode } from '../../shared/openclaw/approvals';
+import type {
+  OpenClawAssistantMediaRequest,
+  OpenClawAssistantMediaResult,
+} from '../../shared/openclaw/assistantMedia';
 import { normalizeMessageSessionKey } from '../../shared/openclaw/messageDomain';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
@@ -39,6 +43,9 @@ type BrowserExtensionChatControllerDependencies = {
   getRouter: () => CoworkEngineRouter;
   getRuntime: () => OpenClawRuntimeAdapter | null;
   getDefaultModelRef?: () => string | undefined;
+  readAssistantMedia?: (
+    request: OpenClawAssistantMediaRequest,
+  ) => Promise<OpenClawAssistantMediaResult>;
 };
 
 const limit = (value: unknown, maxLength: number): string =>
@@ -66,19 +73,123 @@ const readConfiguredModelOptions = (value: unknown): Array<{ id: string; name: s
   return models;
 };
 
-const extractBrowserExtensionHistoryEntries = (messages: unknown[]): GatewayHistoryEntry[] =>
+type ExtensionHistoryEntry = GatewayHistoryEntry & { rawMessage?: Record<string, unknown> };
+const projectRichHistory = (
+  message: unknown,
+  omitDeliveryMedia = false,
+): ExtensionHistoryEntry[] => {
+  const entries: ExtensionHistoryEntry[] = extractGatewayHistoryEntries([message]);
+  if (!isRecord(message) || !['user', 'assistant'].includes(String(message.role))) return entries;
+  const content = Array.isArray(message.content)
+    ? message.content.filter(
+        block =>
+          isRecord(block) &&
+          [
+            'text',
+            'image',
+            'image_url',
+            'input_image',
+            'attachment',
+            'browser_annotation',
+            'browser_recording',
+          ].includes(String(block.type)),
+      )
+    : message.content;
+  const mediaKeys = [
+    'MediaPaths',
+    'MediaUrls',
+    'MediaTypes',
+    'MediaPath',
+    'MediaUrl',
+    'MediaType',
+  ] as const;
+  const media = Object.fromEntries(
+    mediaKeys.filter(key => message[key] !== undefined).map(key => [key, message[key]]),
+  );
+  if (isRecord(message.__openclaw) && Array.isArray(message.__openclaw.media))
+    media.__openclaw = { media: message.__openclaw.media };
+  const delivery = isRecord(message.openclawDelivery) ? message.openclawDelivery : null;
+  const mediaUrls = Array.isArray(delivery?.mediaUrls)
+    ? [
+        ...new Set(
+          delivery.mediaUrls.flatMap(value =>
+            typeof value === 'string' && value.trim() ? [value.trim()] : [],
+          ),
+        ),
+      ]
+    : [];
+  if (mediaUrls.length) media.openclawDelivery = { mediaUrls };
+  // A thinking/tool-only block must not gain an empty content bubble merely
+  // because the original message carries a delivery at its end.
+  if (
+    omitDeliveryMedia &&
+    Array.isArray(content) &&
+    content.length === 0 &&
+    Object.keys(media).every(key => key === 'openclawDelivery')
+  )
+    return entries;
+  const rich =
+    (Array.isArray(content) && content.some(block => isRecord(block) && block.type !== 'text')) ||
+    Object.keys(media).length > 0;
+  // Text-only messages still use the existing display-filtered text projection.
+  if (!rich) return entries;
+  // Respect role projections such as native scheduled reminders; do not revive
+  // their internal user prompt merely because media metadata is present.
+  if (entries.some(value => value.role === 'system')) return entries;
+  let entry = entries.find(value => value.role === message.role);
+  if (!entry) {
+    entry = { role: message.role as 'user' | 'assistant', text: '' };
+    entries.push(entry);
+  }
+  entry.rawMessage = {
+    role: message.role,
+    content: Array.isArray(content) && content.length === 0 ? entry.text : (content ?? entry.text),
+    ...media,
+    ...(omitDeliveryMedia ? { __browserExtensionOmitDeliveryMedia: true } : {}),
+  };
+  return entries;
+};
+
+const extractBrowserExtensionHistoryEntries = (messages: unknown[]): ExtensionHistoryEntry[] =>
   messages
     .flatMap(message => {
       const role =
         isRecord(message) && typeof message.role === 'string' ? message.role.toLowerCase() : '';
-      if (!isRecord(message) || role !== 'assistant' || !Array.isArray(message.content)) {
-        return extractGatewayHistoryEntries([message]);
+      if (
+        !isRecord(message) ||
+        role !== 'assistant' ||
+        !Array.isArray(message.content) ||
+        message.content.length === 0
+      ) {
+        return projectRichHistory(message);
       }
       // The general chat projector intentionally coalesces assistant text/thinking
       // and appends embedded tools. The extension process timeline instead needs
       // the original content-block order and one countable entry per block.
-      const entries = message.content.flatMap(block =>
-        extractGatewayHistoryEntries([{ ...message, content: [block], text: undefined }]),
+      const delivery = isRecord(message.openclawDelivery) ? message.openclawDelivery : null;
+      const hasDelivery =
+        Array.isArray(delivery?.mediaUrls) &&
+        delivery.mediaUrls.some(value => typeof value === 'string' && value.trim());
+      const entries = message.content.flatMap((block, index) =>
+        projectRichHistory(
+          {
+            ...message,
+            content: [block],
+            text: undefined,
+            ...(index !== 0
+              ? {
+                  __openclaw: undefined,
+                  MediaPaths: undefined,
+                  MediaUrls: undefined,
+                  MediaTypes: undefined,
+                  MediaPath: undefined,
+                  MediaUrl: undefined,
+                  MediaType: undefined,
+                }
+              : {}),
+          },
+          hasDelivery,
+        ),
       );
       if (
         !entries.some(entry => entry.role === 'assistant' && Boolean(entry.text)) &&
@@ -86,7 +197,19 @@ const extractBrowserExtensionHistoryEntries = (messages: unknown[]): GatewayHist
         message.text.trim()
       ) {
         entries.push(
-          ...extractGatewayHistoryEntries([{ ...message, content: message.text, text: undefined }]),
+          ...(hasDelivery
+            ? projectRichHistory(
+                { role: 'assistant', content: message.text, openclawDelivery: delivery },
+                true,
+              )
+            : extractGatewayHistoryEntries([
+                { ...message, content: message.text, text: undefined },
+              ])),
+        );
+      }
+      if (hasDelivery) {
+        entries.push(
+          ...projectRichHistory({ role: 'assistant', content: [], openclawDelivery: delivery }),
         );
       }
       return entries;
@@ -276,6 +399,19 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       });
   }
 
+  async readManagedImage(sessionId: string, source: string): Promise<string> {
+    if (!this.deps.getStore().getSession(sessionId)) throw new Error('Conversation not found.');
+    const runtime = this.deps.getRuntime();
+    if (!runtime || !this.deps.readAssistantMedia)
+      throw new Error('Gateway image reader is unavailable.');
+    await runtime.ensureReady();
+    const sessionKey = runtime.getSessionKeysForSession(sessionId)[0];
+    if (!sessionKey) throw new Error('Conversation scope is unavailable.');
+    const result = await this.deps.readAssistantMedia({ source, sessionKey });
+    if (result.success === false) throw new Error(result.error);
+    return result.dataUrl;
+  }
+
   async getMessages(sessionId: string, options: { forceFullSnapshot?: boolean } = {}) {
     const store = this.deps.getStore();
     const session = store.getSession(sessionId);
@@ -299,6 +435,7 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
       return {
         role: entry.role,
         text: entry.text,
+        ...(entry.rawMessage ? { rawMessage: entry.rawMessage } : {}),
         ...(entry.thinking ? { thinking: entry.thinking } : {}),
         ...(entry.modelName ? { modelName: entry.modelName } : {}),
         ...(toolName ? { toolName } : {}),

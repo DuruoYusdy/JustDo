@@ -143,10 +143,19 @@ export function messagesFromThread(thread) {
           .filter(content => content?.type === 'text' && typeof content.text === 'string')
           .map(content => content.text)
           .join('\n');
-        if (text) entries.push({ role: 'user', text });
+        if (text || item.rawMessage)
+          entries.push({
+            role: 'user',
+            text,
+            ...(item.rawMessage ? { rawMessage: item.rawMessage } : {}),
+          });
       } else if (item.type === 'agentMessage' && typeof item.text === 'string') {
         flushProcesses();
-        entries.push({ role: 'assistant', text: item.text });
+        entries.push({
+          role: 'assistant',
+          text: item.text,
+          ...(item.rawMessage ? { rawMessage: item.rawMessage } : {}),
+        });
       } else if (item.type === 'systemMessage' && typeof item.text === 'string') {
         flushProcesses();
         entries.push({ role: 'system', text: item.text });

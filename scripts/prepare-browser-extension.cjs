@@ -46,9 +46,14 @@ const LOCKED_OPENCLAW_FILES = {
 };
 const CONVERSATION_OVERLAY_FILES = [
   'THIRD_PARTY_NOTICES.append.txt',
+  'appearance.css',
+  'modules/appearance.js',
+  'modules/appearance-settings.js',
   'modules/app-server-background.js',
   'modules/conversation-client.js',
   'modules/sidepanel-markdown.js',
+  'modules/sidepanel-rich-content.js',
+  'modules/sidepanel-rich-content.css',
   'modules/sidepanel-state.js',
   'modules/sidepanel-stream.js',
   'sidepanel.css',
@@ -257,6 +262,14 @@ function applyPairingLayoutOverlay(value) {
     <p id="message" class="status"></p>`,
     '',
     'legacy connection sections',
+  );
+  result = replaceIntegrationAnchor(
+    result,
+    '<script type="module" src="options.js"></script>',
+    '<link rel="stylesheet" href="appearance.css" />\n' +
+      '    <script type="module" src="modules/appearance-settings.js"></script>\n' +
+      '    <script type="module" src="options.js"></script>',
+    'conversation appearance settings',
   );
   return result;
 }

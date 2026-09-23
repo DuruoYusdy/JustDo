@@ -300,3 +300,20 @@ cursor，并以较低频率执行完整快照校准；进入终态后改用完�
 
 通知按连接订阅过滤。`thread/read`、`thread/start` 和 `turn/start` 会订阅；
 `thread/unsubscribe` 会退订。
+
+### `thread/image`（JustDo 扩展）
+
+请求 `{ "threadId": "session-id", "source": "./screenshot.png" }`，返回
+`{ "dataUrl": "data:image/png;base64,..." }`。仅初始化成功的已认证客户端可请求。
+对于 `media://inbound/` 及 `/api/chat/media/outgoing/`，服务端解析 thread 对应的原生 session key，复用桌面 Gateway 媒体接口的格式校验及会话授权，返回图片 data URL。
+对于本地文件，服务端核对当前会话原生历史中的图片引用，按会话 cwd 解析相对路径；拒绝未引用路径、网络文件路径、
+不支持的文件扩展名及超过 20 MiB 的文件。失败通过现有 JSON-RPC error 返回，客户端显示图片加载失败。
+
+`thread/read` / `thread/updated` 中的 `userMessage`、`agentMessage` 可带可选 `rawMessage`：
+只包含展示所需的 role、content 与原生媒体字段，供侧栏与桌面共享的解析器识别附件和浏览器卡片。
+原有 text/content 文本投影保留，纯图片也会产生消息 item。
+
+生成图片的 `openclawDelivery.mediaUrls` 保留用于替换 managed outgoing 地址。拆分的正文项中，
+`rawMessage.__browserExtensionOmitDeliveryMedia` 表示只用 delivery 信息清理重复附件；消息末尾
+另追加一个媒体展示项，避免图片出现在 Thinking 之前或重复展示。此标记只用于临时侧栏展示，不写入原生历史。
+图片读取只匹配用户／助手的展示内容和显式媒体字段，工具参数、工具结果及任意元数据路径不构成授权。

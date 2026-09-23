@@ -1183,6 +1183,45 @@ function reduceChatEvent(state, event, dependencies) {
   return "applied";
 }
 
+// src/shared/browser/browserRecording.ts
+var RecordingAction = {
+  Click: "click",
+  DoubleClick: "doubleClick",
+  Input: "input",
+  Select: "select",
+  Key: "key",
+  Scroll: "scroll",
+  Navigate: "navigate",
+  SwitchTab: "switchTab",
+  OpenTab: "openTab",
+  CloseTab: "closeTab",
+  Gap: "gap",
+  ContextMenu: "contextMenu",
+  Drag: "drag",
+  Hover: "hover",
+  Observe: "observe"
+};
+var RECORDING_LIMITS = {
+  steps: 200,
+  durationMs: 30 * 6e4,
+  screenshots: 12,
+  imageBytes: 10 * 1024 * 1024,
+  textLength: 64e3,
+  imageEdge: 1280
+};
+var guestActions = /* @__PURE__ */ new Set([
+  RecordingAction.Click,
+  RecordingAction.DoubleClick,
+  RecordingAction.Input,
+  RecordingAction.Select,
+  RecordingAction.Key,
+  RecordingAction.Scroll,
+  RecordingAction.ContextMenu,
+  RecordingAction.Drag,
+  RecordingAction.Hover,
+  RecordingAction.Observe
+]);
+
 // src/renderer/libs/openclaw-chat/pipeline/heartbeat-display.ts
 var HEARTBEAT_TOKEN = "HEARTBEAT_OK";
 var DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
@@ -1404,7 +1443,7 @@ var BrowserExtensionStream = class {
     now: () => Date.now(),
     createId: (prefix) => `live-${prefix}-${++this.nextId}`
   };
-  start(message) {
+  start(message, rawMessage) {
     this.finish();
     this.beforeStart = this.history;
     this.anchor = this.history.turns.length;
@@ -1416,7 +1455,13 @@ var BrowserExtensionStream = class {
         ...this.history.turns,
         {
           id: turnId,
-          items: [{ type: "userMessage", content: [{ type: "text", text: message }] }]
+          items: [
+            {
+              type: "userMessage",
+              content: [{ type: "text", text: message }],
+              ...rawMessage ? { rawMessage } : {}
+            }
+          ]
         }
       ]
     };

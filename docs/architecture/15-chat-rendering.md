@@ -380,3 +380,12 @@ sessions_send（以及旧历史 collaboration_send）provenance 的输入放在�
 协作成员的 `sessionId` 是应用会话 ID（也是托管 session key 的末段），不等于 OpenClaw 的原生 transcript ID。Gateway 扩展必须通过 `getSessionEntry(sessionKey, latest)` 取得原生 `sessionId` 后查询 receipt 索引；没有原生会话时返回正文不可用，不得以应用 ID 创建或猜测历史归属。正文仍由 `chat.message.get` 应用可见性规则，并校验 receipt 与发送方 provenance。
 
 查看协作关系或单条投递详情时，Renderer 把房间锚点和 delivery id 交给 Main；Main 只接受该房间拥有的投递，再由 collaboration 扩展使用 OpenClaw transcript 的 idempotency 索引把 receipt 解析为原生 entry id，并调用 `chat.message.get` 校验该 entry 仍位于当前可见分支。返回前再次严格匹配 idempotencyKey、原生 provenance 与源 sessionKey。每个请求最多查询 16 条投递，跨轮次关系和搜索按批次加载，不再读取或逐页扫描完整历史。正文不进入 JustDo 数据库或 Redux；同一面板生命周期内只按 delivery id 保留内存缓存，房间变化即清空。查询失败不会冒充空消息。
+
+
+### 浏览器扩展富内容复用
+
+侧栏的 rich-content 构建入口复用 `normalizeMessage`、`getTranscriptMedia`、操作演示组件及抽出的
+`browser-annotation-message`，构建时提供浏览器中英文适配，避免导入 Electron 配置服务。
+Main app-server 保留原生历史的展示内容与媒体引用，侧栏负责解析和渲染；Main 不维护消息缓存。
+图片通过认证后的 `thread/image` 读取：托管输入和输出图片复用桌面 Gateway 媒体接口及原生会话授权，本地图片按原生历史引用校验读取。侧栏显示与桌面相同的 200px 等比缩略图，
+并用浏览器 dialog 提供双击/键盘预览。桌面继续使用原有图片窗口。

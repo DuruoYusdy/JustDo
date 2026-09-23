@@ -1,0 +1,105 @@
+/* Shared palettes for side-panel chat and the settings preview. */
+:root[data-theme='dark'] {
+  --chat-scheme: dark;
+  --chat-bg: #171717;
+  --chat-text: #f4f4f4;
+  --chat-muted: #aaa;
+  --chat-surface: #242424;
+  --chat-bubble: #2f2f2f;
+  --chat-composer: #292929;
+  --chat-hover: #303030;
+  --chat-border: #444;
+  --chat-link: #8ab4f8;
+  --chat-error: #ffb4a3;
+  --chat-error-bg: #2b1d1a;
+  --chat-error-border: #65352c;
+  --chat-accent: #ff784f;
+  --chat-send-bg: #d7d7d7;
+  --chat-send-text: #252525;
+}
+:root,
+:root[data-theme='light'] {
+  --chat-scheme: light;
+  --chat-bg: #ffffff;
+  --chat-text: #20242b;
+  --chat-muted: #616975;
+  --chat-surface: #f5f6f8;
+  --chat-bubble: #edf0f4;
+  --chat-composer: #f7f8fa;
+  --chat-hover: #e6e9ee;
+  --chat-border: #d1d6df;
+  --chat-link: #245fbb;
+  --chat-error: #a12828;
+  --chat-error-bg: #fff1f0;
+  --chat-error-border: #e2b5b0;
+  --chat-accent: #ae3b17;
+  --chat-send-bg: #252b35;
+  --chat-send-text: #ffffff;
+}
+:root[data-theme='warm'] {
+  --chat-scheme: light;
+  --chat-bg: #f7f2e8;
+  --chat-text: #352f28;
+  --chat-muted: #756957;
+  --chat-surface: #eee6d8;
+  --chat-bubble: #e9dfce;
+  --chat-composer: #f0e8da;
+  --chat-hover: #e1d5c1;
+  --chat-border: #ccbea8;
+  --chat-link: #86591d;
+  --chat-error: #a12828;
+  --chat-error-bg: #fff0e6;
+  --chat-error-border: #ddb2a1;
+  --chat-accent: #9a431d;
+  --chat-send-bg: #514435;
+  --chat-send-text: #fffaf1;
+}
+:root[data-theme='blue'] {
+  --chat-scheme: light;
+  --chat-bg: #edf3f9;
+  --chat-text: #24374b;
+  --chat-muted: #536a82;
+  --chat-surface: #e2ebf5;
+  --chat-bubble: #d8e5f3;
+  --chat-composer: #e5eef7;
+  --chat-hover: #cedded;
+  --chat-border: #b3c7dc;
+  --chat-link: #205ba5;
+  --chat-error: #a12828;
+  --chat-error-bg: #fff1f0;
+  --chat-error-border: #e2b5b0;
+  --chat-accent: #a3461c;
+  --chat-send-bg: #2c4d70;
+  --chat-send-text: #ffffff;
+}
+.appearance-settings {
+  color-scheme: var(--chat-scheme);
+  color: var(--chat-text);
+  background: var(--chat-surface);
+  border-color: var(--chat-border);
+}
+.appearance-settings select {
+  color: var(--chat-text);
+  background: var(--chat-bg);
+  border-color: var(--chat-border);
+}
+.appearance-hint,
+.appearance-settings [role='status'] {
+  color: var(--chat-muted);
+}
+.appearance-preview {
+  padding: 18px;
+  border: 1px solid var(--chat-border);
+  border-radius: 12px;
+  background: var(--chat-bg);
+}
+.appearance-preview p {
+  color: var(--chat-muted);
+}
+.appearance-composer {
+  padding: 12px;
+  border: 1px solid var(--chat-border);
+  border-radius: 14px;
+  background: var(--chat-composer);
+  color: var(--chat-muted);
+}
