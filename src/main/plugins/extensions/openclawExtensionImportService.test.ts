@@ -1,9 +1,11 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import * as tar from 'tar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
+import { t } from '../../core/i18n';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   __openClawExtensionImportTestUtils,
@@ -20,6 +22,28 @@ describe('OpenClawExtensionImportService', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('routes a wrapped foreign archive through conversion before preparing the runtime', async () => {
+    const sourceDir = path.join(fixtureRoot, 'foreign');
+    fs.mkdirSync(path.join(sourceDir, '.codex-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(sourceDir, '.codex-plugin', 'plugin.json'), '{"name":"foreign"}');
+    const archivePath = path.join(fixtureRoot, 'foreign.tgz');
+    await tar.create({ file: archivePath, cwd: fixtureRoot, gzip: true }, ['foreign']);
+    const getOpenClawEngineManager = vi.fn();
+    const service = new OpenClawExtensionImportService({ getOpenClawEngineManager });
+
+    const createTemporaryDirectory = vi.spyOn(fs, 'mkdtempSync');
+    await expect(service.importPath(archivePath)).resolves.toEqual({
+      success: false,
+      error: t('extensionConversionNotImplemented'),
+      failedStage: 'validating',
+    });
+    expect(getOpenClawEngineManager).not.toHaveBeenCalled();
+    expect(fs.existsSync(archivePath)).toBe(true);
+    const temporaryDirectory = createTemporaryDirectory.mock.results[0]?.value as string;
+    expect(temporaryDirectory).toBeTruthy();
+    expect(fs.existsSync(temporaryDirectory)).toBe(false);
   });
 
   it.each([
@@ -880,87 +904,94 @@ describe('OpenClawExtensionImportService', () => {
     expect(runCommand).not.toHaveBeenCalled();
   });
 
-  it('installs a native OpenClaw extension through the bundled CLI and restarts Gateway', async () => {
-    const sourceDir = path.join(fixtureRoot, 'sample-extension');
-    const stateDir = path.join(fixtureRoot, 'state');
-    const configPath = path.join(stateDir, 'openclaw.json');
-    fs.mkdirSync(sourceDir);
-    fs.writeFileSync(
-      path.join(sourceDir, 'openclaw.plugin.json'),
-      JSON.stringify({
-        id: 'sample-extension',
-        configSchema: { type: 'object', additionalProperties: false },
-      }),
-    );
-    fs.mkdirSync(stateDir);
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
+  it.each([false, true])(
+    'installs a native OpenClaw extension and restarts Gateway (archive: %s)',
+    async archive => {
+      const sourceDir = path.join(fixtureRoot, 'sample-extension');
+      const stateDir = path.join(fixtureRoot, 'state');
+      const configPath = path.join(stateDir, 'openclaw.json');
+      fs.mkdirSync(sourceDir);
+      fs.writeFileSync(
+        path.join(sourceDir, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: 'sample-extension',
+          configSchema: { type: 'object', additionalProperties: false },
+        }),
+      );
+      fs.mkdirSync(stateDir);
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          plugins: {
+            entries: {
+              'automation-permission': { enabled: true },
+              workboard: { enabled: true },
+              'untrusted-user-entry': { enabled: true },
+            },
+          },
+        }),
+      );
+      const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
+      const manager = {
+        getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
+        getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
+        buildCliEnvironment: vi.fn().mockResolvedValue({
+          env: {
+            OPENCLAW_STATE_DIR: stateDir,
+            NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
+          },
+          runtimeRoot: path.join(fixtureRoot, 'runtime'),
+          openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
+        }),
+        restartGateway,
+      } as unknown as OpenClawEngineManager;
+      const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        getManagedPluginIds: () => ['automation-permission', 'workboard'],
+        restartGatewayAfterMutation: () => restartGateway(),
+        runCommand,
+      });
+
+      const sourcePath = archive ? path.join(fixtureRoot, 'native.tgz') : sourceDir;
+      if (archive) {
+        await tar.create({ file: sourcePath, cwd: fixtureRoot, gzip: true }, ['sample-extension']);
+      }
+      await expect(service.importPath(sourcePath)).resolves.toEqual({
+        success: true,
+        extensionId: 'sample-extension',
+      });
+      expect(runCommand).toHaveBeenCalledWith(
+        process.execPath,
+        [
+          path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
+          'plugins',
+          'install',
+          sourcePath,
+          '--force',
+        ],
+        expect.objectContaining({
+          cwd: path.join(fixtureRoot, 'runtime'),
+          env: expect.objectContaining({
+            OPENCLAW_HOME: path.join(fixtureRoot, 'openclaw-home'),
+            OPENCLAW_STATE_DIR: path.join(fixtureRoot, 'state'),
+            NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
+          }),
+        }),
+      );
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
         plugins: {
+          allow: ['automation-permission', 'workboard', 'sample-extension'],
           entries: {
             'automation-permission': { enabled: true },
             workboard: { enabled: true },
             'untrusted-user-entry': { enabled: true },
           },
         },
-      }),
-    );
-    const restartGateway = vi.fn().mockResolvedValue({ phase: 'running' });
-    const manager = {
-      getStatus: vi.fn().mockReturnValue({ phase: 'running' }),
-      getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
-      buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: {
-          OPENCLAW_STATE_DIR: stateDir,
-          NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
-        },
-        runtimeRoot: path.join(fixtureRoot, 'runtime'),
-        openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
-      }),
-      restartGateway,
-    } as unknown as OpenClawEngineManager;
-    const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => manager,
-      getManagedPluginIds: () => ['automation-permission', 'workboard'],
-      restartGatewayAfterMutation: () => restartGateway(),
-      runCommand,
-    });
-
-    await expect(service.importPath(sourceDir)).resolves.toEqual({
-      success: true,
-      extensionId: 'sample-extension',
-    });
-    expect(runCommand).toHaveBeenCalledWith(
-      process.execPath,
-      [
-        path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
-        'plugins',
-        'install',
-        sourceDir,
-        '--force',
-      ],
-      expect.objectContaining({
-        cwd: path.join(fixtureRoot, 'runtime'),
-        env: expect.objectContaining({
-          OPENCLAW_HOME: path.join(fixtureRoot, 'openclaw-home'),
-          OPENCLAW_STATE_DIR: path.join(fixtureRoot, 'state'),
-          NPM_CONFIG_USERCONFIG: path.join(fixtureRoot, 'dependency-config', '.npmrc'),
-        }),
-      }),
-    );
-    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toMatchObject({
-      plugins: {
-        allow: ['automation-permission', 'workboard', 'sample-extension'],
-        entries: {
-          'automation-permission': { enabled: true },
-          workboard: { enabled: true },
-          'untrusted-user-entry': { enabled: true },
-        },
-      },
-    });
-    expect(restartGateway).toHaveBeenCalledOnce();
-  });
+      });
+      expect(restartGateway).toHaveBeenCalledOnce();
+    },
+  );
 
   it('finishes after a successful installer message even if the CLI keeps handles open', async () => {
     const result = await __openClawExtensionImportTestUtils.runCommand(
@@ -1365,37 +1396,48 @@ describe('OpenClawExtensionImportService', () => {
     expect(runCommand).not.toHaveBeenCalled();
   });
 
-  it('passes a Claude-compatible bundle to the OpenClaw installer', async () => {
-    const sourceDir = path.join(fixtureRoot, 'claude-extension');
-    fs.mkdirSync(path.join(sourceDir, '.claude-plugin'), { recursive: true });
-    fs.writeFileSync(
-      path.join(sourceDir, '.claude-plugin', 'plugin.json'),
-      JSON.stringify({ id: 'claude-extension', name: 'Claude Extension' }),
-    );
+  it.each([false, true])(
+    'stops a foreign bundle before installation (marketplace: %s)',
+    async trustMarketplaceSource => {
+      const sourceDir = path.join(fixtureRoot, 'claude-extension');
+      fs.mkdirSync(path.join(sourceDir, '.claude-plugin'), { recursive: true });
+      fs.writeFileSync(
+        path.join(sourceDir, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ id: 'claude-extension', name: 'Claude Extension' }),
+      );
 
-    const stateDir = path.join(fixtureRoot, 'state');
-    const manager = {
-      getStatus: vi.fn().mockReturnValue({ phase: 'ready' }),
-      getStateDir: vi.fn().mockReturnValue(stateDir),
-      getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
-      getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
-      buildCliEnvironment: vi.fn().mockResolvedValue({
-        env: { OPENCLAW_STATE_DIR: stateDir },
-        runtimeRoot: path.join(fixtureRoot, 'runtime'),
-        openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
-      }),
-    } as unknown as OpenClawEngineManager;
-    const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
-    const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => manager,
-      runCommand,
-    });
+      const stateDir = path.join(fixtureRoot, 'state');
+      const manager = {
+        getStatus: vi.fn().mockReturnValue({ phase: 'ready' }),
+        getStateDir: vi.fn().mockReturnValue(stateDir),
+        getBaseDir: vi.fn().mockReturnValue(path.join(fixtureRoot, 'openclaw-home')),
+        getConfigPath: vi.fn().mockReturnValue(path.join(stateDir, 'openclaw.json')),
+        buildCliEnvironment: vi.fn().mockResolvedValue({
+          env: { OPENCLAW_STATE_DIR: stateDir },
+          runtimeRoot: path.join(fixtureRoot, 'runtime'),
+          openclawEntry: path.join(fixtureRoot, 'runtime', 'openclaw.mjs'),
+        }),
+      } as unknown as OpenClawEngineManager;
+      const runCommand = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+      const service = new OpenClawExtensionImportService({
+        getOpenClawEngineManager: () => manager,
+        runCommand,
+      });
 
-    const result = await service.importPath(sourceDir);
+      const result = await service.importPath(sourceDir, undefined, undefined, {
+        trustMarketplaceSource,
+      });
 
-    expect(result).toEqual({ success: true, extensionId: 'claude-extension' });
-    expect(runCommand).toHaveBeenCalledOnce();
-  }, 30_000);
+      expect(result).toEqual({
+        success: false,
+        error: t('extensionConversionNotImplemented'),
+        failedStage: 'validating',
+      });
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(manager.buildCliEnvironment).not.toHaveBeenCalled();
+    },
+    30_000,
+  );
 
   it('lists installed native extensions and ignores incomplete staging directories', () => {
     const stateDir = path.join(fixtureRoot, 'state');

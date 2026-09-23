@@ -16,6 +16,7 @@ export type LanguageType = 'zh' | 'en';
 
 const translations: Record<LanguageType, Record<string, string>> = {
   zh: {
+    extensionConversionNotImplemented: '该扩展需要转换为 OpenClaw 格式，转换功能暂未实现。',
     agentTeamSkillSyncFailed: '扩展开关已保存，但 Agent Team 技能同步未完成。请重试同一开关操作。',
     builtinModelAuthenticationUnavailable: '内置模型认证已失效，请等待登录凭据刷新。',
     credentialStorageUnavailable: '操作系统安全凭据存储不可用，无法安全保存内置凭据。',
@@ -79,8 +80,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     browserContextSaveImage: '图片另存为…',
   },
   en: {
-    agentTeamSkillSyncFailed: 'The extension setting was saved, but the Agent Team skill could not be synchronized. Retry the same toggle.',
-    builtinModelAuthenticationUnavailable: 'Built-in model authentication is unavailable. Wait for login credentials to refresh.',
+    extensionConversionNotImplemented:
+      'This extension requires conversion to OpenClaw format. Conversion is not implemented yet.',
+    agentTeamSkillSyncFailed:
+      'The extension setting was saved, but the Agent Team skill could not be synchronized. Retry the same toggle.',
+    builtinModelAuthenticationUnavailable:
+      'Built-in model authentication is unavailable. Wait for login credentials to refresh.',
     credentialStorageUnavailable: 'Secure operating-system credential storage is unavailable.',
     credentialDecryptionFailed: 'Failed to unlock the application credential with this operating-system account.',
     builtinCredentialTargetMismatch: 'Built-in model credentials can only be used with the designated model request URL.',

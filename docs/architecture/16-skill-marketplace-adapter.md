@@ -50,7 +50,7 @@ SDK 负责服务器通信和下载。对于 Extension/Skill，`prepareInstall` �
 
 `PluginInstallationService` 只负责按 kind 路由到现有安装器：
 
-- Extension 目录原样交给 OpenClaw plugin/bundle 导入，不在通用市场层枚举或限制内部内容；
+- Extension 目录交给共用导入接口中的格式判断与转换入口，不在通用市场层枚举或限制内部内容；
 - Skill 目录交给用户 Skill 文件服务；
 - MCP 配置交给 MCP 配置服务。
 
@@ -121,7 +121,7 @@ UI 不会猜测版本或显示虚假的更新提示。
 安装路径、阶段、capability review 及 SDK 错误不会穿过 preload。安装提交成功后的清单刷新是
 独立阶段：刷新失败只提示状态暂未刷新，不能把已经完成的安装重新标记为失败。
 
-Marketplace 不要求额外的“详情身份 token”或内容白名单。内网 Provider 是受信任安装来源，SDK 下载的 Extension 目录直接进入 OpenClaw 安装器；格式和运行时合法性由 OpenClaw 判断。用户从磁盘手动导入代码 Extension 时仍遵循 OpenClaw 自身的 capability consent，这不是公司 Marketplace SDK 协议。
+Marketplace 不要求额外的“详情身份 token”或内容白名单。内网 Provider 是受信任安装来源，SDK 下载的 Extension 目录与本地导入共用格式判断与转换入口；原生包原样交给 OpenClaw 校验和安装，非原生包进入尚未实现的转换分支，当前提示并停止安装。用户从磁盘手动导入代码 Extension 时仍遵循 OpenClaw 自身的 capability consent，这不是公司 Marketplace SDK 协议。
 
 ## 5. 默认与内网组合
 
@@ -215,9 +215,11 @@ contract，并把结果展示为“热门推荐”：
 
 ## 7. 格式兼容边界
 
-企业 Marketplace 当前只声明 Skill、MCP 和 Extension 三种安装 kind。Extension 包内部可以
-保留 Claude Code、Codex、Cursor 等格式的 command、agent、LSP 或其他能力，并原样交给
-OpenClaw 当前 bundle/plugin 安装链。JustDo 通用层不因厂商格式拒绝整个包，也不把尚未验证
+企业 Marketplace 当前只声明 Skill、MCP 和 Extension 三种安装 kind。OpenClaw 当前支持
+Claude Code、Codex、Cursor 等 bundle/plugin 格式；应用在共用导入接口中先调用
+`extensionConversion.prepareExtensionForInstall`，存在 `openclaw.plugin.json` 时按原生格式
+原样放行，包括交由 OpenClaw 报告的无效原生 manifest。其他格式进入转换分支；转换尚未实现，
+当前提示并停止安装，不准备运行时或执行安装器。通用市场层不枚举包内能力，也不把尚未验证
 的能力描述成已兼容。后续将单独设计来源厂商与兼容程度标记（例如原生、兼容、部分兼容）
 以及未映射能力提示；在获得权威转换报告前，Renderer 不扫描目录自行推断。
 

@@ -2,8 +2,8 @@
 
 > 状态：主体已实施。统一页面、简化分组、action capability、空查询推荐、最小 Provider
 > 降级和安装串行化已经落地；完整 shadowed Skill 视图仍等待 additive Gateway contract。
-> Claude Code、Codex、Cursor 等异构插件包继续允许交给 OpenClaw 安装，来源与兼容程度标记
-> 留作后续独立设计，不在当前通用市场层一刀切拒绝。
+> 本地导入和市场下载的 Extension 已共用格式判断与转换入口；原生包直接进入 OpenClaw，
+> 异构包的转换尚未实现，当前提示后停止安装。来源与兼容程度标记留作后续独立设计。
 >
 > 本文以 JustDo 分支 `feat/plugin-hub-ui` 的 `3405e69de` 为产品基线，以相邻
 > `../openclaw` 的 `v2026.9.2`、commit
@@ -29,7 +29,7 @@
 6. 推荐只使用市场可提供的公开目录信号。第一阶段展示“热门推荐”或“精选”，不宣称
    “猜你喜欢”，不读取对话、任务内容或用户行为画像。
 7. 企业市场仍只支持 Skill、MCP、Extension 三种安装 kind，Hook 不进入市场。Claude Code、
-   Codex、Cursor 等异构 Extension 包继续允许安装；来源和兼容程度标记留作后续设计。
+   Codex、Cursor 等异构 Extension 包进入共用转换分支，转换实现前停止安装；来源和兼容程度标记留作后续设计。
 8. 页面改造不能绕过现有安装器、目录锁协调器、事务删除和安装后权威重查。
 
 ## 2. 问题与设计目标
@@ -417,10 +417,10 @@ SDK 对象、认证、内网 URL、临时目录实现和原始响应不能穿过
 
 - Skill 进入现有 Skill 导入事务；
 - MCP 映射为 JustDo/OpenClaw 支持的 server config；
-- Extension 交给当前 OpenClaw 安装/转换链路，必要时生成
-  `openclaw.plugin.json`、`index.ts` 等适配文件；
-- Claude Code、Codex、Cursor 等异构包继续原样进入 OpenClaw 当前支持的 bundle/plugin
-  安装链，不因为包含 command、agent、LSP 等目录而由 JustDo 通用层拒绝；
+- Extension 经共用 `extensionConversion.prepareExtensionForInstall` 入口判断格式；存在
+  `openclaw.plugin.json` 时原样放行，最终 manifest 与能力校验由 OpenClaw 负责；
+- OpenClaw 当前支持 Claude Code、Codex、Cursor 等 bundle/plugin 格式，但应用将非原生包
+  统一送入转换分支；转换暂未实现，当前提示并停止安装，不生成适配文件或执行安装器；
 - 后续单独设计来源厂商与兼容程度标记，区分原生、兼容和部分兼容，并在有权威转换报告时
   展示未映射能力；在该 contract 落地前不猜测、不承诺具体兼容范围；
 - Hook 不属于当前企业 Marketplace kind。
@@ -516,7 +516,7 @@ workspace > managed > bundled、逻辑禁用不切换赢家、赢家目录消失
 
 1. 保持空查询推荐约定和 Provider 顺序。
 2. 验证无 icon、无 detail、无推荐三种最小 SDK 降级路径。
-3. 保持异构插件包可安装；将来源和兼容程度标记作为后续独立方案，不阻塞当前 Provider。
+3. Extension 安装共用格式判断与转换入口，原生包直通，异构包在转换实现前停止安装；来源和兼容程度标记留作后续独立方案。
 4. 安装完成后按 runtime identity 合并本地与目录卡片。
 
 完成条件：只实现 search/download 的 Provider 可以不修改 Renderer 完整接入。

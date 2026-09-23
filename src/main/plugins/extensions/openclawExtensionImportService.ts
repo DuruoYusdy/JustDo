@@ -25,6 +25,7 @@ import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
 import { t } from '../../core/i18n';
 import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { prepareExtensionForInstall } from './extensionConversion';
 import type { ExtensionNetworkPolicyInspection } from './extensionNetworkPolicyManifest';
 
 const OPENCLAW_PLUGIN_MANIFEST = 'openclaw.plugin.json';
@@ -1569,7 +1570,6 @@ export class OpenClawExtensionImportService {
       if (stats.isDirectory()) {
         reportProgress('validating', 25);
         pluginDirectory = normalizedSourcePath;
-        extensionId = validateNativePluginDirectory(pluginDirectory);
       } else if (stats.isFile() && isSupportedArchive(normalizedSourcePath)) {
         reportProgress('extracting', 15);
         temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-extension-import-'));
@@ -1587,7 +1587,6 @@ export class OpenClawExtensionImportService {
         assertNoSymbolicLinks(temporaryDirectory);
         reportProgress('validating', 25);
         pluginDirectory = resolveExtractedPluginDirectory(temporaryDirectory);
-        extensionId = validateNativePluginDirectory(pluginDirectory);
       } else {
         return {
           success: false,
@@ -1597,6 +1596,12 @@ export class OpenClawExtensionImportService {
         };
       }
 
+      const prepared = await prepareExtensionForInstall({
+        sourcePath: normalizedSourcePath,
+        pluginDirectory,
+      });
+      pluginDirectory = prepared.pluginDirectory;
+      extensionId = validateNativePluginDirectory(pluginDirectory);
       this.deps.outboundHeaderPolicy?.inspectExtension(pluginDirectory);
 
       reportProgress('preparing_runtime', 35);
@@ -1622,7 +1627,7 @@ export class OpenClawExtensionImportService {
         const inspected = await this.inspectCapabilityReview({
           cli,
           pluginDirectory,
-          sourcePath: normalizedSourcePath,
+          sourcePath: prepared.sourcePath,
           extensionId,
         });
         extensionId = inspected.extensionId;
@@ -1639,7 +1644,7 @@ export class OpenClawExtensionImportService {
         cli.openclawEntry,
         'plugins',
         'install',
-        normalizedSourcePath,
+        prepared.sourcePath,
         '--force',
         ...(this.deps.requestGateway || options?.trustMarketplaceSource
           ? ['--accept-capabilities']

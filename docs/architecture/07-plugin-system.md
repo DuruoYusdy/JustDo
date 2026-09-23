@@ -177,7 +177,7 @@ Extension 列表、启停和卸载以 Gateway `plugins.list`、`plugins.setEnabl
 OpenClaw CLI 都通过 `OPENCLAW_BUNDLED_PLUGINS_DIR` 固定到该目录，不能指向源码布局的
 `<runtime>/extensions` 并依赖 OpenClaw 的回退扫描。
 
-本地导入是 Gateway 当前未提供 path/archive mutation 的唯一例外，因此通过受管 OpenClaw CLI 执行 `plugins install`。安装前由锁定版本运行时的 `capability-artifact` 与 `capability-summary` 模块扫描暂存内容，Renderer 展示完整 declared surface、operator grants、source/integrity 与 trust；只有用户提交本次 surface 的 `reviewToken` 且复查结果仍一致，CLI 才使用 `--accept-capabilities` 提交安装。OpenClaw `v2026.9.2` 同时支持原生 code plugin、Codex/Claude/Cursor bundle、Agent Plugins manifest 及允许的 manifestless bundle；JustDo 只负责来源选择、审查界面、进度、进程协调与错误脱敏，最终 schema、capability 和 installed-index 事务完全由 OpenClaw 安装器负责。
+本地导入是 Gateway 当前未提供 path/archive mutation 的唯一例外，因此通过受管 OpenClaw CLI 执行 `plugins install`。安装前由锁定版本运行时的 `capability-artifact` 与 `capability-summary` 模块扫描暂存内容，Renderer 展示完整 declared surface、operator grants、source/integrity 与 trust；只有用户提交本次 surface 的 `reviewToken` 且复查结果仍一致，CLI 才使用 `--accept-capabilities` 提交安装。OpenClaw `v2026.9.2` 同时支持原生 code plugin、Codex/Claude/Cursor bundle、Agent Plugins manifest 及允许的 manifestless bundle；JustDo 在共用 importPath 中先调用 extensionConversion.prepareExtensionForInstall：目录导入和市场下载目录直接进入模块，压缩包先安全解包并定位根目录。存在 openclaw.plugin.json 时按原生格式原样放行（包括交由安装器报告的无效原生 manifest）；其他格式统一进入待实现的转换分支，当前返回双语提示并停止安装，不准备运行时、不执行 CLI。未来转换输出的目录用于审查，输出 sourcePath 用于 CLI 安装。最终 schema、capability 和 installed-index 事务仍由 OpenClaw 安装器负责。
 
 安全与事务约束：
 
@@ -256,7 +256,7 @@ Provider contract：source metadata、search、detail、prepareInstall。Service
 - provider 异常转换为稳定、脱敏的 `MarketplaceError`；
 - response 只投影公开字段，丢弃 token/internal URL 等多余属性。
 
-安装流程：公司 SDK 把 Extension/Skill 下载到本地目录，provider `prepareInstall` 返回匹配 kind 的 `sourcePath` 和可选 cleanup；MCP 返回结构化配置。`PluginInstallationService` 再调用对应 OpenClaw/本地配置导入接口。通用层不限制 Extension 目录内容，也不兼容旧 Extension/Hook 市场数据；格式由当前 OpenClaw 安装器判断。无论安装成功或失败都尝试 cleanup 临时目录。
+安装流程：公司 SDK 把 Extension/Skill 下载到本地目录，provider `prepareInstall` 返回匹配 kind 的 `sourcePath` 和可选 cleanup；MCP 返回结构化配置。`PluginInstallationService` 再调用对应 OpenClaw/本地配置导入接口。通用层不限制 Extension 目录内容，也不兼容旧 Extension/Hook 市场数据；Extension 统一经过 extensionConversion 格式判断与转换入口，原生格式的最终校验由 OpenClaw 安装器完成。无论安装成功或失败都尝试 cleanup 临时目录。
 
 Marketplace 返回的 `installState` 只描述目录侧状态，不能覆盖 OpenClaw/JustDo 的实际安装 inventory。安装完成后 UI 先等待目标 kind 重新列举；只有 `runtimeId`（缺失时用目录 id）出现在实际 inventory 中才显示为已安装，刷新失败不能保留乐观的“已安装”状态。
 
