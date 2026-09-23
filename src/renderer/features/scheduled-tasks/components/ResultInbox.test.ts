@@ -1,7 +1,17 @@
-import type { ScheduledTaskResult } from '@shared/scheduledTask/types';
-import { describe, expect, test } from 'vitest';
+// @vitest-environment jsdom
+import { configureStore } from '@reduxjs/toolkit';
+import type { ScheduledTask, ScheduledTaskResult } from '@shared/scheduledTask/types';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createElement } from 'react';
+import { Provider } from 'react-redux';
+import { afterEach, describe, expect, test } from 'vitest';
 
-import { isResultTaskDeleted } from './ResultInbox';
+import { i18nService } from '@/services/i18n';
+
+import scheduledTaskReducer from '../scheduledTaskSlice';
+import ResultInbox, { isResultTaskDeleted } from './ResultInbox';
+
+afterEach(cleanup);
 
 const result = {
   taskId: 'heartbeat-main',
@@ -9,6 +19,79 @@ const result = {
 } satisfies Pick<ScheduledTaskResult, 'taskId' | 'systemManaged'>;
 
 describe('ResultInbox task presentation', () => {
+  test('uses the assistant display name in results, task filters, and deletion confirmation', () => {
+    i18nService.setLanguage('zh', { persist: false });
+    const task: ScheduledTask = {
+      id: 'skill-review-research',
+      name: 'Skill collection review (research)',
+      description: '',
+      agentId: 'research',
+      management: 'managed',
+      enabled: true,
+      payload: { kind: 'skillCollectionReview' },
+      schedule: { kind: 'every', everyMs: 604_800_000 },
+      sessionTarget: 'main',
+      sessionKey: null,
+      wakeMode: 'next-heartbeat',
+      delivery: { mode: 'none' },
+      state: {
+        nextRunAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runningAtMs: null,
+        consecutiveErrors: 0,
+      },
+      createdAt: '2026-09-23T00:00:00Z',
+      updatedAt: '2026-09-23T00:00:00Z',
+    };
+    const run: ScheduledTaskResult = {
+      id: 'review-run',
+      taskId: task.id,
+      taskName: task.name,
+      systemManaged: true,
+      sessionId: null,
+      sessionKey: null,
+      status: 'success',
+      summary: 'Reviewed skills',
+      startedAt: task.createdAt,
+      finishedAt: task.createdAt,
+      durationMs: 10,
+      error: null,
+      deliveryStatus: null,
+      deliveryError: null,
+      observedAt: task.createdAt,
+      readAt: null,
+    };
+    const initial = scheduledTaskReducer(undefined, { type: '@@init' });
+    const store = configureStore({
+      reducer: {
+        scheduledTask: () => ({
+          ...initial,
+          tasks: [task],
+          results: [run],
+          resultFilter: { ...initial.resultFilter, includeSystem: true },
+        }),
+        agent: () => ({ agents: [{ id: 'research', name: '研究助手' }] }),
+      },
+    });
+    render(createElement(Provider, { store, children: createElement(ResultInbox) }));
+
+    const title = '技能库自动整理 @研究助手';
+    expect(screen.getByRole('option', { name: title })).toBeTruthy();
+    expect(screen.getAllByText(title)).toHaveLength(2);
+    fireEvent.click(
+      screen.getByRole('button', { name: i18nService.t('scheduledTasksResultsDelete') }),
+    );
+    expect(
+      screen.getByText(
+        i18nService.t('scheduledTasksResultsDeleteConfirm').replace('{name}', title),
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(task.name)).toBeNull();
+  });
+
   test('does not label hidden system task results as deleted', () => {
     expect(isResultTaskDeleted(result, [])).toBe(false);
   });

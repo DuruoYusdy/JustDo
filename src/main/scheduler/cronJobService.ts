@@ -15,6 +15,10 @@ import {
   SessionTarget,
   TaskStatus,
 } from '../../shared/scheduledTask/constants';
+import {
+  applyScheduledTaskPermission,
+  ScheduledTaskPermission,
+} from '../../shared/scheduledTask/permissions';
 import type {
   EditableScheduledTaskPayload,
   Schedule,
@@ -848,7 +852,14 @@ export class CronJobService {
       schedule: toGatewaySchedule(input.schedule),
       sessionTarget: input.sessionTarget,
       wakeMode: input.wakeMode,
-      payload: toGatewayPayload(input.payload),
+      payload: toGatewayPayload(
+        input.payload.kind === PayloadKind.AgentTurn || input.permissionMode !== undefined
+          ? applyScheduledTaskPermission(
+              input.payload,
+              input.permissionMode ?? ScheduledTaskPermission.ReadOnly,
+            )
+          : input.payload,
+      ),
       delivery: gatewayDelivery,
       ...(input.payload.kind === PayloadKind.AgentTurn ? { agentId: ScheduledTaskAgentId } : {}),
       ...(input.sessionKey?.trim() ? { sessionKey: input.sessionKey.trim() } : {}),
@@ -874,7 +885,20 @@ export class CronJobService {
       this.assertJobIsEditable(current);
 
       const patch: Record<string, unknown> = {};
-      const nextPayload = input.payload ? toGatewayPayload(input.payload) : current.payload;
+      const permissionPayload = input.payload ?? mapGatewayPayload(current.payload);
+      const nextPayload =
+        input.permissionMode !== undefined
+          ? (() => {
+              if (permissionPayload.kind !== PayloadKind.AgentTurn) {
+                throw new Error('Permission presets require an agent-turn task payload');
+              }
+              return toGatewayPayload(
+                applyScheduledTaskPermission(permissionPayload, input.permissionMode),
+              );
+            })()
+          : input.payload
+            ? toGatewayPayload(input.payload)
+            : current.payload;
       const payloadKindChanged = nextPayload.kind !== current.payload.kind;
 
       if (input.name !== undefined) {
@@ -894,7 +918,9 @@ export class CronJobService {
           nextPayload.kind === PayloadKind.AgentTurn ? SessionTarget.Isolated : SessionTarget.Main;
       }
       if (input.wakeMode !== undefined) patch.wakeMode = input.wakeMode;
-      if (input.payload !== undefined) patch.payload = nextPayload;
+      if (input.payload !== undefined || input.permissionMode !== undefined) {
+        patch.payload = nextPayload;
+      }
       if (input.delivery !== undefined) {
         patch.delivery = toGatewayDelivery(input.delivery);
       }

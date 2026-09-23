@@ -504,3 +504,7 @@ FFmpeg 由扩展的锁定依赖 `@ffmpeg-installer/ffmpeg` 提供，随目标平
 The microphone and local file import use the main-process ASR module. Chat read-aloud and voice preview share the speech-synthesis preload bridge: local mode executes Sherpa directly in `localTtsService`, while online mode requests Gateway `tts.speak`. Local synthesis uses the existing model/voice/rate settings, bounded execution, and disposable WAV output. Neither local UI path depends on the STT/TTS extension being enabled or Gateway connectivity.
 
 Config sync preserves explicit disabled states for both `stt-local-cli` and `tts-local-cli`. These extension switches control OpenClaw capabilities; application voice input/output switches independently control the UI features.
+
+### 记忆维护任务与运行时白名单
+
+`memory-core` 必须同时进入 Gateway 和 Agent 执行阶段的插件集合。配置同步将已安装的内置 `memory-core` 作为默认启用项加入受信任白名单，但保留显式 `enabled: false`、deny 和 memory slot 选择。仅在 Gateway 启动时加载插件不足以保证记忆整理执行：OpenClaw 的 prepared runtime 会排除未列入显式 allowlist 的 memory slot 插件，使 `before_agent_reply` 无法接管内部 dreaming 标记。同步的完整配置与无模型最小配置都必须包含该默认项。

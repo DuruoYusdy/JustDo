@@ -2031,9 +2031,27 @@ const isBundledPluginAvailable = (pluginId: string): boolean => {
   return hasBundledOpenClawExtension(pluginId);
 };
 
+export const buildDefaultOpenClawPluginEntries = (
+  isAvailable: (id: string) => boolean = isBundledPluginAvailable,
+): Record<string, unknown> =>
+  Object.fromEntries(
+    ([
+      [OpenClawExtensionId.WORKBOARD, true],
+      [OpenClawExtensionId.AGENT_TEAM, false],
+      // The prepared agent runtime rejects a selected memory plugin omitted from
+      // an explicit allowlist, even if Gateway startup already loaded its service.
+      [OpenClawExtensionId.MEMORY_CORE, true],
+    ] as const)
+      .filter(([id]) => isAvailable(id))
+      .map(([id, enabled]) => [id, { enabled }]),
+  );
+
 const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
-  pluginId === OpenClawExtensionId.WORKBOARD || pluginId === OpenClawExtensionId.AGENT_TEAM ||
-  pluginId === OpenClawExtensionId.STT_LOCAL_CLI || pluginId === LOCAL_TTS_PROVIDER_ID;
+  pluginId === OpenClawExtensionId.MEMORY_CORE ||
+  pluginId === OpenClawExtensionId.WORKBOARD ||
+  pluginId === OpenClawExtensionId.AGENT_TEAM ||
+  pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
+  pluginId === LOCAL_TTS_PROVIDER_ID;
 
 export const listManagedOpenClawPluginIds = (): string[] => [
   ...new Set([
@@ -2358,12 +2376,7 @@ export class OpenClawConfigSync {
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
     };
-    const defaultPluginEntries = {
-      ...(isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
-        ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } } : {}),
-      ...(isBundledPluginAvailable(OpenClawExtensionId.AGENT_TEAM)
-        ? { [OpenClawExtensionId.AGENT_TEAM]: { enabled: false } } : {}),
-    };
+    const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
     const mcpServers = buildOpenClawMcpServers(
       mcpServerRecords,
       agentRuntimeSettings.mcp.requestTimeoutSeconds,
@@ -2792,12 +2805,7 @@ export class OpenClawConfigSync {
         : {}),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
-    const defaultPluginEntries = {
-      ...(isBundledPluginAvailable(OpenClawExtensionId.WORKBOARD)
-        ? { [OpenClawExtensionId.WORKBOARD]: { enabled: true } } : {}),
-      ...(isBundledPluginAvailable(OpenClawExtensionId.AGENT_TEAM)
-        ? { [OpenClawExtensionId.AGENT_TEAM]: { enabled: false } } : {}),
-    };
+    const defaultPluginEntries = buildDefaultOpenClawPluginEntries();
     const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
       this.engineManager.getStateDir(),
     );

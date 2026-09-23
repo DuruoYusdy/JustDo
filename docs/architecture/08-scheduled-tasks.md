@@ -32,6 +32,7 @@
 - `systemEvent`: text；通常目标 main session。
 - `command`、`script`: v2026.9.2 原生无人值守 payload；JustDo 只读展示，并在手动运行前以精确 argv/脚本文本二次确认。确认请求携带所展示配置的 revision，由 Main 在运行前重新读取并拒绝已变化的任务；这是运行前复核，不是 Gateway 原子 CAS。
 - `heartbeat`、`skillCollectionReview`: Gateway 收敛的系统 payload；在 JustDo 中标记为 OpenClaw 管理。JustDo 对主 Agent 显式配置 `heartbeat.every: 0m`，关闭不适用于本产品的周期性外部通知检查；OpenClaw 保留的 disabled heartbeat 行不进入 Renderer 任务列表。对话创建任务直接使用原生 automations/`cron.add`，普通 `agentTurn` 任务由 cron timer 独立调度，不依赖周期 Heartbeat。
+- 技能库自动整理按工作区创建系统任务。补丁 029 不再自动创建缺失的非主助手技能整理任务（包括重启和配置同步）；已有任务沿用持久化的启用状态，主助手保持原生行为，全局 `skills.workshop.autonomous.mode` 非 `auto` 时仍统一停用。该策略在 Gateway 原生收敛路径生效，覆盖设置页和模型驱动的助手创建，不修改任务历史或隐藏暂停任务。原生 `skillCollectionReview` 是系统所有的 payload，普通创建表单和原生 cron 客户端不能手动创建；将来提供手动添加入口需要由受信任的系统管理路径显式创建。
 
 ### 2.3 Delivery 与目标
 
@@ -39,7 +40,15 @@ Delivery 包含 mode、channel、to、accountId、bestEffort。创建表单使�
 
 Job 映射额外给 Renderer 一个 management 分类：`editable` 是表单可无损 round-trip 的普通任务，`advanced` 可启停/试运行/删除但不进入旧表单，`managed` 是 declaration key 或系统 payload 收敛的任务，只读展示并保留运行历史。owner/account tool policy、pacing、trigger、failure alert、非默认 delete-after-run 和高级 delivery 字段都会把任务归为 advanced，防止基础编辑器覆盖隐藏权限或执行语义。
 
-### 2.4 状态
+### 2.4 执行权限
+
+Agent-turn 任务的创建与编辑表单提供“只读”和“完全权限”。新建 agent-turn 任务默认只读；Main 将选择转换为 Gateway 原生 `payload.toolsAllow`，随任务定义持久化并应用到定时与手动运行。只读仅允许 `read`、`web_search`、`web_fetch`、`memory_search`、`memory_get`，不开放 exec、写文件、浏览器自动化、子助手或任意 MCP 工具；配置的结果投递独立于工具权限。完全权限使用 `['*']`，但不能绕过原有 Agent、宿主或沙盒权限。不会把需要审批的外部任务改绑到 scheduler。
+
+`systemEvent` 任务由主会话 heartbeat 执行，原生运行路径不应用任务的 `toolsAllow`，因此表单仅说明其继承主会话权限，不展示权限选择。Main 拒绝对此类型显式设置权限预设；默认只读仅应用于新建 agent-turn 任务。
+
+已有任务不自动修改权限；自定义工具限制显示“保留现有自定义权限”。仅修改名称、提示词或时间时保留原工具限制。权限字段属于 IPC/表单输入，不增加 SQLite 副本或 Gateway 自定义字段。系统管理任务仍只读展示，不开放基础任务编辑器。
+
+### 2.5 状态
 
 产品状态：success/error/skipped/running；Gateway wire 的 `ok` 映射为 success。TaskState 包含 next/last/running timestamp、last error/duration 和 consecutive errors。Run 另外保存 session id/key、summary、delivery status/error。
 

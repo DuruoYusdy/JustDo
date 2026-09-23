@@ -23,6 +23,7 @@ import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
   buildBuiltinMemorySearchConfig,
+  buildDefaultOpenClawPluginEntries,
   buildManagedAcpxPluginEntry,
   buildManagedExternalAgentEntries,
   buildManagedOnlineAsrPluginEntries,
@@ -974,6 +975,27 @@ describe('OpenClaw managed session retention', () => {
 });
 
 describe('OpenClaw plugin config merging', () => {
+  test.each([undefined, false])(
+    'allows memory runtime hooks while preserving explicit disable (%s)',
+    enabled => {
+      const defaults = buildDefaultOpenClawPluginEntries(
+        id => id === OpenClawExtensionId.MEMORY_CORE,
+      );
+      const existing = {
+        allow: ['runtime-services'],
+        ...(enabled === false ? { entries: { 'memory-core': { enabled: false } } } : {}),
+      };
+      const merged = mergeOpenClawPluginConfig(
+        applyDefaultOpenClawPluginEntries(existing, defaults),
+        {},
+        Object.keys(defaults),
+      );
+      expect(merged.allow).toEqual(['runtime-services', 'memory-core']);
+      expect(merged.entries).toEqual({ 'memory-core': { enabled: enabled ?? true } });
+      expect(buildDefaultOpenClawPluginEntries(() => false)).toEqual({});
+    },
+  );
+
   test('applies a default plugin state without overwriting an explicit user choice', () => {
     const defaults = { [OpenClawExtensionId.WORKBOARD]: { enabled: true } };
 

@@ -161,7 +161,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
     expect(runtimePatchSetIsCurrent).toBe(true);
   });
 
-  test('contains exactly the twenty-three retained capability patches', () => {
+  test('contains exactly the twenty-five retained capability patches', () => {
     expect(patchFiles).toEqual([
       '001-managed-pip-config-environment.cjs',
       '002-windows-mcp-package-runner.cjs',
@@ -187,6 +187,7 @@ describe('OpenClaw v2026.9.2 capability patches', () => {
       '026-private-untrusted-context.cjs',
       '027-shared-session-access-registry.cjs',
       '028-admin-session-cwd.cjs',
+      '029-peer-skill-review-opt-in.cjs',
     ]);
   });
 

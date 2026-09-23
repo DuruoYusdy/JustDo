@@ -26,6 +26,8 @@ import {
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
+import { getTaskDisplayName } from './utils';
+
 function formatDuration(durationMs: number | null): string {
   if (durationMs === null) return '—';
   if (durationMs < 1000) return `${durationMs} ms`;
@@ -120,6 +122,7 @@ const ResultInbox: React.FC = () => {
     loading: tasksLoading,
     error,
   } = useSelector((state: RootState) => state.scheduledTask);
+  const agents = useSelector((state: RootState) => state.agent.agents);
   const [viewingResult, setViewingResult] = useState<ScheduledTaskResult | null>(null);
   const [resultToDelete, setResultToDelete] = useState<ScheduledTaskResult | null>(null);
   const [selectingResults, setSelectingResults] = useState(false);
@@ -138,7 +141,8 @@ const ResultInbox: React.FC = () => {
     selectableResultIds.length > 0 &&
     selectableResultIds.every(resultId => selectedResultIds.has(resultId));
   const getResultTitle = (result: ScheduledTaskResult): string => {
-    const currentTaskName = tasks.find(task => task.id === result.taskId)?.name.trim();
+    const currentTask = tasks.find(task => task.id === result.taskId);
+    const currentTaskName = currentTask && getTaskDisplayName(currentTask, agents).trim();
     if (currentTaskName) return currentTaskName;
     const storedTaskName = result.taskName.trim();
     if (storedTaskName && storedTaskName !== result.taskId) return storedTaskName;
@@ -427,7 +431,7 @@ const ResultInbox: React.FC = () => {
             .filter(task => resultFilter.includeSystem || task.management !== 'managed')
             .map(task => (
               <option key={task.id} value={task.id}>
-                {task.name}
+                {getTaskDisplayName(task, agents)}
               </option>
             ))}
         </select>
@@ -759,7 +763,10 @@ const ResultInbox: React.FC = () => {
               {t('scheduledTasksResultsDeleteTitle')}
             </h3>
             <p id="scheduled-result-delete-description" className="mb-6 text-sm text-secondary">
-              {t('scheduledTasksResultsDeleteConfirm').replace('{name}', resultToDelete.taskName)}
+              {t('scheduledTasksResultsDeleteConfirm').replace(
+                '{name}',
+                getResultTitle(resultToDelete),
+              )}
             </p>
             <div className="flex justify-end gap-3">
               <button

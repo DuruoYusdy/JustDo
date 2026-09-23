@@ -7,6 +7,7 @@ import {
   ScheduledTaskAgentId,
   TaskStatus,
 } from '../../shared/scheduledTask/constants';
+import { SCHEDULED_TASK_READ_ONLY_TOOLS } from '../../shared/scheduledTask/permissions';
 import {
   CronJobService,
   mapGatewayJob,
@@ -331,10 +332,84 @@ describe('isolated scheduler agent assignment', () => {
       'cron.add',
       expect.objectContaining({
         agentId: ScheduledTaskAgentId,
+        payload: expect.objectContaining({ toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS] }),
         delivery: { mode: DeliveryMode.None },
       }),
     );
     expect(task.agentId).toBe(ScheduledTaskAgentId);
+  });
+
+  test('keeps system-event creation and ordinary edits on inherited main-session permissions', async () => {
+    const systemInput = {
+      ...input,
+      sessionTarget: 'main' as const,
+      payload: { kind: 'systemEvent' as const, text: 'Wake up' },
+    };
+    const systemJob = { ...gatewayJob, ...systemInput };
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'cron.get' || method === 'cron.add') return systemJob;
+      if (method === 'cron.update') return { ...systemJob, ...(params as { patch: object }).patch };
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+
+    await service.addJob(systemInput);
+    expect(request).toHaveBeenCalledWith(
+      'cron.add',
+      expect.objectContaining({ payload: systemInput.payload }),
+    );
+    await service.updateJob(systemJob.id, { name: 'Updated reminder' });
+    expect(request).toHaveBeenCalledWith(
+      'cron.update',
+      expect.objectContaining({ patch: { name: 'Updated reminder' } }),
+    );
+
+    for (const permissionMode of ['read-only', 'full', 'custom'] as const) {
+      request.mockClear();
+      await expect(service.addJob({ ...systemInput, permissionMode })).rejects.toThrow(
+        'Permission presets require an agent-turn task payload',
+      );
+      expect(request).not.toHaveBeenCalled();
+      await expect(service.updateJob(systemJob.id, { permissionMode })).rejects.toThrow(
+        'Permission presets require an agent-turn task payload',
+      );
+      expect(request.mock.calls.map(([method]) => method)).toEqual(['cron.get']);
+    }
+  });
+
+  test('persists a permission-only edit in the native job payload', async () => {
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'cron.get') return gatewayJob;
+      if (method === 'cron.update') {
+        return { ...gatewayJob, ...(params as { patch: object }).patch };
+      }
+      throw new Error(`Unexpected method: ${method}`);
+    });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+    const updated = await service.updateJob(gatewayJob.id, { permissionMode: 'read-only' });
+    expect(updated.payload).toMatchObject({ toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS] });
+    expect(request).toHaveBeenCalledWith(
+      'cron.update',
+      expect.objectContaining({
+        patch: {
+          payload: { ...gatewayJob.payload, toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS] },
+        },
+      }),
+    );
+    request.mockClear();
+    await service.updateJob(gatewayJob.id, { permissionMode: 'full' });
+    expect(request).toHaveBeenCalledWith(
+      'cron.update',
+      expect.objectContaining({
+        patch: { payload: { ...gatewayJob.payload, toolsAllow: ['*'] } },
+      }),
+    );
   });
 
   test('keeps externally owned agent-turn tasks unchanged while listing', async () => {

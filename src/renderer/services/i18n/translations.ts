@@ -2600,6 +2600,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksManagedBackgroundDelivery: '不发送通知',
     scheduledTasksMemoryDreamingManagedHint:
       '此任务由记忆功能自动管理，用于维护长期记忆，不会发送通知。',
+    scheduledTasksMainAssistant: '主助手',
+    scheduledTasksNameWithAgent: '{name} @{agentName}',
     scheduledTasksSkillReviewName: '技能库自动整理',
     scheduledTasksSkillReviewDescription:
       '每周检查自动学习生成的技能，合并重复内容并清理低质量条目。',
@@ -2620,6 +2622,17 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksLoadRunsFailed: '加载运行记录失败',
     scheduledTasksRetry: '重试',
     cronRunConfirmHiddenContext: '此命令还包含未展示的环境变量或标准输入，请仅在信任其来源时运行。',
+    cronDialogPermissionTitle: '执行权限',
+    cronDialogPermissionInheritedHint:
+      '此任务通过主会话唤醒助手，继承主会话的执行权限，不支持单独设置任务权限。',
+    cronDialogPermissionReadOnly: '只读（默认）',
+    cronDialogPermissionFull: '完全权限',
+    cronDialogPermissionCustom: '保留现有自定义权限',
+    cronDialogPermissionReadOnlyHint:
+      '仅允许读取文件、搜索网页和检索记忆；禁止执行命令、修改文件及调用其他工具。结果仍按下方投递设置发送。',
+    cronDialogPermissionFullHint:
+      '允许使用执行命令、修改文件等工具，仍受运行环境和助手权限限制。无人值守运行无法等待人工审批。',
+    cronDialogPermissionCustomHint: '保留此任务已有的工具限制，不因编辑名称或时间而改变权限。',
     cronDialogCreateTitle: '创建任务',
     cronDialogEditTitle: '编辑任务',
     cronDialogTaskName: '任务名称',
@@ -2641,8 +2654,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDialogMinuteLabel: '每小时的第几分钟',
     cronDialogCronPlaceholder: 'Cron 表达式 (例如：0 9 * * *)',
     cronDialogEnableImmediately: '立即启用',
-    cronDialogEnableImmediatelyDesc:
-      '创建后开始调度；每次任务使用独立的无人值守权限在隔离会话中运行，不会弹出审批',
+    cronDialogEnableImmediatelyDesc: '创建后开始按计划运行',
     cronDialogSaveChanges: '保存更改',
     cronDialogDeliveryTitle: '投递设置',
     cronDialogDeliveryDescription: '选择仅在应用内保留结果，或推送到外部通道。',
@@ -5441,6 +5453,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksManagedBackgroundDelivery: 'No notifications',
     scheduledTasksMemoryDreamingManagedHint:
       'The memory feature manages this task automatically to maintain long-term memory. It does not send notifications.',
+    scheduledTasksMainAssistant: 'Main assistant',
+    scheduledTasksNameWithAgent: '{name} @{agentName}',
     scheduledTasksSkillReviewName: 'Automatic skill library cleanup',
     scheduledTasksSkillReviewDescription:
       'Reviews automatically learned skills weekly, merging overlaps and removing low-quality entries.',
@@ -5463,6 +5477,18 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksRetry: 'Retry',
     cronRunConfirmHiddenContext:
       'This command also has hidden environment variables or standard input. Run it only if you trust its source.',
+    cronDialogPermissionTitle: 'Execution permissions',
+    cronDialogPermissionInheritedHint:
+      'This task wakes the assistant in the main session and inherits its execution permissions. Separate task permissions are not supported.',
+    cronDialogPermissionReadOnly: 'Read only (default)',
+    cronDialogPermissionFull: 'Full access',
+    cronDialogPermissionCustom: 'Keep existing custom permissions',
+    cronDialogPermissionReadOnlyHint:
+      'Only file reads, web search and fetch, and memory retrieval are allowed. Commands, file changes, and other tools are blocked. Results still follow the delivery settings below.',
+    cronDialogPermissionFullHint:
+      'Allows tools for commands and file changes, subject to runtime and assistant permissions. Unattended runs cannot wait for human approval.',
+    cronDialogPermissionCustomHint:
+      'Preserves the existing tool restrictions when editing the task name or schedule.',
     cronDialogCreateTitle: 'Create Task',
     cronDialogEditTitle: 'Edit Task',
     cronDialogTaskName: 'Task Name',
@@ -5485,8 +5511,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDialogMinuteLabel: 'Minute of each hour',
     cronDialogCronPlaceholder: 'Cron expression (e.g., 0 9 * * *)',
     cronDialogEnableImmediately: 'Enable immediately',
-    cronDialogEnableImmediatelyDesc:
-      'Start scheduling after creation; each run uses separate unattended permissions in an isolated session without approval prompts',
+    cronDialogEnableImmediatelyDesc: 'Start running on schedule after creation',
     cronDialogSaveChanges: 'Save Changes',
     cronDialogDeliveryTitle: 'Delivery',
     cronDialogDeliveryDescription:

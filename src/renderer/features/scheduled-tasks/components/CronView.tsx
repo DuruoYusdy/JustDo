@@ -23,6 +23,10 @@ import {
   XCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import {
+  getScheduledTaskPermission,
+  ScheduledTaskPermission,
+} from '@shared/scheduledTask/permissions';
 import type {
   EditableSchedule,
   Schedule,
@@ -440,7 +444,8 @@ function CronJobCard({
   };
 
   const promptText = getTaskPromptText(job);
-  const displayName = getTaskDisplayName(job);
+  const agents = useSelector((s: RootState) => s.agent.agents);
+  const displayName = getTaskDisplayName(job, agents);
   const isEnabled = job.enabled;
   const isManaged = job.management === 'managed';
   const isEditable = job.management === 'editable';
@@ -663,7 +668,8 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
   const t = i18nService.t.bind(i18nService);
   const systemPresentation = getKnownSystemTaskPresentation(job);
   const isKnownSystemTask = systemPresentation !== null;
-  const displayName = getTaskDisplayName(job);
+  const agents = useSelector((s: RootState) => s.agent.agents);
+  const displayName = getTaskDisplayName(job, agents);
   const payloadKind = isKnownSystemTask
     ? t('scheduledTasksManagedBackgroundType')
     : job.payload.kind === 'agentTurn'
@@ -938,7 +944,7 @@ interface DialogProps {
   onSave: (input: ScheduledTaskInput) => Promise<void>;
 }
 
-function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
+export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
   const t = i18nService.t.bind(i18nService);
   const isEdit = !!job;
 
@@ -948,6 +954,11 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
     parseScheduleToForm(job?.schedule),
   );
   const [enabled, setEnabled] = useState(job ? job.enabled : true);
+  const [permissionMode, setPermissionMode] = useState<ScheduledTaskPermission>(
+    job?.payload.kind === 'agentTurn'
+      ? getScheduledTaskPermission(job.payload)
+      : ScheduledTaskPermission.ReadOnly,
+  );
   const [deliveryChannel, setDeliveryChannel] = useState(job?.delivery.channel ?? '');
   const [deliveryMode, setDeliveryMode] = useState<'none' | 'announce' | 'webhook'>(
     job?.delivery.mode === 'announce'
@@ -971,6 +982,11 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
       setMessage(editablePayloadText(job));
       setScheduleForm(parseScheduleToForm(job?.schedule));
       setEnabled(job ? job.enabled : true);
+      setPermissionMode(
+        job?.payload.kind === 'agentTurn'
+          ? getScheduledTaskPermission(job.payload)
+          : ScheduledTaskPermission.ReadOnly,
+      );
       setDeliveryChannel(job?.delivery.channel ?? '');
       setDeliveryMode(
         job?.delivery.mode === 'announce'
@@ -1060,6 +1076,11 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
           : builtSchedule;
       const execution = buildScheduledTaskExecutionInput(job, message.trim());
       const input: ScheduledTaskInput = {
+        ...(!job ||
+        (job.payload.kind === 'agentTurn' &&
+          permissionMode !== getScheduledTaskPermission(job.payload))
+          ? { permissionMode }
+          : {}),
         name: name.trim(),
         description: job?.description ?? '',
         enabled,
@@ -1369,6 +1390,49 @@ function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
             {errors.schedule && <p className="text-xs text-red-500 mt-1">{errors.schedule}</p>}
           </section>
 
+          <section className="rounded-2xl border border-border-subtle bg-background p-5">
+            <label htmlFor="scheduled-task-permission" className={labelClass}>
+              {t('cronDialogPermissionTitle')}
+            </label>
+            {job?.payload.kind === 'systemEvent' ? (
+              <p className="text-xs text-secondary">{t('cronDialogPermissionInheritedHint')}</p>
+            ) : (
+              <>
+                <select
+                  id="scheduled-task-permission"
+                  className={inputClass}
+                  value={permissionMode}
+                  onChange={event =>
+                    setPermissionMode(event.target.value as ScheduledTaskPermission)
+                  }
+                >
+                  <option value={ScheduledTaskPermission.ReadOnly}>
+                    {t('cronDialogPermissionReadOnly')}
+                  </option>
+                  <option value={ScheduledTaskPermission.Full}>
+                    {t('cronDialogPermissionFull')}
+                  </option>
+                  {job &&
+                    job.payload.kind === 'agentTurn' &&
+                    getScheduledTaskPermission(job.payload) === ScheduledTaskPermission.Custom && (
+                      <option value={ScheduledTaskPermission.Custom}>
+                        {t('cronDialogPermissionCustom')}
+                      </option>
+                    )}
+                </select>
+                <p className="mt-2 text-xs text-secondary">
+                  {t(
+                    permissionMode === ScheduledTaskPermission.ReadOnly
+                      ? 'cronDialogPermissionReadOnlyHint'
+                      : permissionMode === ScheduledTaskPermission.Full
+                        ? 'cronDialogPermissionFullHint'
+                        : 'cronDialogPermissionCustomHint',
+                  )}
+                </p>
+              </>
+            )}
+          </section>
+
           {/* Delivery */}
           <section className="rounded-2xl border border-border-subtle bg-background p-5">
             <h3 className="mb-4 text-sm font-semibold text-foreground">
@@ -1536,6 +1600,7 @@ export const CronView: React.FC<CronViewProps> = ({
   const isMac = window.electron.platform === 'darwin';
 
   const tasks = useSelector((s: RootState) => s.scheduledTask.tasks);
+  const agents = useSelector((s: RootState) => s.agent.agents);
   const loading = useSelector((s: RootState) => s.scheduledTask.loading);
   const error = useSelector((s: RootState) => s.scheduledTask.error);
   const unreadResultCount = useSelector((s: RootState) => s.scheduledTask.unreadResultCount);
@@ -1719,7 +1784,7 @@ export const CronView: React.FC<CronViewProps> = ({
     return tasks.filter(task => {
       const matchesQuery =
         normalizedQuery.length === 0 ||
-        getTaskDisplayName(task).toLocaleLowerCase().includes(normalizedQuery) ||
+        getTaskDisplayName(task, agents).toLocaleLowerCase().includes(normalizedQuery) ||
         task.name.toLocaleLowerCase().includes(normalizedQuery) ||
         getTaskPromptText(task).toLocaleLowerCase().includes(normalizedQuery);
       const matchesStatus =
@@ -1729,7 +1794,7 @@ export const CronView: React.FC<CronViewProps> = ({
         (taskStatusFilter === 'failed' && task.state.lastStatus === 'error');
       return matchesQuery && matchesStatus;
     });
-  }, [taskQuery, taskStatusFilter, tasks]);
+  }, [taskQuery, taskStatusFilter, tasks, agents]);
   const { userTasks, systemTasks } = useMemo(
     () => groupScheduledTasks(visibleTasks),
     [visibleTasks],
@@ -2169,7 +2234,7 @@ export const CronView: React.FC<CronViewProps> = ({
                 id="scheduled-task-history-title"
                 className="text-lg font-semibold text-foreground"
               >
-                {historyJob ? getTaskDisplayName(historyJob) : ''} - {t('cronCardHistory')}
+                {historyJob ? getTaskDisplayName(historyJob, agents) : ''} - {t('cronCardHistory')}
               </h2>
               <button
                 type="button"
@@ -2185,7 +2250,7 @@ export const CronView: React.FC<CronViewProps> = ({
             <div className="flex-1 overflow-y-auto px-5 py-4">
               <TaskRunHistory
                 taskId={historyTaskId}
-                taskName={historyJob ? getTaskDisplayName(historyJob) : undefined}
+                taskName={historyJob ? getTaskDisplayName(historyJob, agents) : undefined}
                 runs={historyRuns}
                 loading={historyLoading}
                 loadError={historyLoadError}

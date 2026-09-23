@@ -193,6 +193,7 @@ export interface ScheduledTaskResultPage {
 }
 
 export interface ScheduledTaskInput {
+  permissionMode?: import('./permissions').ScheduledTaskPermission;
   name: string;
   description: string;
   enabled: boolean;

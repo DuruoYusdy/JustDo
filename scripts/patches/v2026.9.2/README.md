@@ -4,7 +4,7 @@ This directory is the authoritative inventory for the JustDo runtime built from 
 pristine `openclaw@2026.9.2` npm artifact. The runtime is never upgraded in place. Historical
 or partially applied JustDo markers are rejected; rebuild from `source-lock.json` instead.
 
-The previous 49-patch integration has been reduced to twenty-four product-specific gaps. Live Thinking emission,
+The previous 49-patch integration has been reduced to twenty-five product-specific gaps. Live Thinking emission,
 history projection, native tool search, most Goal behavior, subagent admission/queueing/join,
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
@@ -87,6 +87,7 @@ existing non-admin containment check and runtime sandbox policy remain unchanged
 | `026-private-untrusted-context.cjs`                  | Adds bounded, authenticated local per-turn context to the agent body without storing it as the visible user message.                                                       | Upstream exposes a trusted-client per-turn context field with separate transcript and model projections.                                 |
 | `027-shared-session-access-registry.cjs`             | Shares the native scoped-session access registry between the Gateway bundle and dynamically loaded SDK modules; preserves exact grant checks.                              | Upstream packaging gives both module instances the same scoped-access registry.                                                          |
 | `028-admin-session-cwd.cjs`                          | Honors the documented `operator.admin` explicit cwd contract for sandboxed sessions while preserving separate agent bootstrap workspaces.                                  | Upstream admits an admin-authorized task directory after global workspace authorization.                                                 |
+| `029-peer-skill-review-opt-in.cjs` | Skips creation of missing peer skill collection review jobs while retaining existing peer enablement and the native main/global gate. | Upstream provides opt-in creation of peer collection-review monitors. |
 
 Each patch must fail on ambiguous anchors, verify both source and bundled output where relevant,
 and be idempotent only for its exact v2026.9.2 marker shape. `verify-openclaw-pristine-contracts`
