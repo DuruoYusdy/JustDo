@@ -156,6 +156,9 @@ const SideChatPanel = ({
             mode="side-chat"
           />
         </div>
+        <p className="mt-1.5 px-1 text-center text-[11px] font-light leading-4 text-muted">
+          {i18nService.t('aiGeneratedDisclaimer')}
+        </p>
       </div>
     </section>
   );

@@ -3432,7 +3432,9 @@ export class JustDoChatElement extends LitElement {
                 : nothing
             }
             ${
-              ctrl && this.chatScrollController.state.mode === 'paused'
+              ctrl &&
+              this.chatScrollController.state.mode === 'paused' &&
+              this.chatScrollController.canScrollDown
                 ? html`
                     <button
                       type="button"

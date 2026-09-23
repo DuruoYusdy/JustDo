@@ -42,6 +42,59 @@ describe('ChatScrollController', () => {
     expect(controller.state.mode).toBe('paused');
   });
 
+  test.each([200, 300, 301])('hides the jump button when content fits (%s px)', height => {
+    const target = host();
+    target.scrollTop = 0;
+    target.scrollHeight = height;
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+
+    controller.preserveAnchorForInteraction({
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: 0 }),
+    } as HTMLElement);
+    controller.afterRender(1);
+
+    expect(controller.state.mode).toBe('paused');
+    expect(controller.canScrollDown).toBe(false);
+  });
+
+  test('updates jump availability when paused content or the viewport resizes', () => {
+    let resize = () => {};
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const target = host();
+    const onStateChange = vi.fn();
+    const controller = new ChatScrollController(onStateChange);
+    controller.connect(target as unknown as HTMLElement);
+    target.scrollTop = 500;
+    target.emitScroll();
+    expect(controller.canScrollDown).toBe(true);
+
+    target.scrollHeight = 800;
+    onStateChange.mockClear();
+    resize();
+    expect(controller.canScrollDown).toBe(false);
+    expect(onStateChange).toHaveBeenCalled();
+
+    target.scrollHeight = 1000;
+    resize();
+    expect(controller.canScrollDown).toBe(true);
+
+    target.clientHeight = 500;
+    resize();
+    expect(controller.canScrollDown).toBe(false);
+  });
+
   test('jump to latest restores follow mode', () => {
     const target = host();
     const controller = new ChatScrollController(vi.fn());

@@ -5,6 +5,7 @@ export class ChatScrollController {
   private static readonly HISTORY_SHIFT_THRESHOLD_VIEWPORTS = 2;
   private host: HTMLElement | null = null;
   private mode: ChatScrollMode = 'follow';
+  private hasContentBelow = false;
   private programmatic = false;
   private lastScrollTop = 0;
   private previousScrollTop = 0;
@@ -29,6 +30,19 @@ export class ChatScrollController {
 
   get state(): { mode: ChatScrollMode; unseenRevisions: number } {
     return { mode: this.mode, unseenRevisions: this.unseenRevisions };
+  }
+
+  get canScrollDown(): boolean {
+    return this.hasContentBelow;
+  }
+
+  private updateScrollAvailability(): void {
+    const host = this.host;
+    // Scroll offsets may be fractional while layout dimensions are rounded.
+    const next = !!host && host.scrollHeight - host.scrollTop - host.clientHeight > 1;
+    if (next === this.hasContentBelow) return;
+    this.hasContentBelow = next;
+    this.onStateChange();
   }
 
   connect(host: HTMLElement): void {
@@ -92,6 +106,7 @@ export class ChatScrollController {
     }
     this.pausedAnchors = navigating ? [] : this.captureVisibleAnchorsNow(host);
     this.observeContent();
+    this.updateScrollAvailability();
   }
 
   jumpToLatest(): void {
@@ -159,6 +174,7 @@ export class ChatScrollController {
     this.observedContent = null;
     this.cancelScheduledAnchorCapture();
     this.host = null;
+    this.hasContentBelow = false;
     this.clearPendingHistoryShifts();
     this.interactionAnchor = null;
     this.navigationTargetTop = null;
@@ -204,6 +220,7 @@ export class ChatScrollController {
   private readonly handleScroll = (): void => {
     const host = this.host;
     if (!host || this.programmatic) return;
+    this.updateScrollAvailability();
     if (this.navigationTargetTop !== null) {
       if (!this.isNavigationAtTarget(host)) {
         this.lastScrollTop = host.scrollTop;
@@ -257,6 +274,7 @@ export class ChatScrollController {
   private handleResize(): void {
     const host = this.host;
     if (!host) return;
+    this.updateScrollAvailability();
     if (this.navigationTargetTop !== null) return;
     if (this.mode === 'follow') {
       this.scrollToBottom();
@@ -268,6 +286,7 @@ export class ChatScrollController {
       if (Math.abs(delta) > 0.5) this.setScrollTop(Math.max(0, host.scrollTop + delta));
     }
     this.pausedAnchors = this.captureVisibleAnchorsNow(host);
+    this.updateScrollAvailability();
   }
 
   private finishNavigation(): void {
@@ -302,6 +321,7 @@ export class ChatScrollController {
     this.programmatic = true;
     host.scrollTop = value;
     this.lastScrollTop = host.scrollTop;
+    this.updateScrollAvailability();
     queueMicrotask(() => {
       this.programmatic = false;
     });
