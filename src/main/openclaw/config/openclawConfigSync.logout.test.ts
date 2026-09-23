@@ -869,27 +869,67 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('enables exactly one browser tool provider in embedded mode', () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-embedded-browser-'));
+  test.each(
+    (['full', 'minimal'] as const).flatMap(configMode =>
+      [BrowserMode.Isolated, BrowserMode.User, BrowserMode.Extension].map(nativeMode => ({
+        configMode,
+        nativeMode,
+      })),
+    ),
+  )('hot switches $nativeMode and embedded in $configMode config', ({ configMode, nativeMode }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-browser-switch-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
+    const appConfig = configMode === 'full' ? {
+      model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+      providers: {
+        'custom-provider': {
+          enabled: true,
+          apiKey: 'test-secret',
+          baseUrl: 'https://custom.example.test/v1',
+          apiFormat: 'openai',
+          models: [{ id: 'custom-model' }],
+        },
+      },
+    } : {};
+    setStoreGetter(() => ({ get: () => appConfig }) as never);
+    let browserMode: BrowserModeValue = nativeMode;
+    const sync = new OpenClawConfigSync({
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => directory,
+        getDesiredVersion: () => '2026.9.2',
+      },
+      getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+      getAgents: () => [],
+      getBrowserMode: () => browserMode,
+    } as never);
+    const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-    expect(
-      writeMinimalConfig(configPath, 'browser-mode-change', 'ask', BrowserMode.Embedded),
-    ).toMatchObject({ ok: true, requiresGatewayRestart: true });
+    expect(sync.sync('startup').ok).toBe(true);
+    const nativeConfig = readConfig();
+    expect(Boolean(nativeConfig.models.providers?.['custom-provider'])).toBe(configMode === 'full');
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.browser.enabled).toBe(false);
+    browserMode = BrowserMode.Embedded;
+    expect(sync.sync('browser-mode-change')).toMatchObject({
+      ok: true, configChanged: true, requiresGatewayRestart: false,
+    });
+    const config = readConfig();
+    expect(config.browser.enabled).toBe(true);
     expect(config.plugins.entries.browser).toEqual({ enabled: false });
     expect(config.plugins.entries['embedded-browser']).toEqual({ enabled: true });
 
-    expect(
-      writeMinimalConfig(configPath, 'browser-mode-change', 'ask', BrowserMode.User),
-    ).toMatchObject({ ok: true, requiresGatewayRestart: true });
-    const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(userConfig.browser.enabled).toBe(true);
-    expect(userConfig.plugins.entries.browser).toEqual({ enabled: true });
-    expect(userConfig.plugins.entries['embedded-browser']).toEqual({ enabled: false });
+    browserMode = nativeMode;
+    expect(sync.sync('browser-mode-change')).toMatchObject({
+      ok: true, configChanged: true, requiresGatewayRestart: false,
+    });
+    const restoredConfig = readConfig();
+    expect(restoredConfig.browser).toEqual(nativeConfig.browser);
+    expect(restoredConfig.plugins.entries.browser).toEqual({ enabled: true });
+    expect(restoredConfig.plugins.entries['embedded-browser']).toEqual({ enabled: false });
+    expect(sync.sync('browser-mode-change')).toMatchObject({
+      ok: true, configChanged: false, requiresGatewayRestart: false,
+    });
   });
 
   test('a second no-model sync removes the retired skill_workshop deny entry', () => {

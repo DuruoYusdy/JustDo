@@ -591,9 +591,9 @@ describe('OpenClaw managed connectivity config', () => {
     });
   });
 
-  test('disables the native browser runtime for the embedded browser mode', () => {
+  test('keeps the root browser switch stable when the embedded plugin owns the tool', () => {
     expect(buildManagedOpenClawConnectivityConfig(BrowserMode.Embedded).browser).toEqual({
-      enabled: false,
+      enabled: true,
       extensionRelay: {
         allowLegacyAuth: false,
       },

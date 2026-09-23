@@ -277,6 +277,12 @@ const plugin = {
   id: 'embedded-browser',
   name: 'Embedded Browser',
   description: 'Controls the live desktop browser panel.',
+  // The native provider is disabled while this plugin owns the browser tool.
+  // Keep mode-controlled profile edits hot on the return trip to Chrome too;
+  // plugins.entries changes replace the tools, hooks and services together.
+  reload: {
+    hotPrefixes: ['browser.profiles', 'browser.defaultProfile'],
+  },
   register(api: OpenClawPluginApi) {
     // OpenClaw may register the Gateway service and a prepared per-run tool from
     // different plugin registry instances. Keep their request transport shared

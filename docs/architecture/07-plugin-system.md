@@ -22,6 +22,14 @@ capability contract 已落地；shadowed Skill 高级视图仍取决于未来 Ga
 
 ## 1. 能力与所有权
 
+浏览器设置以互斥的 `plugins.entries.browser.enabled` 与
+`plugins.entries.embedded-browser.enabled` 选择唯一的 `browser` 工具提供方。
+切换复用 Gateway 原生插件热重载，由其替换工具注册、Gateway 方法、hook 和 service；
+根 `browser.enabled` 固定为 `true`，避免根开关触发重启。内置插件声明
+`browser.profiles` 与 `browser.defaultProfile` 热更新，以支持切回 Chrome。
+配置服务等待原生重载完成，失败时保留重启兜底；运行中任务仍禁止切换。
+详见[浏览器设置设计](../features/browser-settings-design.md)。
+
 | 类型        | 运行时权威                            | JustDo 持久化/文件职责                            | 用户操作                            |
 | ----------- | ------------------------------------- | ------------------------------------------------- | ----------------------------------- |
 | Skill       | Gateway `skills.status/update`        | bundled manifest；用户 Skill 目录导入/删除        | 查看、启停、导入、删除、安装依赖    |

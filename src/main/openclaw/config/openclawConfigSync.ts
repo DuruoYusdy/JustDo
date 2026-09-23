@@ -1628,7 +1628,9 @@ export const buildManagedOpenClawConnectivityConfig = (
     },
   },
   browser: {
-    enabled: browserMode !== BrowserMode.Embedded,
+    // Provider ownership lives in plugins.entries. Toggling this root switch
+    // would require a Gateway restart under the native browser reload policy.
+    enabled: true,
     // The bundled v2.2.0 extension uses Browser Relay Authentication v2.
     // Fail closed instead of retaining OpenClaw's one-release legacy window.
     extensionRelay: {
@@ -2065,7 +2067,6 @@ const buildVerifiedConfigSyncResult = (
   configPath: string,
   expectedConfig: Record<string, unknown>,
   changed: boolean,
-  requiresGatewayRestart = false,
 ): OpenClawConfigSyncResult => {
   const verification = verifyOpenClawConfigMatches(configPath, expectedConfig);
   if (!verification.ok) {
@@ -2082,29 +2083,10 @@ const buildVerifiedConfigSyncResult = (
     ok: true,
     changed,
     configChanged: changed,
-    requiresGatewayRestart,
+    requiresGatewayRestart: false,
     configPath,
   };
 };
-
-const resolveBrowserToolProvider = (config: unknown): 'native' | 'embedded' | 'invalid' => {
-  if (!isRecord(config)) return 'invalid';
-  const rootEnabled = !isRecord(config.browser) || config.browser.enabled !== false;
-  const entries =
-    isRecord(config.plugins) && isRecord(config.plugins.entries)
-      ? config.plugins.entries
-      : {};
-  const nativeEntry = entries[OpenClawExtensionId.BROWSER];
-  const embeddedEntry = entries[OpenClawExtensionId.EMBEDDED_BROWSER];
-  const nativeEnabled = !isRecord(nativeEntry) || nativeEntry.enabled !== false;
-  const embeddedEnabled = isRecord(embeddedEntry) && embeddedEntry.enabled === true;
-  if (rootEnabled && nativeEnabled && !embeddedEnabled) return 'native';
-  if (!rootEnabled && !nativeEnabled && embeddedEnabled) return 'embedded';
-  return 'invalid';
-};
-
-const browserToolProviderChanged = (previous: unknown, next: unknown): boolean =>
-  resolveBrowserToolProvider(previous) !== resolveBrowserToolProvider(next);
 
 const buildMissingEmbeddedBrowserResult = (configPath: string): OpenClawConfigSyncResult => ({
   ok: false,
@@ -2614,7 +2596,7 @@ export class OpenClawConfigSync {
       changed: configChanged || preparedSecrets.secretsChanged,
       secretsChanged: preparedSecrets.secretsChanged,
       configChanged,
-      requiresGatewayRestart: browserToolProviderChanged(existingConfig, configToPersist),
+      requiresGatewayRestart: false,
       configPath,
     };
   }
@@ -2904,13 +2886,6 @@ export class OpenClawConfigSync {
     } catch {
       currentContent = '';
     }
-    let persistedConfigBeforeSync: Record<string, unknown> | null = null;
-    try {
-      const parsed = currentContent ? JSON.parse(currentContent) : null;
-      persistedConfigBeforeSync = isRecord(parsed) ? parsed : null;
-    } catch {
-      persistedConfigBeforeSync = null;
-    }
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
       changed: boolean,
@@ -2919,7 +2894,6 @@ export class OpenClawConfigSync {
         configPath,
         expectedConfig,
         changed,
-        browserToolProviderChanged(persistedConfigBeforeSync, expectedConfig),
       );
 
     const isAuthLifecycleSync =

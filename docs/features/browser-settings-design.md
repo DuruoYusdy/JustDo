@@ -32,9 +32,11 @@ OpenClaw v2026.9.2 会补齐缺失的 `openclaw`、`user` 和 `chrome` 内置 pr
 } } } }
 ```
 
-内置模式将原生 Browser Plugin 与根 `browser.enabled` 关闭，并只启用 embedded-browser
+内置模式关闭原生 Browser Plugin，并只启用 embedded-browser
 plugin；该 plugin 同样注册名为 `browser` 的 Tool。任何模式下模型都只能看到一个
 `browser`，不依赖模型在两个近义 Tool 之间自行选择。
+根 `browser.enabled` 在四种模式下均保持 `true`，提供方由互斥的插件启停控制，避免触发
+根开关的原生重启规则；原生插件禁用后，其工具、路由与 service 均不注册。
 
 原生 `browser` 与 `embedded-browser` 都属于应用管理插件。插件页只展示其状态，不允许
 用户绕过浏览器模式开关单独启停任一提供方；Main 同样拒绝直接 IPC 修改，不能只依赖 UI
@@ -81,9 +83,12 @@ world 中执行并限制输入与返回大小，不获得 Node/Electron 能力�
 ## 2. 配置应用
 
 OpenClaw Browser plugin 将 `browser.profiles` 与 `browser.defaultProfile` 声明为 hot reload，
-因此前三种原生模式之间可走 Gateway 配置重载。切入或切出 `embedded` 会更换 `browser`
-Tool 提供方与插件 service 生命周期，所以必须硬重启 Gateway；不能把仍持有旧 Tool 注册表
-的进程误报为切换成功。
+因此前三种原生模式之间可走 Gateway 配置重载。切入或切出 `embedded` 通过原生
+`plugins` 热重载替换 Tool、Gateway 方法、hook 与 service，不再主动硬重启 Gateway。
+embedded-browser 同样声明这两个 profile 配置前缀可热更新，确保原生插件未启用时，
+切回 Chrome 的 profile 变化也不会落入未知字段的重启规则。根 `browser.enabled`
+保持稳定；其他 browser 字段仍遵循原生重载策略。Main 等待 Gateway 配置应用完成后
+才报告成功，热重载失败沿用配置服务的重启恢复路径。
 
 JustDo 仍在运行中会话存在时阻止切换。这是产品级一致性策略：避免同一个任务的省略 profile 调用在执行途中改变路由，不表示 OpenClaw 缺少热更新能力。
 

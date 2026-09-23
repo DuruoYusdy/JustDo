@@ -106,6 +106,13 @@ afterEach(() => {
 });
 
 describe('Embedded browser extension', () => {
+  test('keeps Chrome profile selection hot while the native provider is disabled', () => {
+    expect(embeddedBrowserPlugin.reload.hotPrefixes).toEqual([
+      'browser.profiles',
+      'browser.defaultProfile',
+    ]);
+  });
+
   test('declares the desktop event and resolve method contracts', () => {
     expect(EmbeddedBrowserGateway).toEqual({
       REQUESTED_EVENT: 'plugin.embedded-browser.requested',
@@ -363,6 +370,28 @@ describe('Embedded browser extension', () => {
       content: [{ text: expect.stringContaining('Still live') }],
     });
     service.stop();
+  });
+
+  test('restores request transport after disabling and re-enabling the provider', async () => {
+    const previous = registrations();
+    previous.service.stop();
+    const current = registrations();
+    try {
+      const pending = current.factory({ sessionKey: 'justdo:session-1' })!.execute('call-1', {
+        action: 'status',
+      });
+      const request = requestedEnvelope(current.emit);
+      expect(previous.emit).not.toHaveBeenCalled();
+      current.gatewayMethod({
+        params: { requestId: request.requestId, ok: true, result: { title: 'Re-enabled' } },
+        respond: vi.fn(),
+      });
+      await expect(pending).resolves.toMatchObject({
+        content: [{ text: expect.stringContaining('Re-enabled') }],
+      });
+    } finally {
+      current.service.stop();
+    }
   });
 
   test('keeps open distinct from navigate', async () => {
