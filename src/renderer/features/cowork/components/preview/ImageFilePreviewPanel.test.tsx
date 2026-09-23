@@ -21,8 +21,15 @@ it('zooms and resets the image inside the tab, and reports load failures', () =>
   );
   const image = screen.getByRole('img') as HTMLImageElement;
   expect(image.src).toBe('localfile:///tmp/a.png');
+  const scale = () => Number(image.style.transform.match(/scale\(([^)]+)\)/)?.[1]);
+  fireEvent.wheel(image.parentElement!, { deltaY: 300 });
+  expect(scale()).toBeLessThan(1);
+  fireEvent.doubleClick(image);
+  expect(scale()).toBe(1);
   fireEvent.wheel(image.parentElement!, { deltaY: -300 });
-  expect(image.style.transform).not.toContain('scale(1)');
+  expect(scale()).toBeGreaterThan(1);
+  fireEvent.wheel(image.parentElement!, { deltaY: 600 });
+  expect(scale()).toBeLessThan(1);
   fireEvent.doubleClick(image);
   expect(image.style.transform).toContain('scale(1)');
   fireEvent.error(image);

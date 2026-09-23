@@ -1252,10 +1252,20 @@ export class JustDoChatElement extends LitElement {
       }
 
       .chat-bubble__images {
-        display: flex;
-        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(var(--image-columns, 1), minmax(0, 200px));
         justify-content: center;
+        justify-items: center;
+        max-width: 100%;
+        gap: 8px;
+        align-items: flex-start;
         margin: 0;
+      }
+
+      .chat-bubble__images > .chat-bubble__image,
+      .chat-bubble__images > .message-attachment-list-item {
+        min-width: 0;
+        max-width: 100%;
       }
 
       .chat-bubble__images:last-child {
@@ -1268,8 +1278,8 @@ export class JustDoChatElement extends LitElement {
 
       .chat-bubble__image {
         display: block;
-        max-width: min(520px, 100%);
-        max-height: 520px;
+        max-width: min(200px, 100%);
+        max-height: 200px;
         border-radius: 8px;
         cursor: zoom-in;
         object-fit: contain;
@@ -1403,7 +1413,9 @@ export class JustDoChatElement extends LitElement {
       }
 
       .markdown-content img.markdown-inline-image {
-        max-width: 100%;
+        max-width: min(200px, 100%);
+        max-height: 200px;
+        object-fit: contain;
         border-radius: 8px;
         margin: 2px 0;
         cursor: zoom-in;

@@ -661,6 +661,50 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('MEDIA:');
   });
 
+  test.each(['user', 'assistant'])(
+    'groups consecutive %s images in rows of three and splits at text',
+    role => {
+      const image = (name: string) => `MEDIA:https://example.com/${name}.png`;
+      const rendered = stringifyTemplate(
+        renderMessageBlock({
+          kind: 'group',
+          key: 'image-rows',
+          role,
+          messages: [
+            {
+              key: 'images',
+              message: {
+                role,
+                timestamp: 1,
+                content: [
+                  image('a'),
+                  image('b'),
+                  image('c'),
+                  image('d'),
+                  'separator',
+                  image('e'),
+                  image('f'),
+                ].join('\n'),
+              },
+            },
+          ],
+          timestamp: 1,
+          isStreaming: false,
+        }),
+      );
+      expect(rendered.match(/--image-columns: 3/g)).toHaveLength(1);
+      expect(rendered.match(/--image-columns: 1/g)).toHaveLength(1);
+      expect(rendered.match(/--image-columns: 2/g)).toHaveLength(1);
+      expect(rendered.match(/class="chat-bubble__image"/g)).toHaveLength(6);
+      expect(rendered.indexOf('/d.png')).toBeLessThan(
+        rendered.indexOf('separator', rendered.indexOf('/d.png')),
+      );
+      expect(rendered.indexOf('separator', rendered.indexOf('/d.png'))).toBeLessThan(
+        rendered.indexOf('/e.png'),
+      );
+    },
+  );
+
   test('renders assistant MEDIA content at its original position inside the bubble', () => {
     const rendered = stringifyTemplate(
       renderMessageBlock({

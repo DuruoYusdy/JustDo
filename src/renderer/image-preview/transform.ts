@@ -1,4 +1,4 @@
-export const IMAGE_PREVIEW_MIN_SCALE = 1;
+export const IMAGE_PREVIEW_MIN_SCALE = 0.1;
 export const IMAGE_PREVIEW_MAX_SCALE = 8;
 
 export type ImagePreviewTransform = {
@@ -17,7 +17,7 @@ type ImagePreviewZoomOptions = {
 };
 
 export function createImagePreviewTransform(): ImagePreviewTransform {
-  return { scale: IMAGE_PREVIEW_MIN_SCALE, offsetX: 0, offsetY: 0 };
+  return { scale: 1, offsetX: 0, offsetY: 0 };
 }
 
 export function zoomImagePreviewTransform({
@@ -33,7 +33,6 @@ export function zoomImagePreviewTransform({
     Math.max(IMAGE_PREVIEW_MIN_SCALE, transform.scale * Math.exp(-wheelDeltaY * 0.0015)),
   );
 
-  if (nextScale === IMAGE_PREVIEW_MIN_SCALE) return createImagePreviewTransform();
   if (nextScale === transform.scale) return transform;
 
   const scaleRatio = nextScale / transform.scale;

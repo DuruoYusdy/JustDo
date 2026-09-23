@@ -581,19 +581,25 @@ function renderMessageImages(
 ): TemplateResult | typeof nothing {
   if (images.length === 0) return nothing;
   return html`
-    <div class=${`chat-bubble__images${assistant ? ' chat-bubble__images--assistant' : ''}`}>
+    <div
+      class=${`chat-bubble__images${assistant ? ' chat-bubble__images--assistant' : ''}`}
+      style=${`--image-columns: ${images.length}`}
+    >
       ${images.map(image => {
         const sourceUrl = resolveImageSourceUrl(image.url, workingDirectory);
-        return html`
-          <img
-            class="chat-bubble__image"
-            src=${sourceUrl}
-            alt=${image.label}
-            title=${`${image.label} · ${i18nService.t('coworkImageOpenPreviewHint')}`}
-            draggable="false"
-            @contextmenu=${(event: Event) => void showImageContextMenu(event, sourceUrl)}
-          />
-        `;
+        return renderListedAttachment(
+          image,
+          html`
+            <img
+              class="chat-bubble__image"
+              src=${sourceUrl}
+              alt=${image.label}
+              title=${`${image.label} · ${i18nService.t('coworkImageOpenPreviewHint')}`}
+              draggable="false"
+              @contextmenu=${(event: Event) => void showImageContextMenu(event, sourceUrl)}
+            />
+          `,
+        );
       })}
     </div>
   `;
@@ -793,12 +799,29 @@ function renderOrderedBubble(
     .filter(Boolean)
     .join('\n');
   const dir = detectTextDirection(text);
+  const groupedItems: (BubbleContentItem | RenderableAttachment[])[] = [];
+  for (const item of items) {
+    if (item.type === 'text' && !item.text?.trim()) continue;
+    if (item.type === 'attachment' && item.attachment.kind === 'image') {
+      const previous = groupedItems[groupedItems.length - 1];
+      if (Array.isArray(previous) && previous.length < 3) {
+        previous.push(item.attachment);
+      } else {
+        groupedItems.push([item.attachment]);
+      }
+    } else {
+      groupedItems.push(item);
+    }
+  }
 
   return html`
     <div class=${`chat-bubble chat-bubble--${role}`} dir=${dir}>
       ${text ? renderCopyButton(text) : nothing}
       <div class="chat-bubble__content">
-        ${items.map(item => {
+        ${groupedItems.map(item => {
+          if (Array.isArray(item)) {
+            return renderMessageImages(item, role === 'assistant', workingDirectory);
+          }
           if (item.type === 'text') {
             if (!item.text) return nothing;
             return html`
@@ -815,12 +838,6 @@ function renderOrderedBubble(
           }
           if (item.type === 'browser_annotation') {
             return renderBrowserAnnotation(item);
-          }
-          if (item.attachment.kind === 'image') {
-            return renderListedAttachment(
-              item.attachment,
-              renderMessageImages([item.attachment], role === 'assistant', workingDirectory),
-            );
           }
           return renderListedAttachment(
             item.attachment,
