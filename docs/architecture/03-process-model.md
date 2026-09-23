@@ -2,6 +2,8 @@
 
 本文按当前 `src/main/preload.ts`、`src/main/ipc/` 和 shared channel 合约重写。目标是说明跨进程能力面、调用/事件语义、验证责任和新增 IPC 的完整流程。
 
+Renderer 的 HTML 入口位于 `src/renderer/index.html` 和 `src/renderer/image-preview.html`。Vite 以 `src/renderer/` 为前端根目录，环境文件仍从仓库根目录读取；Main 与 preload 的构建根目录仍为仓库根目录。开发地址保持 `/` 和 `/image-preview.html`，生产入口输出到 `dist/index.html` 和 `dist/image-preview.html`。
+
 ## 1. 进程与信任边界
 
 浏览器操作演示通过 `browser:recording:lease` 向 Main 申请 profile 级用户保护。Main 只验证归属及管理互斥；guest 的录制事件直接交给 Renderer，Main 不保存操作内容。暂停/停止通过 guest IPC 确认提交最后输入，停止后释放 lease；窗口销毁、renderer 崩溃或导航也会清理保护。该保护与已有标注锁独立，见[操作演示数据流](../features/browser-operation-recording.md)。

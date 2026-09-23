@@ -12,6 +12,7 @@ import { pdfAssetsPlugin } from './scripts/vite-pdf-assets.mjs';
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
 const isProductionBuild = process.env.NODE_ENV !== 'development';
 const projectRoot = path.resolve(__dirname);
+const rendererRoot = path.join(projectRoot, 'src/renderer');
 const dependencyRoot = fs.realpathSync(path.join(projectRoot, 'node_modules'));
 const escapedProductName = packageJson.productName.replace(
   /[&<>"']/g,
@@ -21,6 +22,8 @@ const escapedProductName = packageJson.productName.replace(
 );
 
 export default defineConfig({
+  root: rendererRoot,
+  envDir: projectRoot,
   plugins: [
     pdfAssetsPlugin(dependencyRoot),
     {
@@ -35,6 +38,7 @@ export default defineConfig({
         // 主进程入口文件
         entry: 'src/main/main.ts',
         vite: {
+          root: projectRoot,
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -81,6 +85,7 @@ export default defineConfig({
         // 预加载脚本入口文件
         entry: 'src/main/preload.ts',
         vite: {
+          root: projectRoot,
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -98,6 +103,7 @@ export default defineConfig({
         // 独立图片查看窗口的最小权限预加载脚本
         entry: 'src/main/imagePreviewPreload.ts',
         vite: {
+          root: projectRoot,
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -115,6 +121,7 @@ export default defineConfig({
         // 外部网页 guest 的固定检查桥；不向页面暴露 Node 或 Electron API。
         entry: 'src/main/browserGuestPreload.ts',
         vite: {
+          root: projectRoot,
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',
@@ -137,15 +144,15 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: path.join(projectRoot, 'dist'),
     emptyOutDir: true,
     sourcemap: !isProductionBuild,
     minify: isProductionBuild ? 'esbuild' : false,
     cssMinify: isProductionBuild ? 'esbuild' : false,
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        imagePreview: path.resolve(__dirname, 'image-preview.html'),
+        main: path.join(rendererRoot, 'index.html'),
+        imagePreview: path.join(rendererRoot, 'image-preview.html'),
       },
       checks: {
         pluginTimings: false,
