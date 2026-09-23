@@ -78,9 +78,10 @@ describe('ResultInbox task presentation', () => {
     });
     render(createElement(Provider, { store, children: createElement(ResultInbox) }));
 
-    const title = '技能库自动整理 @研究助手';
-    expect(screen.getByRole('option', { name: title })).toBeTruthy();
-    expect(screen.getAllByText(title)).toHaveLength(2);
+    const title = '技能库自动整理';
+    expect(screen.getByRole('option', { name: title + ' · @研究助手' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: title })).toBeTruthy();
+    expect(screen.getByText('@研究助手')).toBeTruthy();
     fireEvent.click(
       screen.getByRole('button', { name: i18nService.t('scheduledTasksResultsDelete') }),
     );

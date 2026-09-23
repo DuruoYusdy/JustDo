@@ -35,7 +35,6 @@ import {
   ProviderName,
 } from '../../../shared/providers';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
-import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import { WINDOWS_SANDBOX_BACKEND_ID } from '../../../shared/security/windowsSandbox';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../shared/speech/localTts';
 import {
@@ -163,7 +162,7 @@ const listKnownOpenClawWorkspaceDirs = ({
 
   const addDefaultAgentWorkspace = (agentId: string): void => {
     const normalizedAgentId = normalizeOpenClawAgentId(agentId);
-    if (normalizedAgentId === 'main' || normalizedAgentId === ScheduledTaskAgentId) return;
+    if (normalizedAgentId === 'main') return;
     // Current OpenClaw nests non-default agents under agents.defaults.workspace.
     workspaceDirs.add(path.join(mainWorkspaceDir, normalizedAgentId));
     if (configuredDefaultWorkspace) {
@@ -940,7 +939,7 @@ const buildAuthScopedOpenClawConfig = (
     // OpenClaw v2026.9.2 requires an explicit ambient owner when more than one
     // Agent exists. Keep native maintenance work (for example memory dreaming)
     // bound to the main Agent; JustDo user-created scheduled tasks set their
-    // isolated scheduler Agent explicitly.
+    // selected Agent explicitly.
     defaults.systemAgent = managedDefaults.systemAgent;
   }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'heartbeat')) {
@@ -1082,6 +1081,10 @@ const buildAuthScopedOpenClawConfig = (
 
   const result = sanitizeOpenClawV2026_9_2Config({
     ...canonicalExistingConfig,
+    skills: mergeOpenClawSkillConfig(
+      isRecord(canonicalExistingConfig.skills) ? canonicalExistingConfig.skills : {},
+      {},
+    ),
     secrets: managedSecrets,
     models,
     agents: {
@@ -1284,6 +1287,12 @@ export const mergeOpenClawSkillConfig = (
       };
     }
   }
+  const workshop = isRecord(mergedSkills.workshop) ? mergedSkills.workshop : {};
+  const autonomous = isRecord(workshop.autonomous) ? workshop.autonomous : {};
+  mergedSkills.workshop = {
+    ...workshop,
+    autonomous: { ...autonomous, mode: autonomous.mode ?? 'off' },
+  };
   return mergedSkills;
 };
 
@@ -2456,7 +2465,6 @@ export class OpenClawConfigSync {
           availableModelRefs,
           resolvedWorkspaceDir,
           externalAgentSettings,
-          coworkConfig.executionMode || 'local',
         ),
       },
       acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
@@ -2647,9 +2655,8 @@ export class OpenClawConfigSync {
     availableModelRefs: ReadonlySet<string>,
     mainWorkspaceDir: string,
     externalAgentSettings: ExternalAgentSettings,
-    executionMode: CoworkConfig['executionMode'],
   ): { ownership: 'explicit'; entries: Record<string, Record<string, unknown>> } {
-    const agents = (this.getAgents?.() ?? []).filter(agent => agent.id !== ScheduledTaskAgentId);
+    const agents = this.getAgents?.() ?? [];
     const mainAgent = agents.find(agent => agent.id === 'main');
     const displayNameMap = getProviderDisplayNameMap();
 
@@ -2675,20 +2682,6 @@ export class OpenClawConfigSync {
       ).map(
         ([id, entry]) => ({ id, ...entry }),
       ),
-      {
-        id: ScheduledTaskAgentId,
-        model: {
-          primary: defaultPrimaryModel,
-        },
-        workspace: mainWorkspaceDir,
-        tools: {
-          fs: { workspaceOnly: executionMode === 'sandbox' },
-          exec: {
-            host: resolveOpenClawExecHost(executionMode),
-            mode: PermissionMode.Full,
-          },
-        },
-      },
     ];
 
     const entries = Object.fromEntries(
@@ -2698,7 +2691,7 @@ export class OpenClawConfigSync {
           ...entry,
           id: agentId,
           workspace:
-            agentId === 'main' || agentId === ScheduledTaskAgentId || 'runtime' in entry
+            agentId === 'main' || 'runtime' in entry
               ? mainWorkspaceDir
               : resolveManagedAgentWorkspace(
                   this.engineManager.getStateDir(),
@@ -2810,6 +2803,7 @@ export class OpenClawConfigSync {
       this.engineManager.getStateDir(),
     );
     const minimalConfig: Record<string, unknown> = withMemorySearch({
+      skills: mergeOpenClawSkillConfig({}, {}),
       gateway: {
         mode: 'local',
         controlUi: {
@@ -2845,7 +2839,6 @@ export class OpenClawConfigSync {
               new Set(),
               resolvedWorkspaceDir,
               externalAgentSettings,
-              coworkConfig.executionMode || 'local',
             ).entries,
           ).map(([id, entry]) => {
             const withoutModel = { ...entry };
@@ -3011,6 +3004,10 @@ export class OpenClawConfigSync {
             );
             const mergedConfig = sanitizeOpenClawV2026_9_2Config(withMemorySearch({
               ...canonicalExisting,
+              skills: mergeOpenClawSkillConfig(
+                isRecord(canonicalExisting.skills) ? canonicalExisting.skills : {},
+                {},
+              ),
               models: {
                 ...(isRecord(canonicalExisting.models) ? canonicalExisting.models : {}),
                 ...buildManagedOpenClawModelCatalogConfig(),

@@ -43,7 +43,7 @@ const EXPECTED_PATCH_FILES = [
   '026-private-untrusted-context.cjs',
   '027-shared-session-access-registry.cjs',
   '028-admin-session-cwd.cjs',
-  '029-peer-skill-review-opt-in.cjs',
+  '030-cron-session-permission.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

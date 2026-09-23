@@ -978,6 +978,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.send(LogIpc.WriteDebug, message, details),
   },
   scheduledTasks: {
+    getSystemSettings: () => ipcRenderer.invoke(ScheduledTaskIpc.GetSystemSettings),
+    updateSystemSettings: (
+      input: import('../shared/scheduledTask/types').SystemTaskSettingsPatch,
+    ) => ipcRenderer.invoke(ScheduledTaskIpc.UpdateSystemSettings, input),
     // Task CRUD
     list: () => ipcRenderer.invoke(ScheduledTaskIpc.List),
     get: (id: string) => ipcRenderer.invoke(ScheduledTaskIpc.Get, id),

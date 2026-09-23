@@ -59,16 +59,19 @@ export function getKnownSystemTaskPresentation(
   return null;
 }
 
-export function getTaskDisplayName(
-  task: ScheduledTask,
+export function getTaskDisplayName(task: ScheduledTask): string {
+  return getKnownSystemTaskPresentation(task)?.name ?? task.name;
+}
+
+export function getTaskAgentLabel(
+  task: Pick<ScheduledTask, 'agentId'>,
   agents: readonly { id: string; name: string }[] = [],
-): string {
-  const name = getKnownSystemTaskPresentation(task)?.name ?? task.name;
-  if (!isSkillCollectionReviewTask(task) || !task.agentId) return name;
-  const agentName =
+): string | null {
+  if (!task.agentId) return null;
+  const name =
     agents.find(agent => agent.id === task.agentId)?.name.trim() ||
     (task.agentId === 'main' ? i18nService.t('scheduledTasksMainAssistant') : task.agentId);
-  return tpl(i18nService.t('scheduledTasksNameWithAgent'), { name, agentName });
+  return `@${name}`;
 }
 
 /**

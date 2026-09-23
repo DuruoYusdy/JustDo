@@ -7,6 +7,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
   TrashIcon,
+  UserIcon,
 } from '@heroicons/react/24/outline';
 import { isMissingExternalChannelError } from '@shared/scheduledTask/deliveryError';
 import {
@@ -26,7 +27,7 @@ import {
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
-import { getTaskDisplayName } from './utils';
+import { getTaskAgentLabel, getTaskDisplayName } from './utils';
 
 function formatDuration(durationMs: number | null): string {
   if (durationMs === null) return '—';
@@ -142,7 +143,7 @@ const ResultInbox: React.FC = () => {
     selectableResultIds.every(resultId => selectedResultIds.has(resultId));
   const getResultTitle = (result: ScheduledTaskResult): string => {
     const currentTask = tasks.find(task => task.id === result.taskId);
-    const currentTaskName = currentTask && getTaskDisplayName(currentTask, agents).trim();
+    const currentTaskName = currentTask && getTaskDisplayName(currentTask).trim();
     if (currentTaskName) return currentTaskName;
     const storedTaskName = result.taskName.trim();
     if (storedTaskName && storedTaskName !== result.taskId) return storedTaskName;
@@ -431,7 +432,9 @@ const ResultInbox: React.FC = () => {
             .filter(task => resultFilter.includeSystem || task.management !== 'managed')
             .map(task => (
               <option key={task.id} value={task.id}>
-                {getTaskDisplayName(task, agents)}
+                {[getTaskDisplayName(task), getTaskAgentLabel(task, agents)]
+                  .filter(Boolean)
+                  .join(' · ')}
               </option>
             ))}
         </select>
@@ -592,6 +595,22 @@ const ResultInbox: React.FC = () => {
                                 <h3 className="font-medium text-foreground">
                                   {getResultTitle(result)}
                                 </h3>
+                                {getTaskAgentLabel(
+                                  tasks.find(task => task.id === result.taskId) ?? {
+                                    agentId: null,
+                                  },
+                                  agents,
+                                ) && (
+                                  <p className="order-last mt-1 flex w-full items-center gap-2 text-xs text-secondary">
+                                    <UserIcon className="h-3.5 w-3.5" />
+                                    {getTaskAgentLabel(
+                                      tasks.find(task => task.id === result.taskId) ?? {
+                                        agentId: null,
+                                      },
+                                      agents,
+                                    )}
+                                  </p>
+                                )}
                                 {isResultTaskDeleted(result, tasks) && (
                                   <span className="text-xs text-secondary">
                                     {t('scheduledTasksResultsDeletedTask')}

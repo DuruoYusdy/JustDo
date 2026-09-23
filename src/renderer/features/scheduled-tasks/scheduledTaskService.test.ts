@@ -34,7 +34,7 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     wakeMode: 'now',
     payload: { kind: 'agentTurn', message: 'Summarize updates' },
     delivery: { mode: 'none' },
-    agentId: 'justdo-scheduler',
+    agentId: 'main',
     sessionKey: null,
     management: 'editable',
     state: {
@@ -58,7 +58,7 @@ function createResult(overrides: Partial<ScheduledTaskResult> = {}): ScheduledTa
     taskId: 'task-1',
     taskName: 'Daily summary',
     sessionId: null,
-    sessionKey: 'agent:justdo-scheduler:cron:task-1:run:run-1',
+    sessionKey: 'agent:main:cron:task-1:run:run-1',
     status: 'success',
     summary: 'Done',
     startedAt: '2026-09-05T00:00:00.000Z',

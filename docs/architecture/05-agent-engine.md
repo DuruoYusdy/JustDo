@@ -71,9 +71,9 @@ Engine status 至少表达 stopped、starting、running、stopping/error 类 pha
 - system prompt replacement rules；
 - scheduler 隔离 agent 与其他 JustDo 管理项。
 
-同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension 同时覆盖文件。写入后必须验证 active Gateway 的 restricted fallback 与 scheduler policy。会话 permission 不写全局 config，而由 session RPC 管理。若 Gateway 正在运行且变化需要 restart，Main 先通过原生 `gateway.suspend.prepare` 原子暂停 scheduler、封闭新 admission 并确认所有 Gateway workload 已空闲，再执行断开 adapter -> restart -> reconnect；busy 或 suspension RPC 不可用时继续延迟，不能用 `cron.list`/本地 active snapshot 代替该屏障。
+同步在 exclusive queue 内执行，避免设置页、MCP/Hook/Extension 同时覆盖文件。写入后必须验证 active Gateway 的 restricted fallback 与 host approval policy。会话 permission 不写全局 config，而由 session RPC 管理。若 Gateway 正在运行且变化需要 restart，Main 先通过原生 `gateway.suspend.prepare` 原子暂停 scheduler、封闭新 admission 并确认所有 Gateway workload 已空闲，再执行断开 adapter -> restart -> reconnect；busy 或 suspension RPC 不可用时继续延迟，不能用 `cron.list`/本地 active snapshot 代替该屏障。
 
-v2026.9.2 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 与隔离的 `justdo-scheduler` 在无模型的最小配置中也必须存在。启用的外部 Agent 也必须生成 `runtime.type: "acp"` 的 roster entry，使 Gateway 为它发布 reply-dispatch runtime owner；仅写入 `acp.allowedAgents` 会让手动派生在会话所有权或 runtime publication 阶段失败。外部 runtime owner 的 `workspace` 与 `runtime.acp.cwd` 显式指向受管主工作区；它们不创建 OpenClaw 原生 bootstrap workspace，避免扫描历史版本遗留的 `<defaults.workspace>/<agentId>` 初始化状态，同时单次 spawn 仍可用显式 `cwd` 覆盖执行目录。ACP runtime owner 不写入内嵌 Agent 的 fallback `model`：未在 `sessions_spawn` 指定模型且没有专门的 subagent model 配置时，应由外部 harness 选择默认模型，不能把主 Agent 的 provider/model 误当作 ACP model override。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的无人值守任务仍逐项显式绑定 `justdo-scheduler`。启动权限验收同样只读取 v2026.9.2 的 `agents.entries`，不能再用已删除的 `agents.list` 判断 scheduler 权限。在 v2026.9.2 中，`tools.sessions.visibility` 的上游隐式默认值是 `all`；跨 Agent 访问仍受默认启用的 `tools.agentToAgent` 约束。JustDo 在“设置 → 配置”开放 `self/tree/agent/all`，并显式固定产品默认值为 `tree`，以保留父子任务树边界并避免 sibling session 在升级后自动相互可见。OpenClaw 默认还会把沙盒会话的有效范围归一为当前任务树：`agent/all` 会被收窄，而 `self` 在沙盒内也按任务树范围执行；设置页必须明确提示这一运行时差异。自定义 provider 的展示名经规范化后同时作为 `app_config.providers` key、Gateway provider ID 和模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；OpenClaw 内置与插件 provider ID 支持由显式 `models.providers.<id>` 配置覆盖，因此设置页允许用户使用这些自然名称，只拒绝 `builtin_models`、`justdo` 与旧版 `custom_数字` 命名空间。记忆检索写入顶层 `memory.search`；OpenClaw 仍以官方配置键 `tools.updatePlan` 控制替代工具 `progress_card` 是否启用，这个键名不是旧 timeline 实现。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
+v2026.9.2 配置只生成 keyed `agents.entries` roster，并以 `agents.ownership: explicit` 标记多 Agent 所有权；`main` 在无模型的最小配置中也必须存在；定时任务复用已有助手，不生成额外 roster entry。启用的外部 Agent 也必须生成 `runtime.type: "acp"` 的 roster entry，使 Gateway 为它发布 reply-dispatch runtime owner；仅写入 `acp.allowedAgents` 会让手动派生在会话所有权或 runtime publication 阶段失败。外部 runtime owner 的 `workspace` 与 `runtime.acp.cwd` 显式指向受管主工作区；它们不创建 OpenClaw 原生 bootstrap workspace，避免扫描历史版本遗留的 `<defaults.workspace>/<agentId>` 初始化状态，同时单次 spawn 仍可用显式 `cwd` 覆盖执行目录。ACP runtime owner 不写入内嵌 Agent 的 fallback `model`：未在 `sessions_spawn` 指定模型且没有专门的 subagent model 配置时，应由外部 harness 选择默认模型，不能把主 Agent 的 provider/model 误当作 ACP model override。`agents.defaults.systemAgent.agentId` 固定为 `main`，让 memory dreaming 等 OpenClaw 原生环境任务拥有明确 owner；JustDo 创建的定时任务绑定所选助手，默认使用 `main`。启动权限验收检查全局 restricted fallback 与 host approval 策略，不要求额外助手或专用完全权限。在 v2026.9.2 中，`tools.sessions.visibility` 的上游隐式默认值是 `all`；跨 Agent 访问仍受默认启用的 `tools.agentToAgent` 约束。JustDo 在“设置 → 配置”开放 `self/tree/agent/all`，并显式固定产品默认值为 `tree`，以保留父子任务树边界并避免 sibling session 在升级后自动相互可见。OpenClaw 默认还会把沙盒会话的有效范围归一为当前任务树：`agent/all` 会被收窄，而 `self` 在沙盒内也按任务树范围执行；设置页必须明确提示这一运行时差异。自定义 provider 的展示名经规范化后同时作为 `app_config.providers` key、Gateway provider ID 和模型引用中的 provider ID，使 OpenClaw 注入的当前模型身份保持用户可读；OpenClaw 内置与插件 provider ID 支持由显式 `models.providers.<id>` 配置覆盖，因此设置页允许用户使用这些自然名称，只拒绝 `builtin_models`、`justdo` 与旧版 `custom_数字` 命名空间。记忆检索写入顶层 `memory.search`；OpenClaw 仍以官方配置键 `tools.updatePlan` 控制替代工具 `progress_card` 是否启用，这个键名不是旧 timeline 实现。同步会定向清理 JustDo 历史写入但已被该版本删除的 metadata、diagnostics、pricing、heartbeat 与 experimental tool 字段，避免把旧生成结果重新喂给严格 schema。
 
 版本化的 `agentRuntimeSettings:v1` 生成 `agents.defaults.timeoutSeconds/maxConcurrent/subagents` 和 `tools.sessions.visibility`，并以全局 MCP 请求时限作为用户 MCP Server 的默认 `timeout`。Agent 客户端 watchdog 动态读取相同的单任务运行时限；总并发为 null 时不写固定值，保留按设备自适应的系统默认。配置同步按字段合并 `subagents`，不会删除设置页未管理的 allowlist、显式 Agent 要求或通知等待策略。`mcp_servers.config_json.requestTimeoutSeconds` 可覆盖单个 Server；旧数据缺少后来加入的 Agent 时限/并发、SubAgent 委派/归档、会话访问范围、AskUserQuestion、计划任务审批或 MCP 字段时补入产品默认；历史通用审批字段会在规范化时丢弃；配置同步失败会恢复上一份数据库值。AskUserQuestion 的分钟数只供自定义交互 extension 在模型显式设置 `timeoutEnabled` 时使用；计划任务审批分钟数只写入 automation-permission；两者都不改变 exec 或其他插件的等待时限。
 
@@ -83,7 +83,7 @@ v2026.9.2 配置只生成 keyed `agents.entries` roster，并以 `agents.ownersh
 
 1. 检测 legacy `sessions.json`。存在时先生成原生 SQLite migration dry-run plan，并在用户确认前阻止 Gateway 启动。
 2. 执行 config sync；失败则设置 external engine error。
-3. 若 manager 已 running，仍验证 active fallback/scheduler policy。
+3. 若 manager 已 running，仍验证 active fallback/host approval policy。
 4. 否则调用可合并的 start；running 后再次验证该 policy。
 5. 只有 phase 为 running 且验证成功，Cowork start/continue 才被接受。
 
@@ -164,13 +164,13 @@ Goal、required child join、queue admission、审批、thinking、compaction/co
 
 Shared contract 对 delegation mode、全局及单 Server MCP request timeout、计划任务审批时限、subagent concurrency/children/depth/timeout/archive/model/thinking/announce timeout 等字段做默认值、范围和跨字段 normalize。Main IPC 保存后进入 config sync。需要 hard restart 的配置会一直通过原生 suspension 屏障等待活动任务结束，不设置强制中断上限，真正重启前 scheduler 与新 admission 已被冻结；MCP timeout 变化会重建托管 server 配置；subagent 配置通常影响新 spawn/turn，不能承诺正在运行的 subagent 热更新。Exec 使用 OpenClaw 原生 30 分钟期限；automation-permission 仅为计划任务变更设置原生支持的 2/5/10 分钟 `timeoutMs`。
 
-受管字段（例如 scheduler agent 的权限、关键 extension/plugin 配置）不能被通用 settings UI 覆盖。
+受管字段（例如 全局权限底线、关键 extension/plugin 配置）不能被通用 settings UI 覆盖。
 
 ## 14. 权限与审批
 
 权限模式是 ask、auto、full 三档产品语义，分别映射到 OpenClaw 原生 session `guarded`、`workspace`、`full`。`OpenClawRuntimeAdapter.prepareSession` 通过 `sessions.create({key,cwd,permissionMode})` 幂等写入并核对 entry；会话变更由 coordinator 串行并先保存 SQLite 期望值，活跃 run 允许切换并在终态后应用最新值。原生同步失败只保留 pending，不回滚旧模式；下一 turn 前的严格 reconcile 失败会阻止发送。Cowork config 中的 mode 只作为新会话默认值，不触发 Gateway config reload。
 
-Exec 和 plugin approval API 分开，pending list 在连接后恢复。session grant 仅对满足 shared predicate 的 exec request 有效，并在 session terminal/stop/delete 清除。scheduler agent 使用固定无人值守 policy，不能弹 UI，也不能借 cron 修改升级普通交互会话。
+Exec 和 plugin approval API 分开，pending list 在连接后恢复。session grant 仅对满足 shared predicate 的 exec request 有效，并在 session terminal/stop/delete 清除。定时任务复用所选助手的权限策略，不能因定时执行而自动提升权限。
 
 ## 15. Plan mode
 

@@ -8,7 +8,6 @@ import {
   type AgentResult,
   parseAgentProfile,
 } from '../../../shared/agents';
-import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { CoworkStore } from '../../data/coworkStore';
 import { listPersistedGatewaySessions } from '../../engine/openclaw/subagentGateway';
 
@@ -38,7 +37,7 @@ export const registerAgentHandlers = ({
     }
   };
   const requireAgent = (id: unknown) => {
-    if (typeof id !== 'string' || id === ScheduledTaskAgentId) throw new Error('agentUnavailable');
+    if (typeof id !== 'string') throw new Error('agentUnavailable');
     const agent = getStore().getAgent(id);
     if (!agent || agent.deletedAt) throw new Error('agentUnavailable');
     return agent;
@@ -76,15 +75,12 @@ export const registerAgentHandlers = ({
 
   ipcMain.handle(AgentIpc.List, async () => ({
     success: true,
-    agents: getStore()
-      .listAgents()
-      .filter(agent => agent.id !== ScheduledTaskAgentId),
+    agents: getStore().listAgents(),
   }));
   ipcMain.handle(AgentIpc.Delete, (_event, id: unknown) =>
     serialize(() =>
       result(async () => {
-        if (typeof id !== 'string' || id === ScheduledTaskAgentId)
-          throw new Error('agentUnavailable');
+        if (typeof id !== 'string') throw new Error('agentUnavailable');
         const agent = getStore().getAgent(id);
         if (!agent) throw new Error('agentUnavailable');
         if (id === 'main' || agent.isDefault) throw new Error('agentMainRequired');

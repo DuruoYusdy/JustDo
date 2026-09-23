@@ -188,8 +188,8 @@ describe('cowork session execution permissions', () => {
     expect(createSession).not.toHaveBeenCalled();
   });
 
-  test.each(['JUSTDO-SCHEDULER', 'justdo scheduler', 'justdo.scheduler'])(
-    'rejects normalized reserved scheduler agent %s for interactive sessions',
+  test.each(['research', 'helper', 'unknown'])(
+    'rejects non-main agent %s for user conversations',
     async agentId => {
       const ensureEngineRunning = vi.fn();
       registerCoworkSessionExecutionHandlers({
@@ -204,7 +204,7 @@ describe('cowork session execution permissions', () => {
         handlers.get('cowork:session:start')?.({}, { prompt: 'hello', agentId }),
       ).resolves.toEqual({
         success: false,
-        error: 'The scheduler agent is reserved for scheduled tasks.',
+        error: 'agentUnavailable',
       });
       expect(ensureEngineRunning).not.toHaveBeenCalled();
     },

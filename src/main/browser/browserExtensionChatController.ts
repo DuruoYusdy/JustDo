@@ -383,7 +383,6 @@ export class BrowserExtensionChatController implements BrowserExtensionChatApi {
     const store = this.deps.getStore();
     return store
       .listSessions()
-      .filter(session => session.agentId !== 'scheduler')
       .map(summary => {
         const session = store.getSession(summary.id);
         return {

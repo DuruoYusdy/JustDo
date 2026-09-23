@@ -15,7 +15,6 @@ describe('openclawExtensionRegistry', () => {
       [OpenClawExtensionId.AUTOMATION_PERMISSION]: {
         enabled: true,
         config: {
-          unrestrictedAgentIds: ['justdo-scheduler'],
           approvalTimeoutMinutes: 5,
         },
       },

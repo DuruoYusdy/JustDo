@@ -21,9 +21,11 @@ export const SCHEDULED_TASK_READ_ONLY_TOOLS = [
 
 export function getScheduledTaskPermission(payload: {
   toolsAllow?: string[];
+  permissionMode?: 'read-only' | 'full';
 }): ScheduledTaskPermission {
-  if (!payload.toolsAllow || payload.toolsAllow.includes('*')) return ScheduledTaskPermission.Full;
-  const tools = new Set(payload.toolsAllow);
+  if (payload.permissionMode === 'full' && payload.toolsAllow?.includes('*'))
+    return ScheduledTaskPermission.Full;
+  const tools = new Set(payload.toolsAllow ?? []);
   return tools.size === SCHEDULED_TASK_READ_ONLY_TOOLS.length &&
     SCHEDULED_TASK_READ_ONLY_TOOLS.every(tool => tools.has(tool))
     ? ScheduledTaskPermission.ReadOnly
@@ -43,6 +45,7 @@ export function applyScheduledTaskPermission(
   }
   return {
     ...payload,
+    permissionMode: mode,
     toolsAllow:
       mode === ScheduledTaskPermission.ReadOnly ? [...SCHEDULED_TASK_READ_ONLY_TOOLS] : ['*'],
   };

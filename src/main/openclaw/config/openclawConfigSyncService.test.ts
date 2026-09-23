@@ -298,7 +298,6 @@ describe('OpenClawConfigSyncService', () => {
     configPath?: string;
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
-    reportedSchedulerMode?: 'ask' | 'auto' | 'full';
     configChanged?: boolean;
     syncError?: string;
     nativeRestartStatus?: string;
@@ -417,21 +416,7 @@ describe('OpenClawConfigSyncService', () => {
         return {
           config: {
             agents: {
-              entries: {
-                'justdo-scheduler': {
-                  tools: {
-                    exec: {
-                      host: execHost,
-                      mode: options.reportedSchedulerMode ?? 'full',
-                    },
-                    fs: {
-                      workspaceOnly:
-                        executionMode === 'sandbox' ||
-                        (options.reportedSchedulerMode ?? 'full') !== 'full',
-                    },
-                  },
-                },
-              },
+              entries: { main: {} },
             },
             tools: {
               exec: { host: execHost, mode: permissionMode },
@@ -660,9 +645,7 @@ describe('OpenClawConfigSyncService', () => {
           file: {
             version: 1,
             defaults: { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
-            agents: {
-              'justdo-scheduler': { security: 'full', ask: 'off', askFallback: 'full' },
-            },
+            agents: {},
           },
         };
       }
@@ -671,14 +654,7 @@ describe('OpenClawConfigSyncService', () => {
           config: {
             models: { providers: { builtin_models: { models: [{ id: 'hdp/Glm-5.1' }] } } },
             agents: {
-              entries: {
-                'justdo-scheduler': {
-                  tools: {
-                    exec: { host: 'gateway', mode: 'full' },
-                    fs: { workspaceOnly: false },
-                  },
-                },
-              },
+              entries: { main: {} },
             },
             tools: {
               exec: { host: 'gateway', mode: 'ask' },
@@ -719,9 +695,7 @@ describe('OpenClawConfigSyncService', () => {
           file: {
             version: 1,
             defaults: { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
-            agents: {
-              'justdo-scheduler': { security: 'full', ask: 'off', askFallback: 'full' },
-            },
+            agents: {},
           },
         };
       }
@@ -729,14 +703,7 @@ describe('OpenClawConfigSyncService', () => {
         return {
           config: {
             agents: {
-              entries: {
-                'justdo-scheduler': {
-                  tools: {
-                    exec: { host: 'gateway', mode: 'full' },
-                    fs: { workspaceOnly: false },
-                  },
-                },
-              },
+              entries: { main: {} },
             },
             tools: {
               exec: { host: 'gateway', mode: 'ask' },
@@ -771,9 +738,7 @@ describe('OpenClawConfigSyncService', () => {
           file: {
             version: 1,
             defaults: { security: 'allowlist', ask: 'on-miss', askFallback: 'deny' },
-            agents: {
-              'justdo-scheduler': { security: 'full', ask: 'off', askFallback: 'full' },
-            },
+            agents: {},
           },
         };
       }
@@ -782,14 +747,7 @@ describe('OpenClawConfigSyncService', () => {
           config: {
             models: { providers: { oldproxy: { models: [{ id: 'restored-model' }] } } },
             agents: {
-              entries: {
-                'justdo-scheduler': {
-                  tools: {
-                    exec: { host: 'gateway', mode: 'full' },
-                    fs: { workspaceOnly: false },
-                  },
-                },
-              },
+              entries: { main: {} },
             },
             tools: {
               exec: { host: 'gateway', mode: 'ask' },
@@ -1065,12 +1023,10 @@ describe('OpenClawConfigSyncService', () => {
         file: expect.objectContaining({
           agents: expect.objectContaining({
             helper: expect.objectContaining({
+              security: 'allowlist',
+              ask: 'on-miss',
+              askFallback: 'deny',
               allowlist: [{ pattern: 'git diff', source: 'manual' }],
-            }),
-            'justdo-scheduler': expect.objectContaining({
-              security: 'full',
-              ask: 'off',
-              askFallback: 'full',
             }),
           }),
         }),
@@ -1089,15 +1045,18 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.stopGateway).toHaveBeenCalledOnce();
   });
 
-  it('fails closed when the scheduler agent is not isolated with Full access', async () => {
-    const harness = createHarness({ permissionMode: 'ask', reportedSchedulerMode: 'ask' });
-
+  it('verifies runtime permissions without requiring a dedicated task agent', async () => {
+    const harness = createHarness({ permissionMode: 'ask' });
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({
-      success: false,
-      configSynced: false,
-      error: expect.stringContaining('Gateway was stopped'),
+      success: true,
+      configSynced: true,
     });
-    expect(harness.stopGateway).toHaveBeenCalledOnce();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    const approvalWrite = harness.requestGateway.mock.calls.find(
+      ([method]) => method === 'exec.approvals.set',
+    );
+    const policy = approvalWrite?.[1] as { file: { agents: Record<string, unknown> } };
+    expect(Object.keys(policy.file.agents)).toEqual(['helper']);
   });
 
   it.each(['running', 'ready'] as const)(

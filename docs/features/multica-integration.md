@@ -68,7 +68,7 @@ SQLite 仍是唯一 transcript 权威，JustDo 不创建外部消息缓存。删
 - 每次应用进程生成随机 token，写入用户数据目录下权限受限的 `multica/bridge.json`；
 - 每个连接只接收一个 newline-delimited JSON 请求，大小上限 16 MiB；
 - 命令和参数使用白名单，prompt 是唯一允许换行的 argv 值；
-- cwd 必须是存在的绝对目录，Agent 必须已启用且不能是 scheduler Agent；实际任务还必须携带
+- cwd 必须是存在的绝对目录，Agent 必须已启用；实际任务还必须携带
   `mat_` task token、任务身份和存在的隔离 OpenClaw wrapper config；
 - 任务环境不能覆盖 `JUSTDO_*`、Electron/Node bootstrap、OpenClaw state/config 或 Gateway 凭据；
   CLI 始终连接当前应用所属的 Gateway；

@@ -39,6 +39,7 @@ export type Schedule = EditableSchedule | ScheduleOnExit | ScheduleStream;
 
 export interface AgentTurnPayload {
   kind: 'agentTurn';
+  permissionMode?: 'read-only' | 'full';
   message: string;
   timeoutSeconds?: number;
   model?: string;
@@ -246,3 +247,13 @@ export interface ScheduledTaskChannelOption {
    *  falling back to the `default` account. */
   accountId?: string;
 }
+
+export interface SystemTaskSettings {
+  memoryDreamingEnabled: boolean;
+  memoryAvailable: boolean;
+  skillMode: 'off' | 'propose' | 'auto';
+}
+
+export type SystemTaskSettingsPatch = Partial<
+  Pick<SystemTaskSettings, 'memoryDreamingEnabled' | 'skillMode'>
+>;

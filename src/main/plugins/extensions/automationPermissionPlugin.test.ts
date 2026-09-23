@@ -9,12 +9,11 @@ type PolicyEvaluator = (
 
 const registerPolicy = (
   permissionMode?: 'read-only' | 'guarded' | 'workspace' | 'full',
-  unrestrictedAgentIds: string[] = [],
   approvalTimeoutMinutes = 2,
 ): PolicyEvaluator => {
   let evaluator: PolicyEvaluator | undefined;
   automationPermissionPlugin.register({
-    pluginConfig: { unrestrictedAgentIds, approvalTimeoutMinutes },
+    pluginConfig: { approvalTimeoutMinutes },
     runtime: {
       agent: {
         session: {
@@ -63,29 +62,29 @@ describe('automation permission extension', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('allows mutations for the dedicated scheduler agent', async () => {
-    const evaluate = registerPolicy('guarded', ['justdo-scheduler']);
+  it('requires approval for mutations even inside a cron run', async () => {
+    const evaluate = registerPolicy('guarded');
 
     await expect(
       evaluate(
         { toolName: 'automations', params: { action: 'run', jobId: 'job-1' } },
         {
-          agentId: 'justdo-scheduler',
-          sessionKey: 'agent:justdo-scheduler:cron:job-1:run:run-1',
+          agentId: 'main',
+          sessionKey: 'agent:main:cron:job-1:run:run-1',
         },
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ requireApproval: expect.any(Object) });
   });
 
-  it('does not trust a scheduler agent id outside a native cron run', async () => {
-    const evaluate = registerPolicy('guarded', ['justdo-scheduler']);
+  it('requires approval for interactive agent mutations', async () => {
+    const evaluate = registerPolicy('guarded');
 
     await expect(
       evaluate(
         { toolName: 'automations', params: { action: 'wake', mode: 'now' } },
         {
-          agentId: 'justdo-scheduler',
-          sessionKey: 'agent:justdo-scheduler:justdo:interactive-session',
+          agentId: 'main',
+          sessionKey: 'agent:main:justdo:interactive-session',
         },
       ),
     ).resolves.toMatchObject({ requireApproval: expect.any(Object) });
@@ -149,7 +148,7 @@ describe('automation permission extension', () => {
   });
 
   it('uses the configured scheduled task approval timeout', async () => {
-    const evaluate = registerPolicy('guarded', [], 10);
+    const evaluate = registerPolicy('guarded', 10);
 
     await expect(
       evaluate(

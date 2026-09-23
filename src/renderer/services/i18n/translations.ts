@@ -1293,7 +1293,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     localTtsPlaybackFailed: '语音生成或播放失败，请稍后重试',
     localAsrStart: '语音输入',
     localAsrStartMeeting: '开始会议记录',
-    localAsrAttachmentCopyFailed: '无法将音频附件复制到项目目录，请检查文件大小（最大 256 MiB）和目录权限。',
+    localAsrAttachmentCopyFailed:
+      '无法将音频附件复制到项目目录，请检查文件大小（最大 256 MiB）和目录权限。',
     localAsrImportFile: '导入录音并转写',
     localAsrSourceMicrophoneShort: '我',
     localAsrSourceSystemShort: '会议声音',
@@ -2601,7 +2602,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksMemoryDreamingManagedHint:
       '此任务由记忆功能自动管理，用于维护长期记忆，不会发送通知。',
     scheduledTasksMainAssistant: '主助手',
-    scheduledTasksNameWithAgent: '{name} @{agentName}',
     scheduledTasksSkillReviewName: '技能库自动整理',
     scheduledTasksSkillReviewDescription:
       '每周检查自动学习生成的技能，合并重复内容并清理低质量条目。',
@@ -2622,6 +2622,23 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksLoadRunsFailed: '加载运行记录失败',
     scheduledTasksRetry: '重试',
     cronRunConfirmHiddenContext: '此命令还包含未展示的环境变量或标准输入，请仅在信任其来源时运行。',
+    cronSystemPermissionHint:
+      '由系统功能内部执行，不支持普通任务的“只读／完全权限”预设。记忆整理可通过卡片开关控制；技能整理暂不支持单独启停。',
+    cronSkillReviewLatestFailure: '最近失败',
+    cronSkillReviewScope: '全部助手',
+    cronSkillReviewScheduleManaged: '按助手工作区定期整理',
+    cronSkillReviewMembers: '各助手运行记录',
+    cronSkillReviewToggleHint:
+      '控制全局技能自动学习与整理，默认关闭；开启后可能使用模型并修改自动学习生成的技能。',
+    cronMemoryScope: '全部助手工作区',
+    cronMemoryScheduleManaged: '由记忆功能统一调度',
+    cronMemoryToggleHint: '控制所有工作区的长期记忆整理；关闭后仍可在此重新开启。',
+    cronMemoryLoadFailed: '无法读取系统任务开关，请刷新后重试。',
+    cronSkillReviewReadOnlyHint:
+      '由系统维护，暂不支持单独启停；此状态不代表全部技能自动学习的开关。',
+    cronDialogAgentTitle: '执行助手',
+    cronDialogAgentHint:
+      '任务在所选助手的独立会话中运行，使用其工作区和模型配置。',
     cronDialogPermissionTitle: '执行权限',
     cronDialogPermissionInheritedHint:
       '此任务通过主会话唤醒助手，继承主会话的执行权限，不支持单独设置任务权限。',
@@ -2631,8 +2648,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDialogPermissionReadOnlyHint:
       '仅允许读取文件、搜索网页和检索记忆；禁止执行命令、修改文件及调用其他工具。结果仍按下方投递设置发送。',
     cronDialogPermissionFullHint:
-      '允许使用执行命令、修改文件等工具，仍受运行环境和助手权限限制。无人值守运行无法等待人工审批。',
-    cronDialogPermissionCustomHint: '保留此任务已有的工具限制，不因编辑名称或时间而改变权限。',
+      '使用与主界面相同的完全权限模式，允许执行命令和修改文件，无需人工审批。',
+    cronDialogPermissionCustomHint: '保留原有权限模式和工具设置；如需免审批执行，请显式选择完全权限。',
     cronDialogCreateTitle: '创建任务',
     cronDialogEditTitle: '编辑任务',
     cronDialogTaskName: '任务名称',
@@ -4058,7 +4075,8 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     localTtsPlaybackFailed: 'Speech generation or playback failed. Please try again.',
     localAsrStart: 'Voice input',
     localAsrStartMeeting: 'Start meeting notes',
-    localAsrAttachmentCopyFailed: 'Could not copy the audio attachment into the project. Check its size (maximum 256 MiB) and directory permissions.',
+    localAsrAttachmentCopyFailed:
+      'Could not copy the audio attachment into the project. Check its size (maximum 256 MiB) and directory permissions.',
     localAsrImportFile: 'Import and transcribe recording',
     localAsrSourceMicrophoneShort: 'Me',
     localAsrSourceSystemShort: 'Meeting audio',
@@ -5454,7 +5472,6 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksMemoryDreamingManagedHint:
       'The memory feature manages this task automatically to maintain long-term memory. It does not send notifications.',
     scheduledTasksMainAssistant: 'Main assistant',
-    scheduledTasksNameWithAgent: '{name} @{agentName}',
     scheduledTasksSkillReviewName: 'Automatic skill library cleanup',
     scheduledTasksSkillReviewDescription:
       'Reviews automatically learned skills weekly, merging overlaps and removing low-quality entries.',
@@ -5477,6 +5494,24 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksRetry: 'Retry',
     cronRunConfirmHiddenContext:
       'This command also has hidden environment variables or standard input. Run it only if you trust its source.',
+    cronSystemPermissionHint:
+      'Executed internally by the system feature; ordinary read-only/full-access presets do not apply. Memory dreaming has a feature switch; individual skill cleanup tasks cannot be toggled.',
+    cronSkillReviewLatestFailure: 'Latest failure',
+    cronSkillReviewScope: 'All assistants',
+    cronSkillReviewScheduleManaged: 'Scheduled per assistant workspace',
+    cronSkillReviewMembers: 'Assistant run records',
+    cronSkillReviewToggleHint:
+      'Controls global automatic skill learning and cleanup. Off by default; enabling may use models and modify automatically learned skills.',
+    cronMemoryScope: 'All assistant workspaces',
+    cronMemoryScheduleManaged: 'Scheduled by the memory feature',
+    cronMemoryToggleHint:
+      'Controls memory dreaming across all workspaces. You can enable it here again after disabling it.',
+    cronMemoryLoadFailed: 'Could not load system task settings. Refresh to try again.',
+    cronSkillReviewReadOnlyHint:
+      'System-managed; individual controls are unavailable. This status is not a switch for all skill learning.',
+    cronDialogAgentTitle: 'Assistant',
+    cronDialogAgentHint:
+      'Runs in an isolated session using the selected assistant’s workspace and model configuration.',
     cronDialogPermissionTitle: 'Execution permissions',
     cronDialogPermissionInheritedHint:
       'This task wakes the assistant in the main session and inherits its execution permissions. Separate task permissions are not supported.',
@@ -5486,9 +5521,9 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     cronDialogPermissionReadOnlyHint:
       'Only file reads, web search and fetch, and memory retrieval are allowed. Commands, file changes, and other tools are blocked. Results still follow the delivery settings below.',
     cronDialogPermissionFullHint:
-      'Allows tools for commands and file changes, subject to runtime and assistant permissions. Unattended runs cannot wait for human approval.',
+      'Uses the same Full permission mode as chat. Commands and file changes run without human approval.',
     cronDialogPermissionCustomHint:
-      'Preserves the existing tool restrictions when editing the task name or schedule.',
+      'Preserves the existing permission mode and tool settings. Select Full explicitly to enable execution without approval.',
     cronDialogCreateTitle: 'Create Task',
     cronDialogEditTitle: 'Edit Task',
     cronDialogTaskName: 'Task Name',

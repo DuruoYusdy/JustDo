@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import type { Agent, CoworkStore } from '../../data/coworkStore';
 import { MulticaExternalSessionStore } from './multicaExternalSessionStore';
@@ -224,7 +223,7 @@ export class MulticaCommandService {
       const agents = this.options
         .getCoworkStore()
         .listAgents()
-        .filter(agent => agent.enabled && agent.id !== ScheduledTaskAgentId)
+        .filter(agent => agent.enabled)
         .map(agent => ({ id: agent.id, name: agent.name || agent.id, model: agent.model }));
       return { stdout: `${JSON.stringify(agents, null, 2)}\n`, exitCode: 0 };
     }
@@ -259,7 +258,7 @@ export class MulticaCommandService {
     }
     const coworkStore = this.options.getCoworkStore();
     const agent = coworkStore.getAgent(invocation.agentId);
-    if (!agent || !agent.enabled || agent.id === ScheduledTaskAgentId) {
+    if (!agent || !agent.enabled) {
       return agentFailure(`The selected Agent "${invocation.agentId}" is unavailable.`, 64);
     }
     const environmentError = validateTaskEnvironment(env);

@@ -10,7 +10,6 @@ import {
   GatewayStatus,
   IpcChannel,
   PayloadKind,
-  ScheduledTaskAgentId,
   ScheduleKind,
   SessionTarget,
   TaskStatus,
@@ -35,6 +34,7 @@ import type {
   TaskState,
 } from '../../shared/scheduledTask/types';
 import { stringifyScheduledTaskLog } from './scheduledTaskLog';
+import { buildSystemTaskSettingsPatch, readSystemTaskSettings } from './systemTaskSettings';
 
 type GatewayClientLike = {
   request: <T = Record<string, unknown>>(
@@ -88,6 +88,7 @@ type GatewaySchedule =
 type GatewayPayload =
   | {
       kind: 'agentTurn';
+      permissionMode?: 'read-only' | 'full';
       message: string;
       timeoutSeconds?: number;
       model?: string;
@@ -330,6 +331,7 @@ function toGatewayPayload(payload: EditableScheduledTaskPayload): GatewayPayload
   return {
     kind: PayloadKind.AgentTurn,
     message: payload.message,
+    ...(payload.permissionMode ? { permissionMode: payload.permissionMode } : {}),
     ...(typeof payload.timeoutSeconds === 'number'
       ? { timeoutSeconds: payload.timeoutSeconds }
       : {}),
@@ -356,6 +358,7 @@ function mapGatewayPayload(payload: GatewayPayload): ScheduledTaskPayload {
       return {
         kind: 'agentTurn',
         message: payload.message,
+        ...(payload.permissionMode ? { permissionMode: payload.permissionMode } : {}),
         ...(typeof payload.timeoutSeconds === 'number'
           ? { timeoutSeconds: payload.timeoutSeconds }
           : {}),
@@ -837,6 +840,23 @@ export class CronJobService {
     }
   }
 
+  async getSystemSettings() {
+    const client = await this.client();
+    const snapshot = await client.request<{ config: unknown }>('config.get');
+    return readSystemTaskSettings(snapshot.config);
+  }
+
+  async updateSystemSettings(
+    input: import('../../shared/scheduledTask/types').SystemTaskSettingsPatch,
+  ): Promise<void> {
+    const client = await this.client();
+    const snapshot = await client.request<{ config: unknown; hash: string }>('config.get');
+    if (!snapshot.hash) throw new Error('Gateway configuration revision is unavailable');
+    const patch = buildSystemTaskSettingsPatch(input, snapshot.config);
+    if (!Object.keys(patch).length) return;
+    await client.request('config.patch', { raw: JSON.stringify(patch), baseHash: snapshot.hash });
+  }
+
   async addJob(input: ScheduledTaskInput): Promise<ScheduledTask> {
     return this.addJobLocked(input);
   }
@@ -861,7 +881,11 @@ export class CronJobService {
           : input.payload,
       ),
       delivery: gatewayDelivery,
-      ...(input.payload.kind === PayloadKind.AgentTurn ? { agentId: ScheduledTaskAgentId } : {}),
+      ...(input.payload.kind === PayloadKind.AgentTurn
+        ? { agentId: input.agentId?.trim() || 'main' }
+        : input.agentId?.trim()
+          ? { agentId: input.agentId.trim() }
+          : {}),
       ...(input.sessionKey?.trim() ? { sessionKey: input.sessionKey.trim() } : {}),
     });
     const mapped = mapGatewayJob(job);
@@ -926,13 +950,13 @@ export class CronJobService {
       }
       if (nextPayload.kind === PayloadKind.AgentTurn) {
         if (payloadKindChanged) {
-          patch.agentId = ScheduledTaskAgentId;
+          patch.agentId = input.agentId?.trim() || 'main';
         } else if (input.agentId !== undefined) {
           patch.agentId = input.agentId?.trim() || null;
         }
       } else if (input.agentId !== undefined) {
         patch.agentId = input.agentId?.trim() || null;
-      } else if (payloadKindChanged || current.agentId === ScheduledTaskAgentId) {
+      } else if (payloadKindChanged) {
         patch.agentId = null;
       }
       if (input.sessionKey !== undefined) {

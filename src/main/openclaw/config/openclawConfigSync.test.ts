@@ -411,7 +411,6 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
               includeSystemPromptSection: false,
             },
           },
-          { id: 'justdo-scheduler' },
         ],
       },
     });
@@ -439,7 +438,6 @@ describe('OpenClaw v2026.9.2 config sanitization', () => {
         defaults: { heartbeat: { every: '0m' } },
         entries: {
           main: { heartbeat: { every: '2h' } },
-          'justdo-scheduler': {},
         },
       },
     });
@@ -1232,6 +1230,14 @@ describe('OpenClaw managed speech config', () => {
 });
 
 describe('OpenClaw skill config merging', () => {
+  test.each(['auto', 'propose', 'off'])('preserves explicit skill automation mode %s', mode => {
+    const skills = { workshop: { autonomous: { mode, custom: true }, custom: true } };
+    expect(mergeOpenClawSkillConfig(skills, {})).toEqual(skills);
+  });
+  test('defaults automation off without losing workshop preferences', () => {
+    expect(mergeOpenClawSkillConfig({ workshop: { autonomous: { custom: true } } }, {}))
+      .toEqual({ workshop: { autonomous: { mode: 'off', custom: true } } });
+  });
   test('preserves disabled skills and custom load directories', () => {
     expect(
       mergeOpenClawSkillConfig(
@@ -1245,6 +1251,7 @@ describe('OpenClaw skill config merging', () => {
         {},
       ),
     ).toEqual({
+      workshop: { autonomous: { mode: 'off' } },
       load: { extraDirs: ['C:/skills'] },
       entries: {
         docx: { enabled: false },
@@ -1265,6 +1272,7 @@ describe('OpenClaw skill config merging', () => {
         },
       ),
     ).toEqual({
+      workshop: { autonomous: { mode: 'off' } },
       load: { extraDirs: ['C:/skills'], watch: false },
       entries: { docx: { enabled: false } },
     });
@@ -1289,6 +1297,7 @@ describe('OpenClaw skill config merging', () => {
         },
       ),
     ).toEqual({
+      workshop: { autonomous: { mode: 'off' } },
       limits: {
         maxCandidatesPerRoot: 500,
         maxSkillsLoadedPerSource: 300,
@@ -1331,7 +1340,7 @@ describe('OpenClaw skill config merging', () => {
         {
           'automation-permission': {
             enabled: true,
-            config: { unrestrictedAgentIds: ['justdo-scheduler'] },
+            config: { approvalTimeoutMinutes: 2 },
           },
         },
       ),
@@ -1341,7 +1350,7 @@ describe('OpenClaw skill config merging', () => {
       entries: {
         'automation-permission': {
           enabled: true,
-          config: { unrestrictedAgentIds: ['justdo-scheduler'] },
+          config: { approvalTimeoutMinutes: 2 },
         },
       },
     });

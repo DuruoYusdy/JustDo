@@ -135,7 +135,7 @@ No private memory or credentials are copied when creating a role.
 Disabled profiles remain in the native roster so history and role files can still
 be accessed. Disable prevents new/continued chat runs through this application's
 entry points; it is not native authorization revocation. Native delegation,
-external clients, and scheduler policy remain separate concerns. main cannot be
+external clients, and scheduled-task permissions remain separate concerns. main cannot be
 disabled. Set another default before disabling the current default. There is no
 hard-delete operation in this phase.
 

@@ -9,11 +9,6 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "unrestrictedAgentIds": {
-        "type": "array",
-        "items": { "type": "string", "minLength": 1 },
-        "uniqueItems": true
-      },
       "approvalTimeoutMinutes": {
         "type": "integer",
         "enum": [2, 5, 10],

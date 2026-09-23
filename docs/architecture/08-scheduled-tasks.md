@@ -28,11 +28,11 @@
 
 ### 2.2 Payload
 
-- `agentTurn`: message，可选 timeout/model；使用隔离 scheduler agent。
+- `agentTurn`: message，可选 timeout/model；新建任务默认使用 `main`，也可选择已启用的助手，在该助手的隔离会话中执行。编辑时保留原助手，显式切换助手会清除旧 sessionKey 绑定。
 - `systemEvent`: text；通常目标 main session。
 - `command`、`script`: v2026.9.2 原生无人值守 payload；JustDo 只读展示，并在手动运行前以精确 argv/脚本文本二次确认。确认请求携带所展示配置的 revision，由 Main 在运行前重新读取并拒绝已变化的任务；这是运行前复核，不是 Gateway 原子 CAS。
 - `heartbeat`、`skillCollectionReview`: Gateway 收敛的系统 payload；在 JustDo 中标记为 OpenClaw 管理。JustDo 对主 Agent 显式配置 `heartbeat.every: 0m`，关闭不适用于本产品的周期性外部通知检查；OpenClaw 保留的 disabled heartbeat 行不进入 Renderer 任务列表。对话创建任务直接使用原生 automations/`cron.add`，普通 `agentTurn` 任务由 cron timer 独立调度，不依赖周期 Heartbeat。
-- 技能库自动整理按工作区创建系统任务。补丁 029 不再自动创建缺失的非主助手技能整理任务（包括重启和配置同步）；已有任务沿用持久化的启用状态，主助手保持原生行为，全局 `skills.workshop.autonomous.mode` 非 `auto` 时仍统一停用。该策略在 Gateway 原生收敛路径生效，覆盖设置页和模型驱动的助手创建，不修改任务历史或隐藏暂停任务。原生 `skillCollectionReview` 是系统所有的 payload，普通创建表单和原生 cron 客户端不能手动创建；将来提供手动添加入口需要由受信任的系统管理路径显式创建。
+- 技能库自动整理由原生 Gateway 按工作区维护，Renderer 聚合为一张全局功能卡片，展开后按助手查看调度、状态、详情与运行历史。开关使用带配置 revision 的 config.patch 修改 `skills.workshop.autonomous.mode`（开启 auto，关闭 off），影响全局技能自动学习与整理；默认补齐 off，保留用户显式的 auto/propose/off。聚合 ID 仅用于展示，不能传入 cron 变更或历史接口。移除原 029 补丁，恢复原生系统任务收敛；已打旧补丁的开发运行时需从锁定的干净包重建。
 
 ### 2.3 Delivery 与目标
 
@@ -42,13 +42,21 @@ Job 映射额外给 Renderer 一个 management 分类：`editable` 是表单可�
 
 ### 2.4 执行权限
 
-Agent-turn 任务的创建与编辑表单提供“只读”和“完全权限”。新建 agent-turn 任务默认只读；Main 将选择转换为 Gateway 原生 `payload.toolsAllow`，随任务定义持久化并应用到定时与手动运行。只读仅允许 `read`、`web_search`、`web_fetch`、`memory_search`、`memory_get`，不开放 exec、写文件、浏览器自动化、子助手或任意 MCP 工具；配置的结果投递独立于工具权限。完全权限使用 `['*']`，但不能绕过原有 Agent、宿主或沙盒权限。不会把需要审批的外部任务改绑到 scheduler。
+Agent-turn 任务的创建与编辑表单提供“只读”和“完全权限”。新建任务默认只读。Main 同时保存原生 `payload.permissionMode` 与工具白名单：只读为 `read-only` 加检索工具集合；完全权限为 `full` 加 `['*']`。运行时补丁 030 在每次 isolated 会话创建后写入权限模式及工作区根目录，并将模式传给嵌入式执行器；CLI 执行器从会话记录读取同一模式。原生 Full 模式使用 `security: full`、`ask: off`，无需人工审批，不修改全局或助手配置。沙盒和操作系统边界与主界面一致。
+
+只有无 Agent caller scope 的 `operator.admin` 客户端可以设置任务权限；已有 Full 任务的修改和手动执行也要求该身份，避免低权限模型通过改写任务绕过会话权限。手动执行在排队提交及实际执行时重读任务权限，避免等待期间权限变化造成检查过时。定时执行与手动执行共用运行路径。系统任务和非 isolated 任务不能借此修改主会话权限。旧任务仅有通配工具白名单时显示“保留现有自定义权限”，不会自动提权；用户显式选择完全权限后才写入 `full`。新字段由 native cron JSON storage 持久化并纳入配置 revision。部署必须从锁定原始包重建运行时，不能原地修改旧补丁。
 
 `systemEvent` 任务由主会话 heartbeat 执行，原生运行路径不应用任务的 `toolsAllow`，因此表单仅说明其继承主会话权限，不展示权限选择。Main 拒绝对此类型显式设置权限预设；默认只读仅应用于新建 agent-turn 任务。
 
 已有任务不自动修改权限；自定义工具限制显示“保留现有自定义权限”。仅修改名称、提示词或时间时保留原工具限制。权限字段属于 IPC/表单输入，不增加 SQLite 副本或 Gateway 自定义字段。系统管理任务仍只读展示，不开放基础任务编辑器。
 
-### 2.5 状态
+### 2.5 记忆整理功能开关
+
+记忆整理卡片的开关通过 Gateway `config.get` 和带 `baseHash` 的 `config.patch` 修改 `plugins.entries.memory-core.config.dreaming.enabled`，不调用 `cron.update`。关闭时插件移除任务；Renderer 根据配置保留功能卡片，便于重新开启。该占位卡不持久化、不进入收件箱、没有运行或历史入口，也不会提交给 cron API。重新开启后由原生插件创建任务并替换占位卡。
+
+不再提供单独的系统任务设置弹窗。技能整理聚合卡片提供全局模式开关，明确说明影响全局自动学习与整理；展开后查看各助手原生任务状态与历史。原生 `skillCollectionReview` 不接受客户端单独修改，系统维护流程不使用普通 agent-turn 的权限预设。
+
+### 2.6 状态
 
 产品状态：success/error/skipped/running；Gateway wire 的 `ok` 映射为 success。TaskState 包含 next/last/running timestamp、last error/duration 和 consecutive errors。Run 另外保存 session id/key、summary、delivery status/error。
 
@@ -68,10 +76,10 @@ Agent-turn 任务的创建与编辑表单提供“只读”和“完全权限”
 
 `CronJobService` 先 ensure Gateway ready，再调用 RPC。list 使用 `limit=200` 和 offset 遍历全部 job，显式设置 `includeDeliveryPreviews=false`，避免列表/轮询触发逐任务的 delivery target I/O；分页同时校验 `nextOffset` 单调增加和 `snapshotRevision` 一致。get/update/toggle/run 使用 v2026.9.2 原生 `cron.get` 精确读取，不再用模糊 query 扫描。
 
-Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-scheduler`。Update 根据 payload kind 原子调整：
+Create 映射 schedule/payload/delivery；Agent-turn 使用调用方选择的 `agentId`，未指定时默认为 `main`。Update 根据 payload kind 原子调整：
 
-- 转为 agentTurn 时默认 isolated、分配 scheduler agent；
-- 转为 systemEvent 时清除 scheduler agent 和不再适用的 session key；
+- 转为 agentTurn 时默认 isolated、使用指定助手或 `main`；
+- 转为 systemEvent 时清除不再适用的 agent/session key 绑定，显式指定的助手予以保留；
 - delivery 显式设 none 时发 `{mode:'none'}`，不是遗漏字段；
 - mutation 按 task id 串行，避免 toggle/update/run 互相覆盖。
 - update/toggle 将最新 job 的 `configRevision` 作为 `expectedConfigRevision` 发回 Gateway；定义已被 Agent/其他客户端改写时拒绝覆盖，并由 Renderer 重载权威列表。
@@ -79,11 +87,11 @@ Create 映射 schedule/payload/delivery；Agent-turn 强制 `agentId = justdo-sc
 
 新建 job 即使调用方省略 delivery，也必须显式发送 `delivery: {mode:'none'}`。这样应用内结果不会因 OpenClaw 默认 delivery 改变而意外 announce；只有用户明确选择外发模式时才发送 channel/webhook 字段。
 
-## 5. Scheduler agent 隔离
+## 5. 执行助手与会话隔离
 
-`justdo-scheduler` 是受管 agent，JustDo 新建或把 system event 显式转换成 agent-turn 的 job 由它执行。由 Agent、OpenClaw core/extension 或其他客户端创建的任务保留原 owner；后台 list/poll、普通 update、toggle 和 manual run 均不得接管或改写其 `agentId`。这样 UI 中一次重命名、启停或试运行不会把 account-policy 任务静默提升到 scheduler 的 full/unattended policy。
+定时任务复用现有 OpenClaw 助手，不创建专用执行身份。新建或转换为 agent-turn 的任务默认使用 `main`，也可以显式选择其他助手；独立会话由 `sessionTarget: isolated` 提供。后台 list/poll、普通 update、toggle 和 manual run 保留原 owner，不改写 `agentId`，不附加完全权限或审批豁免。
 
-模型可见的 `automations` 工具不经过 JustDo IPC，因此受保护的 `automation-permission` extension 在 OpenClaw `before_tool_call` 层读取当前原生 session permission mode：Full 放行，Ask/Auto 要求 one-shot approval，read-only 拒绝。只有同时具备 scheduler agent id 与原生 cron-run session key 的无人值守执行可以豁免；普通交互会话不能冒用该 agent id。每次 Gateway 连接都通过 status RPC 验证 policy 已加载，缺失时禁止普通 turn。
+模型可见的 `automations` 工具不经过 JustDo IPC，因此受保护的 `automation-permission` extension 在 OpenClaw `before_tool_call` 层读取当前原生 session permission mode：Full 放行，Ask/Auto 要求 one-shot approval，read-only 拒绝。定时执行与交互执行使用相同的原生权限规则，没有基于助手身份或 cron-run session key 的豁免。每次 Gateway 连接都通过 status RPC 验证 policy 已加载，缺失时禁止普通 turn。
 
 ## 6. v2026.9.2 Delivery 语义
 
@@ -171,7 +179,7 @@ Job：List/Get/Create/Update/Delete/Toggle/RunManually/ListRuns/ResolveSession/L
 | artifact cleanup 失败       | 保留 receipt，不产生“已删除”假象                    |
 | session history 暂不可用    | receipt仍可读；UI重试并做 fingerprint 诊断          |
 | job 定义并发变化            | `expectedConfigRevision` 冲突，拒绝覆盖并刷新列表   |
-| managed/advanced job        | managed 全只读；advanced 禁止表单编辑、保留安全动作 |
+| managed/advanced job        | managed 定义只读，记忆与技能聚合卡片通过原生配置控制全局开关；advanced 禁止表单编辑、保留安全动作 |
 | manual run 未入队           | IPC 返回失败，不显示“触发成功”                      |
 
 ## 16. 测试与维护
@@ -206,7 +214,7 @@ flowchart LR
 
 ## 19. Unattended 安全不变量
 
-JustDo 创建的 `agentTurn` 任务必须绑定 `justdo-scheduler` 隔离 agent，并使用受管无人值守 policy；外部或 Agent 创建的任务必须保留原 owner/policy。交互会话中的 automation mutation 由原生 session mode 门禁，不能通过改写 scheduler assignment 绕过审批。Webhook/channel delivery 中的 credential 由 Gateway/受管配置处理，receipt/log 只保留脱敏错误。
+JustDo 创建的 `agentTurn` 任务使用现有助手的独立会话，默认绑定 `main`；外部或 Agent 创建的任务保留原 owner/policy。任务工具权限仍受所选助手和原生执行策略限制；automation mutation 由原生 session mode 门禁，没有专用助手的审批豁免。Webhook/channel delivery 中的 credential 由 Gateway/受管配置处理，receipt/log 只保留脱敏错误。
 
 ## 20. 代码与测试地图
 

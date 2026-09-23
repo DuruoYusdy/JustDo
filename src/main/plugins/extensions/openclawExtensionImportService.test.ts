@@ -84,7 +84,7 @@ describe('OpenClawExtensionImportService', () => {
 
     await expect(
       service.updateConfiguration('automation-permission', {
-        unrestrictedAgentIds: 'main',
+        approvalTimeoutMinutes: 10,
       }),
     ).resolves.toEqual({
       success: false,

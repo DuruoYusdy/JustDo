@@ -17,11 +17,15 @@ describe('scheduled task permission presets', () => {
     expect(payload.toolsAllow).not.toContain('exec');
     expect(payload.toolsAllow).not.toContain('sessions_spawn');
     expect(getScheduledTaskPermission(payload)).toBe(ScheduledTaskPermission.ReadOnly);
-    expect(payload).toMatchObject({ message: 'Report', timeoutSeconds: 30 });
+    expect(payload).toMatchObject({
+      message: 'Report',
+      timeoutSeconds: 30,
+      permissionMode: 'read-only',
+    });
   });
 
   test('recognizes legacy and custom restrictions without widening them', () => {
-    expect(getScheduledTaskPermission({})).toBe(ScheduledTaskPermission.Full);
+    expect(getScheduledTaskPermission({})).toBe(ScheduledTaskPermission.Custom);
     const payload = { kind: 'agentTurn' as const, message: 'Report', toolsAllow: [] };
     expect(getScheduledTaskPermission(payload)).toBe(ScheduledTaskPermission.Custom);
     expect(applyScheduledTaskPermission(payload, ScheduledTaskPermission.Custom)).toBe(payload);
@@ -40,6 +44,10 @@ describe('scheduled task permission presets', () => {
     expect(applyScheduledTaskPermission(payload, ScheduledTaskPermission.Full).toolsAllow).toEqual([
       '*',
     ]);
+    const full = applyScheduledTaskPermission(payload, ScheduledTaskPermission.Full);
+    expect(full).toMatchObject({ permissionMode: 'full', toolsAllow: ['*'] });
+    expect(getScheduledTaskPermission(full)).toBe(ScheduledTaskPermission.Full);
+    expect(getScheduledTaskPermission({ toolsAllow: ['*'] })).toBe(ScheduledTaskPermission.Custom);
     expect(() =>
       applyScheduledTaskPermission(payload, 'invalid' as ScheduledTaskPermission),
     ).toThrow();

@@ -47,15 +47,25 @@ import {
   getKnownSystemTaskPresentation,
   getStatusLabelKey,
   getStatusTone,
+  getTaskAgentLabel,
   getTaskDisplayName,
   getTaskExecutionPreview,
   getTaskPromptText,
+  isMemoryDreamingTask,
+  isSkillCollectionReviewTask,
 } from '@/features/scheduled-tasks/components/utils';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
 import { RootState } from '@/store';
+
+import {
+  MEMORY_DREAMING_CARD_ID,
+  useMemoryDreamingControl,
+  withMemoryDreamingCard,
+} from './memoryDreamingControl';
+import { SKILL_REVIEW_CARD_ID, withSkillReviewCard } from './skillReviewCard';
 
 // ── Schedule Builder Types ─────────────────────────────────────────
 
@@ -355,6 +365,11 @@ export function computeNextRunPreview(form: ScheduleFormState, now = new Date())
 // ── Cron Job Card ──────────────────────────────────────────────────
 
 interface CronJobCardProps {
+  memoryToggleDisabled?: boolean;
+  skillToggleDisabled?: boolean;
+  skillMembers?: ScheduledTask[];
+  onMemberHistory?: (id: string) => void;
+  onMemberDetails?: (id: string) => void;
   job: ScheduledTask;
   onToggle: (enabled: boolean) => void;
   onEdit: () => void;
@@ -409,7 +424,12 @@ function getTaskVisual(job: ScheduledTask): {
   }
 }
 
-function CronJobCard({
+export function CronJobCard({
+  memoryToggleDisabled = true,
+  skillToggleDisabled = true,
+  skillMembers = [],
+  onMemberHistory,
+  onMemberDetails,
   job,
   onToggle,
   onEdit,
@@ -445,15 +465,32 @@ function CronJobCard({
 
   const promptText = getTaskPromptText(job);
   const agents = useSelector((s: RootState) => s.agent.agents);
-  const displayName = getTaskDisplayName(job, agents);
+  const displayName = getTaskDisplayName(job);
+  const isSkillAggregate = job.id === SKILL_REVIEW_CARD_ID;
+  const agentLabel = isSkillAggregate
+    ? t('cronSkillReviewScope')
+    : isMemoryDreamingTask(job)
+      ? t('cronMemoryScope')
+      : getTaskAgentLabel(job, agents);
   const isEnabled = job.enabled;
   const isManaged = job.management === 'managed';
+  const isMemory = isMemoryDreamingTask(job);
+  const isPlaceholder = job.id === MEMORY_DREAMING_CARD_ID || isSkillAggregate;
+  const toggleDisabled = isSkillAggregate
+    ? skillToggleDisabled
+    : isMemory
+      ? memoryToggleDisabled
+      : isManaged;
   const isEditable = job.management === 'editable';
   const hasLastRun = Boolean(job.state.lastRunAtMs);
   const lastStatus = job.state.lastStatus;
   const lastError = job.state.lastError;
   const nextRunMs = job.state.nextRunAtMs;
-  const scheduleLabel = formatScheduleLabel(job.schedule);
+  const scheduleLabel = isSkillAggregate
+    ? t('cronSkillReviewScheduleManaged')
+    : isPlaceholder
+      ? t('cronMemoryScheduleManaged')
+      : formatScheduleLabel(job.schedule);
   const nextRunLabel =
     nextRunMs && isEnabled ? `${t('cronCardNext')}: ${formatDateTime(new Date(nextRunMs))}` : null;
   const visual = getTaskVisual(job);
@@ -493,45 +530,68 @@ function CronJobCard({
           </span>
         )}
 
-        <div className="shrink-0" onClick={e => e.stopPropagation()}>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isEnabled}
-            aria-label={t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
-            disabled={isManaged}
-            title={isManaged ? t('cronCardManagedHint') : undefined}
-            onClick={e => {
-              e.stopPropagation();
-              onToggle(!job.enabled);
-            }}
-            className={
-              'inline-flex items-center gap-1.5 rounded-lg py-1 pl-1.5 transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
-              (isEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary') +
-              (isManaged ? ' cursor-not-allowed opacity-60' : '')
-            }
+        {isManaged && !isMemory && !isSkillAggregate ? (
+          <span
+            className="shrink-0 text-xs text-secondary"
+            title={t('cronSkillReviewReadOnlyHint')}
           >
-            <span className="text-[10px] font-medium">
-              {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
-            </span>
-            <span
+            {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+          </span>
+        ) : (
+          <div className="shrink-0" onClick={e => e.stopPropagation()}>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isEnabled}
+              aria-label={t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+              disabled={toggleDisabled}
+              title={
+                isSkillAggregate
+                  ? t('cronSkillReviewToggleHint')
+                  : isMemory
+                    ? t('cronMemoryToggleHint')
+                    : undefined
+              }
+              onClick={e => {
+                e.stopPropagation();
+                onToggle(!job.enabled);
+              }}
               className={
-                'relative h-[18px] w-8 shrink-0 rounded-full transition-colors ' +
-                (isEnabled ? 'bg-primary' : 'bg-border')
+                'inline-flex items-center gap-1.5 rounded-lg py-1 pl-1.5 transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ' +
+                (isEnabled ? 'text-green-600 dark:text-green-400' : 'text-secondary') +
+                (toggleDisabled ? ' cursor-not-allowed opacity-60' : '')
               }
             >
+              <span className="text-[10px] font-medium">
+                {t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
+              </span>
               <span
                 className={
-                  'absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ' +
-                  (isEnabled ? 'translate-x-3.5' : 'translate-x-0')
+                  'relative h-[18px] w-8 shrink-0 rounded-full transition-colors ' +
+                  (isEnabled ? 'bg-primary' : 'bg-border')
                 }
-              />
-            </span>
-          </button>
-        </div>
+              >
+                <span
+                  className={
+                    'absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ' +
+                    (isEnabled ? 'translate-x-3.5' : 'translate-x-0')
+                  }
+                />
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid min-w-0 grid-cols-[14px_minmax(0,1fr)] gap-x-2 gap-y-1 px-3 pb-2 text-xs text-secondary">
+        {agentLabel && (
+          <>
+            <UserIcon className="h-3.5 w-3.5" />
+            <p className="min-w-0 truncate leading-4" title={agentLabel}>
+              {agentLabel}
+            </p>
+          </>
+        )}
         <CalendarDaysIcon className="h-3.5 w-3.5" />
         <p
           className="flex min-w-0 items-center gap-1.5 font-medium leading-4"
@@ -570,7 +630,12 @@ function CronJobCard({
               className={'min-w-0 truncate leading-4 ' + (lastError ? 'cursor-help' : '')}
               title={lastError ?? undefined}
             >
-              {t('cronCardLast')}: {formatDateTime(new Date(job.state.lastRunAtMs!))}
+              {t(
+                isSkillAggregate && lastStatus === 'error'
+                  ? 'cronSkillReviewLatestFailure'
+                  : 'cronCardLast',
+              )}
+              : {formatDateTime(new Date(job.state.lastRunAtMs!))}
               {lastStatus && (
                 <span className={getStatusTone(lastStatus)}>
                   {' · '}
@@ -582,79 +647,137 @@ function CronJobCard({
         )}
       </div>
 
-      <div
-        className="mt-auto flex items-center gap-0.5 border-t border-border-subtle px-2.5 py-1.5"
-        onClick={e => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={e => {
-            e.stopPropagation();
-            void handleTrigger(e);
-          }}
-          disabled={triggering || isManaged}
-          title={isManaged ? t('cronCardManagedHint') : undefined}
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary/10 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
-        >
-          {triggering ? (
-            <ArrowPathIcon className="mr-1 h-3 w-3 animate-spin" />
-          ) : (
-            <PlayIcon className="mr-1 h-3 w-3" />
+      {isSkillAggregate && (
+        <div className="mt-auto border-t border-border-subtle px-3 py-2 text-xs text-secondary">
+          <p>{t('cronSkillReviewToggleHint')}</p>
+          {skillMembers.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer">
+                {t('cronSkillReviewMembers')} ({skillMembers.length})
+              </summary>
+              <ul className="mt-2 space-y-3">
+                {skillMembers.map(member => (
+                  <li key={member.id}>
+                    <p className="flex items-center gap-1">
+                      <UserIcon className="h-3.5 w-3.5" />
+                      {getTaskAgentLabel(member, agents)}
+                    </p>
+                    <p>
+                      {t(member.enabled ? 'cronStatsActive' : 'cronStatsPaused')} ·{' '}
+                      {formatScheduleLabel(member.schedule)}
+                    </p>
+                    {isEnabled && member.enabled && member.state.nextRunAtMs && (
+                      <p>
+                        {t('cronCardNext')}: {formatDateTime(new Date(member.state.nextRunAtMs))}
+                      </p>
+                    )}
+                    {member.state.lastStatus && (
+                      <p className={getStatusTone(member.state.lastStatus)}>
+                        {t('cronCardLast')}:{' '}
+                        {member.state.lastRunAtMs
+                          ? formatDateTime(new Date(member.state.lastRunAtMs))
+                          : ''}{' '}
+                        · {t(getStatusLabelKey(member.state.lastStatus))}
+                      </p>
+                    )}
+                    <div className="flex gap-3 pt-1">
+                      <button
+                        type="button"
+                        className="text-primary"
+                        onClick={() => onMemberHistory?.(member.id)}
+                      >
+                        {t('cronCardHistory')}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-primary"
+                        onClick={() => onMemberDetails?.(member.id)}
+                      >
+                        {t('cronDetailsTitle')}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
-          {t('cronCardRunNow')}
-        </button>
-        <button
-          type="button"
-          onClick={e => {
-            e.stopPropagation();
-            onHistory();
-          }}
-          className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+        </div>
+      )}
+      {!isPlaceholder && (
+        <div
+          className="mt-auto flex items-center gap-0.5 border-t border-border-subtle px-2.5 py-1.5"
+          onClick={e => e.stopPropagation()}
         >
-          <ClockIcon className="mr-1 h-3 w-3" />
-          {t('cronCardHistory')}
-        </button>
-        <div className="flex-1" />
-        {!isEditable && (
           <button
             type="button"
             onClick={e => {
               e.stopPropagation();
-              onDetails();
+              void handleTrigger(e);
             }}
-            title={t('cronDetailsTitle')}
-            aria-label={t('cronDetailsTitle')}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            disabled={triggering || isManaged}
+            title={isManaged ? t('cronCardManagedHint') : undefined}
+            className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary/10 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
           >
-            <InformationCircleIcon className="h-4 w-4" />
+            {triggering ? (
+              <ArrowPathIcon className="mr-1 h-3 w-3 animate-spin" />
+            ) : (
+              <PlayIcon className="mr-1 h-3 w-3" />
+            )}
+            {t('cronCardRunNow')}
           </button>
-        )}
-        {isEditable && (
           <button
             type="button"
             onClick={e => {
               e.stopPropagation();
-              onEdit();
+              onHistory();
             }}
-            title={t('cronDialogEditTitle')}
-            aria-label={t('cronDialogEditTitle')}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
           >
-            <PencilSquareIcon className="h-4 w-4" />
+            <ClockIcon className="mr-1 h-3 w-3" />
+            {t('cronCardHistory')}
           </button>
-        )}
-        {!isManaged && (
-          <button
-            type="button"
-            onClick={handleDeleteClick}
-            title={t('delete')}
-            aria-label={t('delete')}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
-          >
-            <TrashIcon className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+          <div className="flex-1" />
+          {!isEditable && (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                onDetails();
+              }}
+              title={t('cronDetailsTitle')}
+              aria-label={t('cronDetailsTitle')}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              <InformationCircleIcon className="h-4 w-4" />
+            </button>
+          )}
+          {isEditable && (
+            <button
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              title={t('cronDialogEditTitle')}
+              aria-label={t('cronDialogEditTitle')}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              <PencilSquareIcon className="h-4 w-4" />
+            </button>
+          )}
+          {!isManaged && (
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              title={t('delete')}
+              aria-label={t('delete')}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500"
+            >
+              <TrashIcon className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -669,7 +792,10 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
   const systemPresentation = getKnownSystemTaskPresentation(job);
   const isKnownSystemTask = systemPresentation !== null;
   const agents = useSelector((s: RootState) => s.agent.agents);
-  const displayName = getTaskDisplayName(job, agents);
+  const displayName = getTaskDisplayName(job);
+  const agentLabel = isMemoryDreamingTask(job)
+    ? t('cronMemoryScope')
+    : getTaskAgentLabel(job, agents);
   const payloadKind = isKnownSystemTask
     ? t('scheduledTasksManagedBackgroundType')
     : job.payload.kind === 'agentTurn'
@@ -828,6 +954,9 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
       : job.description
         ? [{ label: t('cronDetailsDescription'), value: job.description }]
         : []),
+    ...(isKnownSystemTask
+      ? [{ label: t('cronDialogPermissionTitle'), value: t('cronSystemPermissionHint') }]
+      : []),
     { label: t('cronDialogSchedule'), value: formatScheduleLabel(job.schedule) },
     ...(triggerOptions ? [{ label: t('cronDetailsTriggerOptions'), value: triggerOptions }] : []),
     { label: t('cronDetailsPayloadType'), value: payloadKind },
@@ -865,6 +994,12 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
             >
               {displayName}
             </h2>
+            {agentLabel && (
+              <p className="mt-1 flex items-center gap-2 text-xs text-secondary">
+                <UserIcon className="h-3.5 w-3.5" />
+                {agentLabel}
+              </p>
+            )}
             <p className="mt-0.5 text-xs text-secondary">{t('cronDetailsTitle')}</p>
           </div>
           <button
@@ -937,16 +1072,27 @@ function TaskDetailsDialog({ job, onClose }: TaskDetailsDialogProps) {
 
 // ── Create/Edit Dialog ─────────────────────────────────────────────
 
+type TaskAgentOption = { id: string; name: string; enabled: boolean; deletedAt?: number };
+
 interface DialogProps {
+  agents?: readonly TaskAgentOption[];
   open: boolean;
   job?: ScheduledTask;
   onClose: () => void;
   onSave: (input: ScheduledTaskInput) => Promise<void>;
 }
 
-export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
+export function CreateEditDialog({ open, job, onClose, onSave, agents = [] }: DialogProps) {
   const t = i18nService.t.bind(i18nService);
   const isEdit = !!job;
+  const initialAgentId = job?.agentId ?? 'main';
+  const [agentId, setAgentId] = useState(initialAgentId);
+  const availableAgents = agents.filter(agent => agent.enabled && !agent.deletedAt);
+  const showFallbackMain = !agents.some(agent => agent.id === 'main');
+  const knownAgentIds = new Set([
+    ...(showFallbackMain ? ['main'] : []),
+    ...availableAgents.map(agent => agent.id),
+  ]);
 
   const [name, setName] = useState(job?.name ?? '');
   const [message, setMessage] = useState(editablePayloadText(job));
@@ -967,6 +1113,9 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
         ? 'webhook'
         : 'none',
   );
+  const [notificationExpanded, setNotificationExpanded] = useState(
+    !!job && job.delivery.mode !== 'none',
+  );
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -978,6 +1127,7 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
   if (prevOpen !== open) {
     setPrevOpen(open);
     if (open) {
+      setAgentId(initialAgentId);
       setName(job?.name ?? '');
       setMessage(editablePayloadText(job));
       setScheduleForm(parseScheduleToForm(job?.schedule));
@@ -995,6 +1145,7 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
             ? 'webhook'
             : 'none',
       );
+      setNotificationExpanded(!!job && job.delivery.mode !== 'none');
       setErrors({});
       setSubmitError(null);
       setSaving(false);
@@ -1045,6 +1196,7 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
     }
     if (deliveryMode === 'announce' && !deliveryChannel.trim()) {
       next.delivery = t('cronToastDeliveryChannelRequired');
+      setNotificationExpanded(true);
     }
     if (scheduleForm.mode === 'once') {
       const dt = new Date(scheduleForm.onceDate + 'T' + (scheduleForm.onceTime || '00:00'));
@@ -1077,9 +1229,11 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
       const execution = buildScheduledTaskExecutionInput(job, message.trim());
       const input: ScheduledTaskInput = {
         ...(!job ||
-        (job.payload.kind === 'agentTurn' &&
-          permissionMode !== getScheduledTaskPermission(job.payload))
+        (job.payload.kind === 'agentTurn' && permissionMode !== ScheduledTaskPermission.Custom)
           ? { permissionMode }
+          : {}),
+        ...(execution.payload.kind === 'agentTurn' && (!job || agentId !== initialAgentId)
+          ? { agentId, ...(job ? { sessionKey: null } : {}) }
           : {}),
         name: name.trim(),
         description: job?.description ?? '',
@@ -1111,21 +1265,21 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
   if (!open) return null;
 
   const inputClass =
-    'w-full rounded-xl border border-black/10 dark:border-white/10 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-secondary/60 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all';
+    'w-full rounded-lg border border-black/10 dark:border-white/10 bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-secondary/60 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all';
   const labelClass = 'block text-sm font-medium text-foreground mb-1.5';
   const isCustomRecurrence = scheduleForm.recurrence === 'custom';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end">
-      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+    <div className="fixed inset-0 z-50 flex items-center justify-end p-2 sm:p-4">
+      <div className="absolute inset-0 bg-black/10 dark:bg-black/25" />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="scheduled-task-edit-title"
-        className="relative flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-border bg-background shadow-2xl"
+        className="relative flex max-h-full w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle shrink-0">
           <div>
             <h2 id="scheduled-task-edit-title" className="text-lg font-semibold text-foreground">
               {isEdit ? t('cronDialogEditTitle') : t('cronDialogCreateTitle')}
@@ -1143,11 +1297,8 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 space-y-6 overflow-y-auto bg-surface/40 px-6 py-6">
-          <section className="rounded-2xl border border-border-subtle bg-background p-5">
-            <h3 className="mb-4 text-xs font-semibold uppercase tracking-wide text-secondary">
-              {t('cronDialogContentSection')}
-            </h3>
+        <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
+          <section className="border-b border-border-subtle pb-4">
             {/* Name */}
             <div>
               <label className={labelClass}>{t('cronDialogTaskName')}</label>
@@ -1163,25 +1314,24 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
             </div>
 
             {/* Message */}
-            <div className="mt-5">
+            <div className="mt-3">
               <label className={labelClass}>{t('cronDialogMessage')}</label>
               <textarea
                 value={message}
                 onChange={e => setMessage(e.target.value)}
                 className={inputClass + ' resize-none'}
                 placeholder={t('cronDialogMessagePlaceholder')}
-                rows={4}
+                rows={3}
               />
               {errors.message && <p className="text-xs text-red-500 mt-1">{errors.message}</p>}
             </div>
           </section>
 
           {/* Schedule Builder */}
-          <section className="rounded-2xl border border-border-subtle bg-background p-5">
-            <h3 className="mb-1 text-sm font-semibold text-foreground">
+          <section className="border-b border-border-subtle pb-4">
+            <h3 className="mb-2 text-sm font-semibold text-foreground">
               {t('cronDialogSchedule')}
             </h3>
-            <p className="mb-4 text-xs text-secondary">{t('cronDialogScheduleDescription')}</p>
 
             {/* Mode tabs */}
             <div className="flex rounded-xl bg-black/5 dark:bg-white/5 p-1 mb-3">
@@ -1191,7 +1341,7 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
                   type="button"
                   onClick={() => setScheduleForm(s => ({ ...s, mode }))}
                   className={
-                    'flex-1 py-2 text-sm font-medium rounded-lg transition-all ' +
+                    'flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ' +
                     (scheduleForm.mode === mode
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-secondary hover:text-foreground')
@@ -1390,133 +1540,178 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
             {errors.schedule && <p className="text-xs text-red-500 mt-1">{errors.schedule}</p>}
           </section>
 
-          <section className="rounded-2xl border border-border-subtle bg-background p-5">
-            <label htmlFor="scheduled-task-permission" className={labelClass}>
-              {t('cronDialogPermissionTitle')}
-            </label>
-            {job?.payload.kind === 'systemEvent' ? (
-              <p className="text-xs text-secondary">{t('cronDialogPermissionInheritedHint')}</p>
-            ) : (
-              <>
+          <div className="grid grid-cols-1 gap-4 border-b border-border-subtle pb-4 sm:grid-cols-2">
+            {(!job || job.payload.kind === 'agentTurn') && (
+              <section className="min-w-0">
+                <label htmlFor="scheduled-task-agent" className={labelClass}>
+                  {t('cronDialogAgentTitle')}
+                </label>
                 <select
-                  id="scheduled-task-permission"
+                  id="scheduled-task-agent"
                   className={inputClass}
-                  value={permissionMode}
-                  onChange={event =>
-                    setPermissionMode(event.target.value as ScheduledTaskPermission)
-                  }
+                  value={agentId}
+                  onChange={event => setAgentId(event.target.value)}
                 >
-                  <option value={ScheduledTaskPermission.ReadOnly}>
-                    {t('cronDialogPermissionReadOnly')}
-                  </option>
-                  <option value={ScheduledTaskPermission.Full}>
-                    {t('cronDialogPermissionFull')}
-                  </option>
-                  {job &&
-                    job.payload.kind === 'agentTurn' &&
-                    getScheduledTaskPermission(job.payload) === ScheduledTaskPermission.Custom && (
-                      <option value={ScheduledTaskPermission.Custom}>
-                        {t('cronDialogPermissionCustom')}
-                      </option>
-                    )}
-                </select>
-                <p className="mt-2 text-xs text-secondary">
-                  {t(
-                    permissionMode === ScheduledTaskPermission.ReadOnly
-                      ? 'cronDialogPermissionReadOnlyHint'
-                      : permissionMode === ScheduledTaskPermission.Full
-                        ? 'cronDialogPermissionFullHint'
-                        : 'cronDialogPermissionCustomHint',
+                  {showFallbackMain && (
+                    <option value="main">{t('scheduledTasksMainAssistant')}</option>
                   )}
-                </p>
-              </>
-            )}
-          </section>
-
-          {/* Delivery */}
-          <section className="rounded-2xl border border-border-subtle bg-background p-5">
-            <h3 className="mb-4 text-sm font-semibold text-foreground">
-              {t('cronDialogResultSection')}
-            </h3>
-            <label className={labelClass}>{t('scheduledTasksResultsRetentionTitle')}</label>
-            <div className="mb-4 flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-foreground">
-              <CheckCircleIcon className="h-5 w-5 text-primary" />
-              {t('scheduledTasksResultsRetentionAlways')}
-            </div>
-            <label className={labelClass}>{t('scheduledTasksExternalNotificationTitle')}</label>
-            <p className="text-xs text-secondary mb-3">{t('cronDialogDeliveryDescription')}</p>
-
-            <div className="flex gap-2 mb-3">
-              {(['none', 'announce'] as const).map(mode => {
-                const selected = deliveryMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => setDeliveryMode(mode)}
-                    className={
-                      'flex-1 p-3 rounded-xl border text-left transition-all ' +
-                      (selected
-                        ? 'border-primary bg-primary/10 ring-2 ring-primary/20 shadow-sm'
-                        : 'border-border hover:border-primary/40 hover:bg-surface-raised')
-                    }
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={
-                          'text-sm font-medium ' + (selected ? 'text-primary' : 'text-foreground')
-                        }
-                      >
-                        {mode === 'none'
-                          ? t('cronDialogDeliveryModeNone')
-                          : t('cronDialogDeliveryModeAnnounce')}
-                      </span>
-                      {selected && (
-                        <CheckCircleIcon
-                          className="h-5 w-5 shrink-0 text-primary"
-                          strokeWidth={2.5}
-                        />
-                      )}
-                    </div>
-                    <div className="text-xs text-secondary mt-0.5">
-                      {mode === 'none'
-                        ? t('cronDialogDeliveryModeNoneDesc')
-                        : t('cronDialogDeliveryModeAnnounceDesc')}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {deliveryMode === 'webhook' && job?.delivery.mode === 'webhook' && (
-              <div className="mb-3 rounded-xl border border-border bg-surface-raised px-3 py-2 text-sm text-secondary">
-                {t('scheduledTasksWebhookPreserved')}
-              </div>
-            )}
-
-            {deliveryMode === 'announce' && (
-              <div className="relative">
-                <select
-                  value={deliveryChannel}
-                  onChange={e => setDeliveryChannel(e.target.value)}
-                  className={inputClass + ' appearance-none pr-10'}
-                >
-                  <option value="">{t('cronDialogSelectChannel')}</option>
-                  {channelOptions.map(c => (
-                    <option key={c.value} value={c.value} disabled={c.disabled}>
-                      {c.label}
+                  {availableAgents.map(agent => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
                     </option>
                   ))}
+                  {!knownAgentIds.has(agentId) && (
+                    <option value={agentId} disabled>
+                      {getTaskAgentLabel({ agentId }, agents)}
+                    </option>
+                  )}
                 </select>
-                <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-                {errors.delivery && <p className="mt-1 text-xs text-red-500">{errors.delivery}</p>}
-              </div>
+                <p className="mt-2 text-xs text-secondary">{t('cronDialogAgentHint')}</p>
+              </section>
             )}
-          </section>
+            <section className="min-w-0">
+              <label htmlFor="scheduled-task-permission" className={labelClass}>
+                {t('cronDialogPermissionTitle')}
+              </label>
+              {job?.payload.kind === 'systemEvent' ? (
+                <p className="text-xs text-secondary">{t('cronDialogPermissionInheritedHint')}</p>
+              ) : (
+                <>
+                  <select
+                    id="scheduled-task-permission"
+                    className={inputClass}
+                    value={permissionMode}
+                    onChange={event =>
+                      setPermissionMode(event.target.value as ScheduledTaskPermission)
+                    }
+                  >
+                    <option value={ScheduledTaskPermission.ReadOnly}>
+                      {t('cronDialogPermissionReadOnly')}
+                    </option>
+                    <option value={ScheduledTaskPermission.Full}>
+                      {t('cronDialogPermissionFull')}
+                    </option>
+                    {job &&
+                      job.payload.kind === 'agentTurn' &&
+                      getScheduledTaskPermission(job.payload) ===
+                        ScheduledTaskPermission.Custom && (
+                        <option value={ScheduledTaskPermission.Custom}>
+                          {t('cronDialogPermissionCustom')}
+                        </option>
+                      )}
+                  </select>
+                  <p className="mt-2 text-xs text-secondary">
+                    {t(
+                      permissionMode === ScheduledTaskPermission.ReadOnly
+                        ? 'cronDialogPermissionReadOnlyHint'
+                        : permissionMode === ScheduledTaskPermission.Full
+                          ? 'cronDialogPermissionFullHint'
+                          : 'cronDialogPermissionCustomHint',
+                    )}
+                  </p>
+                </>
+              )}
+            </section>
+          </div>
+
+          {/* Delivery */}
+          <div className="flex items-center gap-2 text-xs text-secondary">
+            <CheckCircleIcon className="h-4 w-4 shrink-0 text-primary" />
+            {t('scheduledTasksResultsRetentionAlways')}
+          </div>
+          <details
+            open={notificationExpanded}
+            onToggle={event => setNotificationExpanded(event.currentTarget.open)}
+            className="group border-b border-border-subtle pb-4"
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+              {t('scheduledTasksExternalNotificationTitle')}
+              <span className="flex items-center gap-2 text-xs font-normal text-secondary">
+                {deliveryMode === 'none'
+                  ? t('cronDialogDeliveryModeNone')
+                  : deliveryMode === 'announce'
+                    ? t('cronDialogDeliveryModeAnnounce')
+                    : t('scheduledTasksWebhookPreserved')}
+                <ChevronDownIcon className="h-4 w-4 transition-transform group-open:rotate-180" />
+              </span>
+            </summary>
+            <div className="mt-3">
+              <p className="text-xs text-secondary mb-3">{t('cronDialogDeliveryDescription')}</p>
+
+              <div className="flex gap-2 mb-3">
+                {(['none', 'announce'] as const).map(mode => {
+                  const selected = deliveryMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setDeliveryMode(mode)}
+                      className={
+                        'flex-1 p-3 rounded-xl border text-left transition-all ' +
+                        (selected
+                          ? 'border-primary bg-primary/10 ring-2 ring-primary/20 shadow-sm'
+                          : 'border-border hover:border-primary/40 hover:bg-surface-raised')
+                      }
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={
+                            'text-sm font-medium ' + (selected ? 'text-primary' : 'text-foreground')
+                          }
+                        >
+                          {mode === 'none'
+                            ? t('cronDialogDeliveryModeNone')
+                            : t('cronDialogDeliveryModeAnnounce')}
+                        </span>
+                        {selected && (
+                          <CheckCircleIcon
+                            className="h-5 w-5 shrink-0 text-primary"
+                            strokeWidth={2.5}
+                          />
+                        )}
+                      </div>
+                      <div className="text-xs text-secondary mt-0.5">
+                        {mode === 'none'
+                          ? t('cronDialogDeliveryModeNoneDesc')
+                          : t('cronDialogDeliveryModeAnnounceDesc')}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {deliveryMode === 'webhook' && job?.delivery.mode === 'webhook' && (
+                <div className="mb-3 rounded-xl border border-border bg-surface-raised px-3 py-2 text-sm text-secondary">
+                  {t('scheduledTasksWebhookPreserved')}
+                </div>
+              )}
+
+              {deliveryMode === 'announce' && (
+                <div className="relative">
+                  <select
+                    value={deliveryChannel}
+                    onChange={e => setDeliveryChannel(e.target.value)}
+                    className={inputClass + ' appearance-none pr-10'}
+                  >
+                    <option value="">{t('cronDialogSelectChannel')}</option>
+                    {channelOptions.map(c => (
+                      <option key={c.value} value={c.value} disabled={c.disabled}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+                  {errors.delivery && (
+                    <p className="mt-1 text-xs text-red-500">{errors.delivery}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </details>
 
           {/* Enable toggle */}
-          <div className="flex items-center justify-between rounded-2xl border border-border-subtle bg-background p-5">
+          <div className="flex items-center justify-between gap-3">
             <div>
               <label htmlFor="scheduled-task-enabled" className={labelClass + ' cursor-pointer'}>
                 {t('cronDialogEnableImmediately')}
@@ -1556,7 +1751,7 @@ export function CreateEditDialog({ open, job, onClose, onSave }: DialogProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 px-5 py-4 border-t border-border-subtle shrink-0">
+        <div className="flex justify-end gap-3 px-5 py-3 border-t border-border-subtle shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -1599,7 +1794,22 @@ export const CronView: React.FC<CronViewProps> = ({
   const t = i18nService.t.bind(i18nService);
   const isMac = window.electron.platform === 'darwin';
 
-  const tasks = useSelector((s: RootState) => s.scheduledTask.tasks);
+  const nativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
+  const memoryControl = useMemoryDreamingControl(nativeTasks);
+  const toggleMemoryDreaming = memoryControl.toggle;
+  const toggleSkills = memoryControl.toggleSkills;
+  const skillMembers = useMemo(
+    () => nativeTasks.filter(isSkillCollectionReviewTask),
+    [nativeTasks],
+  );
+  const tasks = useMemo(
+    () =>
+      withSkillReviewCard(
+        withMemoryDreamingCard(nativeTasks, memoryControl.settings),
+        memoryControl.settings,
+      ),
+    [nativeTasks, memoryControl.settings],
+  );
   const agents = useSelector((s: RootState) => s.agent.agents);
   const loading = useSelector((s: RootState) => s.scheduledTask.loading);
   const error = useSelector((s: RootState) => s.scheduledTask.error);
@@ -1671,13 +1881,13 @@ export const CronView: React.FC<CronViewProps> = ({
     if (jobToDelete && !tasks.some(task => task.id === jobToDelete.id)) {
       setJobToDelete(null);
     }
-    if (detailsJobId && !tasks.some(task => task.id === detailsJobId)) {
+    if (detailsJobId && !nativeTasks.some(task => task.id === detailsJobId)) {
       setDetailsJobId(null);
     }
     if (jobToRunId && !tasks.some(task => task.id === jobToRunId)) {
       setJobToRunId(null);
     }
-  }, [detailsJobId, editingJob, jobToDelete, jobToRunId, tasks]);
+  }, [detailsJobId, editingJob, jobToDelete, jobToRunId, tasks, nativeTasks]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1720,7 +1930,16 @@ export const CronView: React.FC<CronViewProps> = ({
   const handleToggle = useCallback(
     async (id: string, enabled: boolean) => {
       try {
-        await scheduledTaskService.toggleTask(id, enabled);
+        if (id === SKILL_REVIEW_CARD_ID) {
+          if (!(await toggleSkills(enabled))) return;
+        } else if (
+          id === MEMORY_DREAMING_CARD_ID ||
+          nativeTasks.some(task => task.id === id && isMemoryDreamingTask(task))
+        ) {
+          if (!(await toggleMemoryDreaming(enabled))) return;
+        } else {
+          await scheduledTaskService.toggleTask(id, enabled);
+        }
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
             detail: enabled ? t('cronToastEnabled') : t('cronToastPaused'),
@@ -1732,7 +1951,7 @@ export const CronView: React.FC<CronViewProps> = ({
         );
       }
     },
-    [t],
+    [t, nativeTasks, toggleMemoryDreaming, toggleSkills],
   );
 
   const handleDelete = useCallback(async () => {
@@ -1784,7 +2003,12 @@ export const CronView: React.FC<CronViewProps> = ({
     return tasks.filter(task => {
       const matchesQuery =
         normalizedQuery.length === 0 ||
-        getTaskDisplayName(task, agents).toLocaleLowerCase().includes(normalizedQuery) ||
+        (task.id === SKILL_REVIEW_CARD_ID &&
+          skillMembers.some(member =>
+            (getTaskAgentLabel(member, agents) ?? '').toLocaleLowerCase().includes(normalizedQuery),
+          )) ||
+        getTaskDisplayName(task).toLocaleLowerCase().includes(normalizedQuery) ||
+        (getTaskAgentLabel(task, agents) ?? '').toLocaleLowerCase().includes(normalizedQuery) ||
         task.name.toLocaleLowerCase().includes(normalizedQuery) ||
         getTaskPromptText(task).toLocaleLowerCase().includes(normalizedQuery);
       const matchesStatus =
@@ -1794,7 +2018,7 @@ export const CronView: React.FC<CronViewProps> = ({
         (taskStatusFilter === 'failed' && task.state.lastStatus === 'error');
       return matchesQuery && matchesStatus;
     });
-  }, [taskQuery, taskStatusFilter, tasks, agents]);
+  }, [taskQuery, taskStatusFilter, tasks, agents, skillMembers]);
   const { userTasks, systemTasks } = useMemo(
     () => groupScheduledTasks(visibleTasks),
     [visibleTasks],
@@ -1901,6 +2125,11 @@ export const CronView: React.FC<CronViewProps> = ({
                 </div>
               </div>
 
+              {memoryControl.failed && (
+                <p role="alert" className="mb-3 text-sm text-red-500">
+                  {t('cronMemoryLoadFailed')}
+                </p>
+              )}
               {/* Error */}
               {error && (
                 <div className="mb-8 p-4 rounded-xl border border-red-500/50 bg-red-500/10 flex items-center gap-3">
@@ -2062,6 +2291,19 @@ export const CronView: React.FC<CronViewProps> = ({
                             <CronJobCard
                               key={job.id}
                               job={job}
+                              skillMembers={skillMembers}
+                              onMemberHistory={setHistoryTaskId}
+                              onMemberDetails={setDetailsJobId}
+                              skillToggleDisabled={
+                                !memoryControl.settings ||
+                                memoryControl.busy ||
+                                memoryControl.failed
+                              }
+                              memoryToggleDisabled={
+                                !memoryControl.settings?.memoryAvailable ||
+                                memoryControl.busy ||
+                                memoryControl.failed
+                              }
                               onToggle={enabled => handleToggle(job.id, enabled)}
                               onEdit={() => {
                                 setEditingJob(job);
@@ -2088,6 +2330,7 @@ export const CronView: React.FC<CronViewProps> = ({
       <CreateEditDialog
         open={showDialog}
         job={editingJob}
+        agents={agents}
         onClose={() => {
           setShowDialog(false);
           setEditingJob(undefined);
@@ -2230,12 +2473,25 @@ export const CronView: React.FC<CronViewProps> = ({
           >
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle shrink-0">
-              <h2
-                id="scheduled-task-history-title"
-                className="text-lg font-semibold text-foreground"
-              >
-                {historyJob ? getTaskDisplayName(historyJob, agents) : ''} - {t('cronCardHistory')}
-              </h2>
+              <div className="min-w-0">
+                <h2
+                  id="scheduled-task-history-title"
+                  className="text-lg font-semibold text-foreground"
+                >
+                  {historyJob ? getTaskDisplayName(historyJob) : ''} - {t('cronCardHistory')}
+                </h2>
+                {historyJob &&
+                  (isMemoryDreamingTask(historyJob) || getTaskAgentLabel(historyJob, agents)) && (
+                    <p className="mt-1 flex items-center gap-2 text-xs text-secondary">
+                      <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        {isMemoryDreamingTask(historyJob)
+                          ? t('cronMemoryScope')
+                          : getTaskAgentLabel(historyJob, agents)}
+                      </span>
+                    </p>
+                  )}
+              </div>
               <button
                 type="button"
                 onClick={() => setHistoryTaskId(null)}
@@ -2250,7 +2506,7 @@ export const CronView: React.FC<CronViewProps> = ({
             <div className="flex-1 overflow-y-auto px-5 py-4">
               <TaskRunHistory
                 taskId={historyTaskId}
-                taskName={historyJob ? getTaskDisplayName(historyJob, agents) : undefined}
+                taskName={historyJob ? getTaskDisplayName(historyJob) : undefined}
                 runs={historyRuns}
                 loading={historyLoading}
                 loadError={historyLoadError}

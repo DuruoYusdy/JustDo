@@ -14,6 +14,7 @@ import {
 } from './CronView';
 import {
   formatScheduleLabel,
+  getTaskAgentLabel,
   getTaskDisplayName,
   getTaskPromptText,
   isMemoryDreamingTask,
@@ -305,16 +306,13 @@ describe('CronView schedule form mapping', () => {
     };
 
     expect(isSkillCollectionReviewTask(task)).toBe(true);
-    expect(getTaskDisplayName(task)).toBe('技能库自动整理 @主助手');
+    expect(getTaskDisplayName(task)).toBe('技能库自动整理');
+    expect(getTaskAgentLabel(task)).toBe('@主助手');
     const peerTask = { ...task, agentId: 'research' };
-    expect(getTaskDisplayName(peerTask, [{ id: 'research', name: '研究助手' }])).toBe(
-      '技能库自动整理 @研究助手',
-    );
-    expect(getTaskDisplayName(peerTask)).toBe('技能库自动整理 @research');
+    expect(getTaskAgentLabel(peerTask, [{ id: 'research', name: '研究助手' }])).toBe('@研究助手');
+    expect(getTaskAgentLabel(peerTask)).toBe('@research');
     expect(getTaskDisplayName({ ...task, agentId: null })).toBe('技能库自动整理');
-    expect(getTaskDisplayName(task, [{ id: 'main', name: '我的助手' }])).toBe(
-      '技能库自动整理 @我的助手',
-    );
+    expect(getTaskAgentLabel(task, [{ id: 'main', name: '我的助手' }])).toBe('@我的助手');
     expect(getTaskPromptText(task)).toBe(
       '每周检查自动学习生成的技能，合并重复内容并清理低质量条目。',
     );

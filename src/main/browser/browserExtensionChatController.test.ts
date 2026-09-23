@@ -843,3 +843,24 @@ it('creates main threads without persisting the obsolete profile model', async (
     undefined,
   );
 });
+
+it('lists application sessions without reserving assistant names', () => {
+  const sessions = [
+    { id: 'main-session', agentId: 'main', title: 'Main', cwd: '', permissionMode: 'ask' },
+    { id: 'peer-session', agentId: 'scheduler', title: 'Peer', cwd: '', permissionMode: 'ask' },
+  ];
+  const controller = new BrowserExtensionChatController({
+    ensureEngineRunning: vi.fn(),
+    getRouter: vi.fn(),
+    getRuntime: () => null,
+    getStore: () =>
+      ({
+        listSessions: () => sessions,
+        getSession: (id: string) => sessions.find(session => session.id === id),
+      }) as never,
+  });
+  expect(controller.listSessions().map(session => session.id)).toEqual([
+    'main-session',
+    'peer-session',
+  ]);
+});

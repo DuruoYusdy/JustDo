@@ -73,7 +73,7 @@ Exec 与 plugin approval 使用 OpenClaw 原生 request/wait 机制，包括 CLI
 
 ## 5. Scheduler
 
-无人值守 `justdo-scheduler` Agent 仍是独立信任域：per-agent exec/fs 与 host approval entry 固定为 Full，避免定时任务永久等待桌面审批。普通会话的 session mode 不修改 scheduler；scheduler 的配置也不提升普通会话。
+定时任务复用现有助手及原生权限策略，不再额外注册执行身份、固定 Full 策略或审批豁免。任务选择的工具权限不能绕过助手及 host approval 限制。
 
 三档会话权限只约束 OpenClaw 管理的文件与 exec 工具。Browser、MCP、Marketplace、第三方插件和消息渠道仍遵守各自 policy。通用 `plugin.approval.*` transport 保留，但不能把第三方插件批准等同于 exec 批准。
 

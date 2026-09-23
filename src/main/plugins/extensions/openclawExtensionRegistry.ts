@@ -1,5 +1,4 @@
 import { OpenClawExtensionId } from '../../../shared/openclaw/extensions';
-import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 
 export type OpenClawExtensionDescriptor = {
   id: string;
@@ -28,7 +27,6 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     buildEntry: approvalTimeoutMinutes => ({
       enabled: true,
       config: {
-        unrestrictedAgentIds: [ScheduledTaskAgentId],
         approvalTimeoutMinutes,
       },
     }),

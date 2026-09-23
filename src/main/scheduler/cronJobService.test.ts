@@ -4,7 +4,6 @@ import {
   DeliveryMode,
   GatewayStatus,
   IpcChannel,
-  ScheduledTaskAgentId,
   TaskStatus,
 } from '../../shared/scheduledTask/constants';
 import { SCHEDULED_TASK_READ_ONLY_TOOLS } from '../../shared/scheduledTask/permissions';
@@ -294,7 +293,7 @@ describe('mapGatewayTaskState', () => {
   });
 });
 
-describe('isolated scheduler agent assignment', () => {
+describe('scheduled task agent assignment', () => {
   const input = {
     name: 'Morning brief',
     description: '',
@@ -313,7 +312,7 @@ describe('isolated scheduler agent assignment', () => {
     updatedAtMs: 1_700_000_000_000,
   };
 
-  test('creates agent-turn tasks on the scheduler agent without changing global permissions', async () => {
+  test('creates agent-turn tasks on main without changing global permissions', async () => {
     const request = vi.fn(async (method: string, params?: unknown) => {
       if (method !== 'cron.add') throw new Error(`Unexpected method: ${method}`);
       return {
@@ -326,17 +325,17 @@ describe('isolated scheduler agent assignment', () => {
       ensureGatewayReady: vi.fn(),
     });
 
-    const task = await service.addJob(input);
+    const task = await service.addJob({ ...input, agentId: undefined });
 
     expect(request).toHaveBeenCalledWith(
       'cron.add',
       expect.objectContaining({
-        agentId: ScheduledTaskAgentId,
+        agentId: 'main',
         payload: expect.objectContaining({ toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS] }),
         delivery: { mode: DeliveryMode.None },
       }),
     );
-    expect(task.agentId).toBe(ScheduledTaskAgentId);
+    expect(task.agentId).toBe('main');
   });
 
   test('keeps system-event creation and ordinary edits on inherited main-session permissions', async () => {
@@ -380,6 +379,22 @@ describe('isolated scheduler agent assignment', () => {
     }
   });
 
+  test('uses the explicitly selected assistant when creating a task', async () => {
+    const request = vi.fn(async (_method: string, params: unknown) => ({
+      ...gatewayJob,
+      ...(params as object),
+    }));
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+    await service.addJob({ ...input, agentId: 'research' });
+    expect(request).toHaveBeenCalledWith(
+      'cron.add',
+      expect.objectContaining({ agentId: 'research', sessionTarget: 'isolated' }),
+    );
+  });
+
   test('persists a permission-only edit in the native job payload', async () => {
     const request = vi.fn(async (method: string, params?: unknown) => {
       if (method === 'cron.get') return gatewayJob;
@@ -398,7 +413,11 @@ describe('isolated scheduler agent assignment', () => {
       'cron.update',
       expect.objectContaining({
         patch: {
-          payload: { ...gatewayJob.payload, toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS] },
+          payload: {
+            ...gatewayJob.payload,
+            permissionMode: 'read-only',
+            toolsAllow: [...SCHEDULED_TASK_READ_ONLY_TOOLS],
+          },
         },
       }),
     );
@@ -407,7 +426,7 @@ describe('isolated scheduler agent assignment', () => {
     expect(request).toHaveBeenCalledWith(
       'cron.update',
       expect.objectContaining({
-        patch: { payload: { ...gatewayJob.payload, toolsAllow: ['*'] } },
+        patch: { payload: { ...gatewayJob.payload, permissionMode: 'full', toolsAllow: ['*'] } },
       }),
     );
   });
@@ -548,8 +567,8 @@ describe('isolated scheduler agent assignment', () => {
   });
 
   test('reads every cron.list page without mutating task ownership', async () => {
-    const first = { ...gatewayJob, id: 'job-1', agentId: ScheduledTaskAgentId };
-    const second = { ...gatewayJob, id: 'job-201', agentId: 'main' };
+    const first = { ...gatewayJob, id: 'job-1', agentId: 'main' };
+    const second = { ...gatewayJob, id: 'job-201', agentId: 'research' };
     const request = vi.fn(async (method: string, params?: unknown) => {
       if (method !== 'cron.list') throw new Error(`Unexpected method: ${method}`);
       const offset = (params as { offset?: number }).offset ?? 0;
@@ -565,8 +584,8 @@ describe('isolated scheduler agent assignment', () => {
     const tasks = await service.listJobs();
 
     expect(tasks.map(task => [task.id, task.agentId])).toEqual([
-      ['job-1', ScheduledTaskAgentId],
-      ['job-201', 'main'],
+      ['job-1', 'main'],
+      ['job-201', 'research'],
     ]);
     expect(request).toHaveBeenNthCalledWith(1, 'cron.list', {
       includeDisabled: true,
@@ -629,11 +648,11 @@ describe('isolated scheduler agent assignment', () => {
     expect(request).toHaveBeenCalledTimes(4);
   });
 
-  test('converts AgentTurn to SystemEvent in one update without scheduler residue', async () => {
+  test('converts AgentTurn to SystemEvent in one update without stale session bindings', async () => {
     const current = {
       ...gatewayJob,
-      agentId: ScheduledTaskAgentId,
-      sessionKey: 'agent:justdo-scheduler:cron:job-1',
+      agentId: 'main',
+      sessionKey: 'agent:main:cron:job-1',
     };
     const request = vi.fn(async (method: string, params?: unknown) => {
       if (method === 'cron.get') return current;
@@ -828,7 +847,7 @@ describe('isolated scheduler agent assignment', () => {
     getAllWindowsMock.mockReturnValue([
       { isDestroyed: () => false, webContents: { send } } as never,
     ]);
-    let jobs = [{ ...gatewayJob, agentId: ScheduledTaskAgentId }];
+    let jobs = [{ ...gatewayJob, agentId: 'main' }];
     const request = vi.fn(async (method: string) => {
       if (method === 'cron.list') return { jobs };
       throw new Error(`Unexpected method: ${method}`);
@@ -924,5 +943,33 @@ describe('isolated scheduler agent assignment', () => {
     expect(send).not.toHaveBeenCalledWith(IpcChannel.RunUpdate, expect.any(Object));
     expect(send).not.toHaveBeenCalledWith(IpcChannel.Refresh);
     getAllWindowsMock.mockReturnValue([]);
+  });
+});
+
+describe('system task native configuration', () => {
+  test('uses the current config hash and patches only requested native settings', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ hash: 'revision-1', config: {} })
+      .mockResolvedValueOnce({});
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+    await service.updateSystemSettings({ skillMode: 'off' });
+    expect(request).toHaveBeenNthCalledWith(1, 'config.get');
+    expect(request).toHaveBeenNthCalledWith(2, 'config.patch', {
+      baseHash: 'revision-1',
+      raw: JSON.stringify({ skills: { workshop: { autonomous: { mode: 'off' } } } }),
+    });
+  });
+  test('rejects a write when the config revision cannot be obtained', async () => {
+    const request = vi.fn().mockResolvedValue({ config: {} });
+    const service = new CronJobService({
+      getGatewayClient: () => ({ request }) as never,
+      ensureGatewayReady: vi.fn(),
+    });
+    await expect(service.updateSystemSettings({ skillMode: 'off' })).rejects.toThrow(/revision/);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

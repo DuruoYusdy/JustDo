@@ -55,6 +55,34 @@ function historyHasMessages(history: unknown): boolean {
 export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
   const { getCronJobService, getOpenClawRuntimeAdapter } = deps;
 
+  ipcMain.handle(ScheduledTaskIpc.GetSystemSettings, async () => {
+    try {
+      return { success: true, settings: await getCronJobService().getSystemSettings() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read system task settings',
+      };
+    }
+  });
+  ipcMain.handle(
+    ScheduledTaskIpc.UpdateSystemSettings,
+    async (
+      _event,
+      input: import('../../../shared/scheduledTask/types').SystemTaskSettingsPatch,
+    ) => {
+      try {
+        await getCronJobService().updateSystemSettings(input);
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to save system task settings',
+        };
+      }
+    },
+  );
+
   ipcMain.handle(ScheduledTaskIpc.List, async () => {
     try {
       // listJobs() waits for the Gateway when it is not connected yet. Returning

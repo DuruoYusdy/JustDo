@@ -34,7 +34,6 @@ const fixture = (existingExternal?: MulticaExternalSession) => {
     listAgents: vi.fn(() => [
       { id: 'main', name: 'Main Agent', model: 'provider/model', enabled: true },
       { id: 'disabled', name: 'Disabled', model: '', enabled: false },
-      { id: 'justdo-scheduler', name: 'Scheduler', model: '', enabled: true },
     ]),
     getAgent: vi.fn((id: string) =>
       id === 'main'
@@ -119,7 +118,7 @@ const fixture = (existingExternal?: MulticaExternalSession) => {
 };
 
 describe('MulticaCommandService', () => {
-  it('reports the current registry agents without exposing the scheduler', async () => {
+  it('reports enabled registry agents', async () => {
     const { cwd, service } = fixture();
     const result = await service.execute(['agents', 'list', '--json'], cwd);
     expect(result.exitCode).toBe(0);

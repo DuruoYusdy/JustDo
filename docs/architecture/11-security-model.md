@@ -79,7 +79,7 @@ Exec 与 plugin approval 分开。allow-once/allow-session/allow-always/deny 只
 
 命令与插件审批使用 OpenClaw 原生等待机制；计划任务变更可在原生上限内选择 2/5/10 分钟，不影响 exec 或其他插件。UI 只展示 Gateway 给出的期限，不自行延长后端请求。
 
-OpenClaw 原生 session mode 同时约束管理型文件工具与 exec reviewer。受保护的 `automation-permission` extension 直接读取原生 session mode，补足 scheduled-task mutation 门禁；它不保存独立模式，缺失时 Gateway readiness 失败。无人值守 `justdo-scheduler` 只有在原生 cron-run session key 下才可豁免，普通交互 session 不能继承或冒用该权限。
+OpenClaw 原生 session mode 同时约束管理型文件工具与 exec reviewer。受保护的 `automation-permission` extension 直接读取原生 session mode，补足 scheduled-task mutation 门禁；它不保存独立模式，缺失时 Gateway readiness 失败。定时任务不创建额外的信任域，也不按助手身份或 cron-run session key 豁免审批。
 
 `tools.sessions.visibility` 是独立的跨会话读取与消息范围，不等同于文件/命令 permission mode。它由“设置 → 配置”的 `self/tree/agent/all` 选择生成，默认 `tree`；旧 `agentRuntimeSettings:v1` 缺少字段时同样回填 `tree`，避免升级后静默扩大到同 Agent 的全部会话。OpenClaw 默认对沙盒会话施加 spawned-only clamp，有效范围统一为当前任务树；这会收窄 `agent/all`，但也意味着沙盒内的 `self` 不能被产品文案描述为绝对的单会话安全边界。
 

@@ -13,7 +13,6 @@ import {
   parseCollaborationSend,
 } from '../../../shared/cowork/collaboration';
 import { parseCoworkSessionKey } from '../../../shared/cowork/sessionKey';
-import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import { CollaborationStore } from '../../data/collaborationStore';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter, OpenClawRuntimeAdapter } from '../../engine';
@@ -193,7 +192,7 @@ export class CollaborationCoordinator {
     const store = this.deps.getStore();
     for (const id of agentIds) {
       const agent = store.getAgent(id);
-      if (!agent?.enabled || id === ScheduledTaskAgentId)
+      if (!agent?.enabled)
         throw new Error('collaborationInvalidMembers');
     }
     // Product creation is atomic; native preparation is idempotent and precedes first execution.
@@ -370,7 +369,6 @@ export class CollaborationCoordinator {
       const target = store.getAgent(agentId);
       if (
         !target?.enabled ||
-        agentId === ScheduledTaskAgentId ||
         agentId === source.agentId ||
         (room && room.members.length >= COLLABORATION_MAX_MEMBERS)
       )
@@ -602,7 +600,6 @@ export class CollaborationCoordinator {
                   .filter(
                     agent =>
                       agent.enabled &&
-                      agent.id !== ScheduledTaskAgentId &&
                       agent.id !== parsed.agentId,
                   )
                   .map(agent => ({

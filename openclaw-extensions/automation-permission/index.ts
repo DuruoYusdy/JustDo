@@ -1,7 +1,6 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
 
 type PluginConfig = {
-  unrestrictedAgentIds: ReadonlySet<string>;
   approvalTimeoutMs: number;
 };
 
@@ -21,12 +20,10 @@ const APPROVAL_INVISIBLE_CHAR_PATTERN =
 const parsePluginConfig = (value: unknown): PluginConfig => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
-      unrestrictedAgentIds: new Set(),
       approvalTimeoutMs: DEFAULT_APPROVAL_TIMEOUT_MINUTES * 60_000,
     };
   }
   const record = value as Record<string, unknown>;
-  const configuredAgentIds = record.unrestrictedAgentIds;
   const configuredTimeoutMinutes = record.approvalTimeoutMinutes;
   const approvalTimeoutMinutes =
     typeof configuredTimeoutMinutes === 'number' &&
@@ -34,14 +31,6 @@ const parsePluginConfig = (value: unknown): PluginConfig => {
       ? configuredTimeoutMinutes
       : DEFAULT_APPROVAL_TIMEOUT_MINUTES;
   return {
-    unrestrictedAgentIds: new Set(
-      Array.isArray(configuredAgentIds)
-        ? configuredAgentIds.filter(
-            (agentId): agentId is string =>
-              typeof agentId === 'string' && agentId.trim().length > 0,
-          )
-        : [],
-    ),
     approvalTimeoutMs: approvalTimeoutMinutes * 60_000,
   };
 };
@@ -112,18 +101,6 @@ const describeMutation = (action: string, params: unknown): string =>
     APPROVAL_DESCRIPTION_MAX_LENGTH,
   );
 
-const isUnrestrictedAutomationRun = (
-  agentId: string | undefined,
-  sessionKey: string | undefined,
-  unrestrictedAgentIds: ReadonlySet<string>,
-): boolean => {
-  if (!agentId || !unrestrictedAgentIds.has(agentId) || !sessionKey) return false;
-  const prefix = `agent:${agentId}:cron:`;
-  if (!sessionKey.startsWith(prefix)) return false;
-  const [jobId, runSegment, runId] = sessionKey.slice(prefix.length).split(':');
-  return Boolean(jobId && runSegment === 'run' && runId);
-};
-
 const plugin = {
   id: PLUGIN_ID,
   name: 'Automation Permission',
@@ -141,14 +118,6 @@ const plugin = {
       evaluate: async (event, context) => {
         const action = readMutationAction(event);
         if (!action) return;
-        if (
-          isUnrestrictedAutomationRun(
-            context.agentId,
-            context.sessionKey,
-            config.unrestrictedAgentIds,
-          )
-        )
-          return;
 
         const sessionEntry = context.sessionKey
           ? api.runtime.agent.session.getSessionEntry({
@@ -184,7 +153,6 @@ const plugin = {
           loaded: true,
           policyId: TRUSTED_POLICY_ID,
           approvalTimeoutMs: config.approvalTimeoutMs,
-          unrestrictedAgentIds: [...config.unrestrictedAgentIds].sort(),
         });
       },
       { scope: 'operator.read' },

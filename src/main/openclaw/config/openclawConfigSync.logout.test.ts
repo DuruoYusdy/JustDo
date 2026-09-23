@@ -643,7 +643,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.entries['automation-permission']).toEqual({
       enabled: true,
       config: {
-        unrestrictedAgentIds: ['justdo-scheduler'],
         approvalTimeoutMinutes: 10,
       },
     });
@@ -934,6 +933,28 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
+  test('minimal startup defaults skill automation off and preserves an explicit opt-in on subsequent sync', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-skill-default-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    expect(writeMinimalConfig(configPath, 'startup').ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.skills.workshop.autonomous.mode).toBe('off');
+    config.skills.workshop.autonomous.mode = 'auto';
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe('auto');
+  });
+
+  test.each([undefined, 'off', 'auto', 'propose'])('auth sync defaults only missing skill mode (%s)', mode => {
+    const configPath = writeExistingBuiltinConfig();
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.skills = { workshop: { autonomous: mode ? { mode } : {} } };
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe(mode ?? 'off');
+  });
+
   test('a second no-model sync removes the retired skill_workshop deny entry', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-minimal-tool-deny-'));
     temporaryDirectories.push(directory);
@@ -1037,7 +1058,7 @@ describe('OpenClaw auth logout config sync', () => {
       heartbeat: { every: '0m' },
       workspace: path.join(path.dirname(configPath), 'workspace'),
     });
-    expect(config.agents.entries).toHaveProperty('justdo-scheduler');
+    expect(Object.keys(config.agents.entries)).toEqual(['main']);
     expect(config.plugins.entries.custom_plugin).toEqual({
       enabled: true,
       config: { mode: 'keep-me' },
@@ -1209,15 +1230,7 @@ describe('OpenClaw auth logout config sync', () => {
         primary: 'custom-provider/custom-model',
       },
     });
-    expect(result.entries['justdo-scheduler']).toEqual(
-      expect.objectContaining({
-        workspace: 'E:/workspace/project',
-        tools: {
-          fs: { workspaceOnly: false },
-          exec: { host: 'gateway', mode: 'full' },
-        },
-      }),
-    );
+    expect(Object.keys(result.entries)).toEqual(['main']);
   });
 
   test('rejects an application-reserved display-name provider without changing config', () => {

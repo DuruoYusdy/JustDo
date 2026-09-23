@@ -872,6 +872,9 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
+      {/* Bridge the shell's top inset to the view title bars, including while
+          the gateway is starting. Keep this strip clear of window controls. */}
+      <div aria-hidden="true" className="draggable fixed inset-x-0 top-0 z-40 h-1.5 select-none" />
       <BottomRightStatusStack>
         <EngineStartupStatusBar />
         {updateToast && (

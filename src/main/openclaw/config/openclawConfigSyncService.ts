@@ -1,7 +1,6 @@
 import type { BrowserMode } from '../../../shared/browser/browser';
 import { matchesModelSelectionIdentity } from '../../../shared/openclaw/modelSelectionIdentity';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
-import { ScheduledTaskAgentId } from '../../../shared/scheduledTask/constants';
 import type { WindowsSandboxStatus } from '../../../shared/security/windowsSandbox';
 import { ManagedDirectoryRuntimeStopAbortedError } from '../../core/filesystem/managedDirectoryOperations';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -90,12 +89,6 @@ const FALLBACK_EXEC_APPROVAL_FIELDS = {
   security: 'allowlist',
   ask: 'on-miss',
   askFallback: 'deny',
-} as const;
-
-const SCHEDULER_EXEC_APPROVAL_FIELDS = {
-  security: 'full',
-  ask: 'off',
-  askFallback: 'full',
 } as const;
 
 type ConfigSnapshot = {
@@ -775,19 +768,14 @@ export class OpenClawConfigSyncService {
     snapshot: ConfigSnapshot;
   }> {
     const snapshot = await this.deps.requestGateway<ConfigSnapshot>('config.get');
-    const schedulerAgent = snapshot.config?.agents?.entries?.[ScheduledTaskAgentId];
     const executionMode = this.deps.getCoworkStore().getConfig().executionMode || 'local';
     const expectedExecHost = resolveOpenClawExecHost(executionMode);
-    const schedulerWorkspaceOnly = executionMode === 'sandbox';
     return {
       snapshot,
       verified:
-      snapshot.config?.tools?.exec?.host === expectedExecHost &&
-      snapshot.config.tools.exec.mode === OPENCLAW_FALLBACK_EXEC_MODE &&
-      snapshot.config?.tools?.fs?.workspaceOnly === OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY &&
-      schedulerAgent?.tools?.exec?.host === expectedExecHost &&
-      schedulerAgent.tools.exec.mode === 'full' &&
-      schedulerAgent.tools.fs?.workspaceOnly === schedulerWorkspaceOnly,
+        snapshot.config?.tools?.exec?.host === expectedExecHost &&
+        snapshot.config.tools.exec.mode === OPENCLAW_FALLBACK_EXEC_MODE &&
+        snapshot.config?.tools?.fs?.workspaceOnly === OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
     };
   }
 
@@ -877,22 +865,13 @@ export class OpenClawConfigSyncService {
       version: 1,
     };
     const policy = FALLBACK_EXEC_APPROVAL_FIELDS;
-    const schedulerPolicy = SCHEDULER_EXEC_APPROVAL_FIELDS;
     file.defaults = { ...(file.defaults ?? {}), ...policy };
-    file.agents = {
-      ...Object.fromEntries(
-        Object.entries(file.agents ?? {})
-          .filter(([agentId]) => agentId !== ScheduledTaskAgentId)
-          .map(([agentId, entry]) => [
-            agentId,
-            removePersistentApprovalGrants({ ...entry, ...policy }),
-          ]),
-      ),
-      [ScheduledTaskAgentId]: removePersistentApprovalGrants({
-        ...(file.agents?.[ScheduledTaskAgentId] ?? {}),
-        ...schedulerPolicy,
-      }),
-    };
+    file.agents = Object.fromEntries(
+      Object.entries(file.agents ?? {}).map(([agentId, entry]) => [
+        agentId,
+        removePersistentApprovalGrants({ ...entry, ...policy }),
+      ]),
+    );
     const submitted = await this.deps.requestGateway<ExecApprovalsSnapshot>('exec.approvals.set', {
       file,
       ...(current.hash ? { baseHash: current.hash } : {}),
@@ -911,18 +890,14 @@ export class OpenClawConfigSyncService {
     if (file?.version !== 1) return false;
 
     const expected = FALLBACK_EXEC_APPROVAL_FIELDS;
-    const schedulerPolicy = SCHEDULER_EXEC_APPROVAL_FIELDS;
     const defaults = file.defaults;
     const agents = file.agents ?? {};
-    if (!Object.prototype.hasOwnProperty.call(agents, ScheduledTaskAgentId)) return false;
 
-    const agentsMatch = Object.entries(agents).every(([agentId, agent]) => {
-      const expectedAgentPolicy =
-        agentId === ScheduledTaskAgentId ? schedulerPolicy : expected;
+    const agentsMatch = Object.values(agents).every(agent => {
       return (
-        agent?.security === expectedAgentPolicy.security &&
-        agent.ask === expectedAgentPolicy.ask &&
-        agent.askFallback === expectedAgentPolicy.askFallback
+        agent?.security === expected.security &&
+        agent.ask === expected.ask &&
+        agent.askFallback === expected.askFallback
       );
     });
     return (

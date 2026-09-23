@@ -1,0 +1,128 @@
+// @vitest-environment jsdom
+import { configureStore } from '@reduxjs/toolkit';
+import type { ScheduledTask, SystemTaskSettings } from '@shared/scheduledTask/types';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { Provider } from 'react-redux';
+import { afterEach, expect, test, vi } from 'vitest';
+
+import { CronJobCard } from './CronView';
+import { useMemoryDreamingControl, withMemoryDreamingCard } from './memoryDreamingControl';
+import { SKILL_REVIEW_CARD_ID, withSkillReviewCard } from './skillReviewCard';
+
+const settings: SystemTaskSettings = {
+  memoryDreamingEnabled: true,
+  memoryAvailable: true,
+  skillMode: 'off',
+};
+const empty: ScheduledTask[] = [];
+const member = (id: string): ScheduledTask => ({
+  ...withMemoryDreamingCard([], settings)[0],
+  id,
+  agentId: id,
+  enabled: true,
+  payload: { kind: 'skillCollectionReview' },
+});
+afterEach(cleanup);
+
+test('groups all skill monitors into one disabled card while preserving native jobs and other tasks', () => {
+  const first = member('main');
+  const second = member('research');
+  const memory = withMemoryDreamingCard([], settings)[0];
+  const tasks = [first, second, memory];
+  const result = withSkillReviewCard(tasks, settings);
+  expect(result).toHaveLength(2);
+  expect(result[0]).toBe(memory);
+  expect(result[1]).toMatchObject({ id: SKILL_REVIEW_CARD_ID, agentId: null, enabled: false });
+  expect(tasks).toHaveLength(3);
+  expect(first.enabled).toBe(true);
+  expect(withSkillReviewCard([], settings)[0]).toMatchObject({ enabled: false });
+  expect(withSkillReviewCard([], null)).toEqual([]);
+});
+
+test('retains failed-member visibility and uses the earliest enabled member schedule', () => {
+  const failure = member('research');
+  failure.state = {
+    ...failure.state,
+    lastStatus: 'error',
+    lastRunAtMs: 100,
+    nextRunAtMs: 500,
+    lastError: 'failed',
+  };
+  const success = member('main');
+  success.state = { ...success.state, lastStatus: 'success', lastRunAtMs: 200, nextRunAtMs: 300 };
+  const [card] = withSkillReviewCard([failure, success], { ...settings, skillMode: 'auto' });
+  expect(card.state).toMatchObject({ lastStatus: 'error', lastError: 'failed', nextRunAtMs: 300 });
+  expect(withSkillReviewCard([failure, success], settings)[0].state.nextRunAtMs).toBeNull();
+});
+
+test('aggregate switch controls the feature and history/details use native member IDs', () => {
+  const members = [member('research')];
+  const store = configureStore({
+    reducer: { agent: () => ({ agents: [{ id: 'research', name: 'Researcher' }] }) },
+  });
+  const onToggle = vi.fn();
+  const onMemberHistory = vi.fn();
+  const onMemberDetails = vi.fn();
+  render(
+    <Provider store={store}>
+      <CronJobCard
+        job={withSkillReviewCard(members, settings)[0]}
+        skillToggleDisabled={false}
+        skillMembers={members}
+        onMemberHistory={onMemberHistory}
+        onMemberDetails={onMemberDetails}
+        onToggle={onToggle}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onTrigger={vi.fn()}
+        onHistory={vi.fn()}
+        onDetails={vi.fn()}
+      />
+    </Provider>,
+  );
+  fireEvent.click(screen.getByRole('switch'));
+  expect(onToggle).toHaveBeenCalledWith(true);
+  expect(screen.getByText('@Researcher')).toBeTruthy();
+  const summary = document.querySelector('summary')!;
+  fireEvent.click(summary);
+  const buttons = screen.getAllByRole('button');
+  expect(buttons).toHaveLength(2);
+  fireEvent.click(buttons[0]);
+  fireEvent.click(buttons[1]);
+  expect(onMemberHistory).toHaveBeenCalledWith('research');
+  expect(onMemberDetails).toHaveBeenCalledWith('research');
+});
+
+test('skill toggle writes global mode only and retains its state when saving fails', async () => {
+  const updateSystemSettings = vi.fn().mockResolvedValue({ success: true });
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: {
+      scheduledTasks: {
+        getSystemSettings: vi.fn().mockResolvedValue({ success: true, settings }),
+        updateSystemSettings,
+      },
+    },
+  });
+  const { result } = renderHook(() => useMemoryDreamingControl(empty));
+  await waitFor(() => expect(result.current.settings).toEqual(settings));
+  await act(() => result.current.toggleSkills(true));
+  expect(updateSystemSettings).toHaveBeenLastCalledWith({ skillMode: 'auto' });
+  expect(result.current.settings?.memoryDreamingEnabled).toBe(true);
+  updateSystemSettings.mockResolvedValueOnce({ success: false });
+  await act(async () => {
+    await expect(result.current.toggleSkills(false)).rejects.toThrow();
+  });
+  expect(result.current.settings?.skillMode).toBe('auto');
+  await act(() => result.current.toggleSkills(false));
+  expect(updateSystemSettings).toHaveBeenLastCalledWith({ skillMode: 'off' });
+  expect(result.current.settings?.skillMode).toBe('off');
+});

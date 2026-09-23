@@ -231,3 +231,22 @@ test('deletes one result and publishes the updated unread count', async () => {
   expect(deleteRunArtifacts).toHaveBeenCalledWith(storedResult);
   expect(updateUnreadCount).toHaveBeenCalledWith(2);
 });
+
+test('passes native system feature settings through explicit IPC methods', async () => {
+  const settings = { memoryDreamingEnabled: true, memoryAvailable: true, skillMode: 'auto' };
+  const getSystemSettings = vi.fn().mockResolvedValue(settings);
+  const updateSystemSettings = vi.fn().mockResolvedValue(undefined);
+  registerScheduledTaskHandlers({
+    getCronJobService: () =>
+      ({ getSystemSettings, updateSystemSettings }) as unknown as CronJobService,
+    getOpenClawRuntimeAdapter: () => null,
+  });
+  await expect(handlers.get(ScheduledTaskIpc.GetSystemSettings)?.({})).resolves.toEqual({
+    success: true,
+    settings,
+  });
+  await expect(
+    handlers.get(ScheduledTaskIpc.UpdateSystemSettings)?.({}, { skillMode: 'off' }),
+  ).resolves.toEqual({ success: true });
+  expect(updateSystemSettings).toHaveBeenCalledWith({ skillMode: 'off' });
+});

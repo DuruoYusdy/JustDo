@@ -28,11 +28,11 @@ Markdown支持task list、KaTeX、highlight、Mermaid、CJK链接修正与stream
 
 ### 2.4 Permissions
 
-Ask/auto/full 分别映射 OpenClaw 原生 session `guarded/workspace/full`；每个 turn 先通过 `sessions.create` 写入并核对 mode/root，失败则不发送。SQLite session 是耐久期望投影，Cowork config 只保存新会话默认值；全局 config 固定 restricted fallback。Exec/plugin approval 分离，session grant 终态清理；scheduler agent 继续使用受管无人值守权限。
+Ask/auto/full 分别映射 OpenClaw 原生 session `guarded/workspace/full`；每个 turn 先通过 `sessions.create` 写入并核对 mode/root，失败则不发送。SQLite session 是耐久期望投影，Cowork config 只保存新会话默认值；全局 config 固定 restricted fallback。Exec/plugin approval 分离，session grant 终态清理；定时任务复用已有助手的原生权限。
 
 ### 2.5 Scheduled Tasks
 
-原生 `cron.*` job/run，at/every/cron、agentTurn/systemEvent、none/announce/webhook、main/isolated 和 channel/account。JustDo 新建的 Agent-turn 使用 `justdo-scheduler`；外部或模型创建的任务保留原 owner，列表、启停、编辑与手动运行不会接管。模型的 automation mutation 由受保护 extension 按原生 session mode 审批。JustDo 创建 job 时默认显式发送 `delivery: { mode: 'none' }`。
+原生 `cron.*` job/run，at/every/cron、agentTurn/systemEvent、none/announce/webhook、main/isolated 和 channel/account。JustDo 新建的 Agent-turn 默认使用 `main`，也可选择已有助手；外部或模型创建的任务保留原 owner，列表、启停、编辑与手动运行不会接管。模型的 automation mutation 由受保护 extension 按原生 session mode 审批。JustDo 创建 job 时默认显式发送 `delivery: { mode: 'none' }`。
 
 应用内Result Inbox已实现SQLite receipts、未读、分页、baseline、durable catch-up、reconcile、完整session查看和artifact清理后删除。
 
@@ -255,7 +255,7 @@ sequenceDiagram
 
 - Renderer 没有 Node/Electron 直接导入；特权操作通过 preload allowlist。
 - Exec approval 与 plugin approval 分开建模，避免一个批准覆盖不同风险域。
-- 新 turn 在原生 session mode/root 未验证时 fail closed；全局 fallback 与 scheduler policy 也需 active 回读。
+- 新 turn 在原生 session mode/root 未验证时 fail closed；全局 fallback 与 host approval policy 也需 active 回读。
 - 用户导入的 skill/extension 有专门 extraction 与安装事务，不把 archive 路径当作可信目录。
 - Extension relay 只监听 loopback，并使用单独 pairing token/secret。
 - 日志过滤器压缩高频 Gateway stream，并避免把完整 native event 默认复制到主日志。
@@ -309,7 +309,7 @@ sequenceDiagram
 - Main、preload、Renderer 类型和 IPC validation 是否同步？
 - Gateway 尚未启动、正在重启、已断线时调用会怎样？
 - 应用强制退出后是否会留下 `running`、pending approval 或临时文件？
-- 新功能是否影响 ask/auto/full 权限映射或 unattended scheduler policy？
+- 新功能是否影响 ask/auto/full 权限映射或 scheduled-task permissions？
 - 日志是否足以用 timestamp、run id、session id 关联，同时避免泄露 token/content？
 - 旧用户的 SQLite/config/model reference 是否有兼容或迁移路径？
 - 打包产物是否包含新增资源，且 host/runtime 与开发机路径无耦合？

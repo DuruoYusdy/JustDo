@@ -150,7 +150,7 @@ UI 开放 1–5。深度大于 1 允许 child 再委派，显著增加并发、�
 
 ## 10. 权限与成本
 
-更多并发/深度会增加模型费用、机器负载、工具冲突和外部 API 压力。Subagent 默认继承所属 Agent 的工具/权限语义；设置页改变调度不等于授予新权限。跨 Agent allowlist 若未来开放，还必须与 permission mode、workspace 和 scheduler Agent 隔离共同审查。
+更多并发/深度会增加模型费用、机器负载、工具冲突和外部 API 压力。Subagent 默认继承所属 Agent 的工具/权限语义；设置页改变调度不等于授予新权限。跨 Agent allowlist 若未来开放，还必须与 permission mode、workspace 和定时任务的会话隔离共同审查。
 
 Full 模式下并发 child 可并行修改文件，用户应理解冲突风险。JustDo 不应因为提高 `maxConcurrent` 就绕过 command/file approvals。
 
