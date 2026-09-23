@@ -33,10 +33,15 @@ developmentAuthMode: 'api-key',
 developmentApiKey: '<development-only-key>',
 ```
 
-Key 优先于 JWT 换证，不要求登录文件，通过 Main 和 OpenClaw SecretRef 使用；
+Key 优先于 JWT 换证，通过 Main 和 OpenClaw SecretRef 使用；
 不写入 SQLite、不返回 Renderer。该开关仅对未打包开发进程有效，打包版始终使用
 JWT。修改后须重启 Electron；提交或打包前改回 `jwt` 并清空 Key，打包钩子也会阻止
 包含开发 Key 的构建。
+
+本仓库的 LiteLLM 部署仍要求模型请求携带合法的 `X-User-Account` 和 `X-Cookie`，
+API Key 模式不免除此校验。测试完整模型调用须先登录，将内置模型地址配置为可信的
+非回环服务地址，并在请求头白名单中允许该地址和这两个字段。只有 Key 时，可测试
+模型列表，或使用不要求这些请求头的开发模型服务。
 
 ## 请求头预设
 
@@ -46,6 +51,7 @@ JWT。修改后须重启 Electron；提交或打包前改回 `jwt` 并清空 Key
 
 预设用于首次生成用户目录的 `outbound-header-proxy/config.json`；
 已有手动配置优先，不会随重新打包被覆盖。`overwrite` 保持 false。
+已有用户须同步修改用户目录的该配置文件，新增可信模型地址及所需请求头。
 扩展提供的策略继续由原策略服务合并。
 
 开发启动：`npm run electron:dev`。Windows 打包：`npm run dist:win`。

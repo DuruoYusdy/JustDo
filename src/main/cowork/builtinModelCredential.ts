@@ -1,8 +1,8 @@
 import fs from 'fs';
 
-export const BUILTIN_MODEL_JWT_FIELD = 'X-JustDo-JWT';
+export const BUILTIN_MODEL_JWT_FIELD = 'X-ACCESS-JWT';
 export const BUILTIN_MODEL_USER_ACCOUNT_FIELD = 'X-User-Account';
-export const BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER = 'justdo-jwt-auth';
+export const BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER = 'access-jwt-auth';
 
 const MAX_JWT_LENGTH = 8_192;
 const MAX_USER_ACCOUNT_LENGTH = 512;

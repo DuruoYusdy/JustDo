@@ -66,7 +66,7 @@ describe('JWT customer activity', () => {
     const [url, options] = request.mock.calls[0];
     expect(url).toBe('http://localhost:9108/customer/activity');
     expect(options.headers).toMatchObject({
-      'X-JustDo-JWT': 'short-lived-token', 'X-User-Account': 'alice',
+      'X-ACCESS-JWT': 'short-lived-token', 'X-User-Account': 'alice',
     });
     const body = JSON.parse(options.body);
     expect(body).toMatchObject({ user_id: 'alice', event_type: 'startup',
@@ -93,7 +93,7 @@ describe('JWT customer activity', () => {
     const first = JSON.parse(request.mock.calls[0][1].body);
     const retry = JSON.parse(request.mock.calls[1][1].body);
     expect(retry.event_id).toBe(first.event_id);
-    expect(request.mock.calls[1][1].headers['X-JustDo-JWT']).toBe('renewed-token');
+    expect(request.mock.calls[1][1].headers['X-ACCESS-JWT']).toBe('renewed-token');
     await service.sync();
     const heartbeat = JSON.parse(request.mock.calls[2][1].body);
     expect(heartbeat.event_type).toBe('heartbeat');

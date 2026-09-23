@@ -6,7 +6,7 @@ import { type BuiltinModelCredential } from '../../cowork/builtinModelCredential
 import { restrictCredentialFile } from './providerSecretFile';
 
 export const BUILTIN_SECRET_SOURCE = 'justdo_login';
-export const BUILTIN_SECRET_ID = 'X-JustDo-JWT';
+export const BUILTIN_SECRET_ID = 'X-ACCESS-JWT';
 export const BUILTIN_ACCOUNT_SECRET_ID = 'X-User-Account';
 // Public wrapping material: protects against direct inspection, not reverse engineering.
 const WRAPPING_CONTEXT = 'justdo/builtin-credential-file/v1';

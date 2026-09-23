@@ -30,3 +30,9 @@ developmentApiKey: '<development-only-key>',
 使用 `Authorization: Bearer <key>`；Key 不写入 SQLite，也不传给 Renderer。
 此开关只对未打包开发进程有效，打包版始终使用 JWT。修改后须重启 Electron；
 提交或打包前改回 `developmentAuthMode: 'jwt'` 并清空 Key，打包钩子会拒绝其他配置。
+
+本仓库的 LiteLLM 模型 API 仍要求合法的 `X-User-Account` 和 `X-Cookie`。
+完整调用须先登录，配置可信的非回环内置模型地址，并为该地址启用这两个字段的
+请求头注入；回环地址不注入登录信息。已有用户的请求头配置不会被重新打包覆盖，
+须手动更新，详见[请求头预设](../../src/config/README.md#请求头预设)。
+只有 Key 时，可测试模型列表，或使用不要求上述请求头的开发模型服务。

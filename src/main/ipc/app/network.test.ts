@@ -61,7 +61,7 @@ test('authenticates a built-in probe in Main without exposing its JWT to Rendere
   mocks.fetch.mockResolvedValue(new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } }));
   registerNetworkHandlers();
   const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  const headers = { 'x-justdo-jwt': 'untrusted', 'x-user-account': 'wrong-account' };
+  const headers = { 'x-access-jwt': 'untrusted', 'x-user-account': 'wrong-account' };
   const result = await handler({}, {
     url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST',
     headers, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
@@ -69,10 +69,10 @@ test('authenticates a built-in probe in Main without exposing its JWT to Rendere
   expect(result).toMatchObject({ ok: true });
   expect(JSON.stringify(result)).not.toContain(token);
   expect(mocks.fetch.mock.calls[0][1]).toMatchObject({
-    redirect: 'error', headers: { 'X-JustDo-JWT': token, 'X-User-Account': 'test-user' },
+    redirect: 'error', headers: { 'X-ACCESS-JWT': token, 'X-User-Account': 'test-user' },
   });
-  expect(mocks.fetch.mock.calls[0][1].headers).not.toHaveProperty('x-justdo-jwt');
-  expect(headers['x-justdo-jwt']).toBe('untrusted');
+  expect(mocks.fetch.mock.calls[0][1].headers).not.toHaveProperty('x-access-jwt');
+  expect(headers['x-access-jwt']).toBe('untrusted');
 });
 
 test('does not inject a JWT into custom model requests', async () => {

@@ -252,7 +252,26 @@ Start/continue handler 先等待待处理配置更新并确保 Gateway 的全局
 - 新 UI feature：局部 state 优先；只有跨页面、可恢复的共享状态才考虑 Redux，并在真正 mount 后更新文档。
 - 新插件类型：先定义 owner、安装事务、配置同步、权限与卸载语义，再接 Marketplace 展示。
 
-## 12. 相关文档
+## 12. 模型服务端扩展
+
+`deploy/litellm` 每种 Hook 独占 `hooks/` 下一个子模块，`register.py` 统一注册，
+`start.py` 为 Docker 与普通机器部署共用的入口。启动时先配置强制模型认证，
+再按 `LITELLM_HOOKS` 组装可选 HTTP Hook。注册表只列允许加载的模块；未启用的可选模块不导入。
+请求按配置顺序进入中间件，响应按相反顺序返回。关闭可选 Hook 不影响 JWT、Team 及模型权限检查。
+必选的 `model_headers` 在模型请求进入下游前检查账号及 Cookie 格式，不读取正文或验证 Cookie 会话，
+不代替身份认证。管理、健康和模型目录查询不受该检查限制。
+校验错误共用服务端生成的请求 ID、结构化响应及无凭证日志；请求头错误模糊提示，
+JWT/Team 错误使用固定的原因说明。LiteLLM 原生异常处理保留这些业务错误码，原生预算和上游错误不重写。
+
+每个 Hook 通过 `wrap(app, environ)` 接收下游应用和配置，独立拥有自己的路由、校验与资源。
+活动上报按工厂、HTTP 中间件、纯事件逻辑、数据库存储分层；受保护的扩展接口复用 JWT 身份校验，
+但必须自行实施端点权限。数据库连接延迟创建，通过 lifespan 释放；模型流式响应逐条透传。
+
+数据库初始化只在显式 `init` 命令中执行。默认 Team 仅创建一次，成员、模型和限额由网页动态维护，
+服务启动不回写这些设置。新增 Hook 的注册方式与示例见 [Hook 开发指南](../../deploy/litellm/hooks/README.md)。
+模型调用生命周期回调由 LiteLLM 自身的 callbacks 机制负责，不与 HTTP Hook 混用。
+
+## 13. 相关文档
 
 - [进程模型与 IPC](03-process-model.md)
 - [Cowork 系统](04-cowork-system.md)

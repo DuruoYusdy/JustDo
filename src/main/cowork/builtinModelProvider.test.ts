@@ -106,8 +106,8 @@ describe('syncBuiltinModelProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const [, requestInit] of fetchMock.mock.calls) {
       expect(requestInit?.headers).toEqual({
-        Authorization: 'Bearer justdo-jwt-auth',
-        'X-JustDo-JWT': expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
+        Authorization: 'Bearer access-jwt-auth',
+        'X-ACCESS-JWT': expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/),
         'X-User-Account': 'user-123',
       });
     }

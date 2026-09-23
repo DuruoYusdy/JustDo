@@ -160,7 +160,7 @@ describe('OpenClaw provider config', () => {
         apiKey: {
           source: 'exec',
           provider: 'justdo_login',
-          id: 'X-JustDo-JWT',
+          id: 'X-ACCESS-JWT',
         },
         headers: {
           'User-Agent': 'OpenAI/JS 6.39.1',
@@ -217,7 +217,7 @@ describe('OpenClaw provider config', () => {
 
   test('adds JWT identity placeholders only to the built-in provider', () => {
     const selection = buildProviderSelection({
-      apiKey: 'justdo-jwt-auth',
+      apiKey: 'access-jwt-auth',
       baseURL: 'https://models.example.test/v1',
       modelId: 'team-model',
       apiType: 'openai',
@@ -225,10 +225,10 @@ describe('OpenClaw provider config', () => {
     });
 
     expect(selection.providerConfig.headers).toEqual({
-      'X-JustDo-JWT': {
+      'X-ACCESS-JWT': {
         source: 'exec',
         provider: 'justdo_login',
-        id: 'X-JustDo-JWT',
+        id: 'X-ACCESS-JWT',
       },
       'X-User-Account': {
         source: 'exec',
@@ -239,7 +239,7 @@ describe('OpenClaw provider config', () => {
     expect(selection.providerConfig.apiKey).toEqual({
       source: 'exec',
       provider: 'justdo_login',
-      id: 'X-JustDo-JWT',
+      id: 'X-ACCESS-JWT',
     });
   });
 
@@ -247,7 +247,7 @@ describe('OpenClaw provider config', () => {
     setActiveBuiltinModelDevelopmentApiKey('sk-development');
     try {
       const selection = buildProviderSelection({
-        apiKey: 'justdo-jwt-auth',
+        apiKey: 'access-jwt-auth',
         baseURL: 'http://127.0.0.1:9108/v1',
         modelId: 'development-model',
         apiType: 'openai',
@@ -257,7 +257,7 @@ describe('OpenClaw provider config', () => {
       expect(selection.providerConfig.apiKey).toEqual({
         source: 'exec',
         provider: 'justdo_login',
-        id: 'X-JustDo-JWT',
+        id: 'X-ACCESS-JWT',
       });
     } finally {
       clearActiveBuiltinModelCredential();
@@ -288,7 +288,7 @@ describe('OpenClaw provider config', () => {
     });
 
     expect(selection.providerConfig.headers).toEqual({
-      'X-JustDo-JWT': { source: 'exec', provider: 'justdo_login', id: 'X-JustDo-JWT' },
+      'X-ACCESS-JWT': { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
       'X-User-Account': { source: 'exec', provider: 'justdo_login', id: 'X-User-Account' },
     });
   });

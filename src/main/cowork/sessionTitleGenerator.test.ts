@@ -44,7 +44,7 @@ test('generateTitle adds the short-lived JWT only for the built-in provider', as
   const handler = new SessionTitleGenerator({
     resolveApiConfig: () => ({
       config: {
-        apiKey: 'justdo-jwt-auth',
+        apiKey: 'access-jwt-auth',
         baseURL: 'https://model.example/v1',
         model: 'current-model',
       },
@@ -55,8 +55,8 @@ test('generateTitle adds the short-lived JWT only for the built-in provider', as
 
   await expect(handler.generateTitle('测试')).resolves.toBe('测试标题');
   expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-    Authorization: 'Bearer justdo-jwt-auth',
-    'X-JustDo-JWT': accessToken,
+    Authorization: 'Bearer access-jwt-auth',
+    'X-ACCESS-JWT': accessToken,
     'X-User-Account': 'user-123',
   });
 });

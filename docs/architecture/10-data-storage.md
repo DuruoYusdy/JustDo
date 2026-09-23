@@ -378,7 +378,7 @@ CustomerRegistrationService 使用当前短期 JWT 调用 `/customer/activity`�
 待发事件不跨进程持久化。重复事件仍更新当前活跃时间，但不重复计数启动。
 活动 metadata 只提交非凭据字段，alias 由服务端更新为产品名和版本。
 
-`deploy/litellm/shared/proxy_hooks/activity.py`（Docker 与 Native 共用）作为 ASGI 扩展，使用独立连接池直接更新远端
+`deploy/litellm/hooks/activity/`（Docker 与 Native 共用）作为 ASGI 扩展，使用独立连接池直接更新远端
 `LiteLLM_EndUserTable.metadata`；唯一数据库变更是增加可空 JSONB 列。
 事务行锁保护读改写，保留其他顶层metadata。customer_activity记录最近90个有活动UTC日期、
 最近256事件ID、启动数和数据库接收时间。客户端loginTime是声明值，不是服务端认证登录事件。

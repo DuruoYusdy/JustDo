@@ -40,7 +40,7 @@ Main 通常在 JWT 剩余 60 秒时主动换证；生命周期短于 120 秒时�
 
 - `mtoken`：仅供 Main 向换证服务申请 JWT 的用户登录凭据；
 - `X-User-Account`：用户 ID，必须等于 JWT 的 `sub`；
-- `X-Cookie`：既有登录和部分工具权限字段，LiteLLM 不读取它。
+- `X-Cookie`：既有登录和部分工具权限字段；模型请求的 Header Hook 校验其 Cookie 格式，不验证会话有效性。
 
 JWT header 必须有受支持的非对称 `alg` 和 `kid`；payload 必须有 `iss`、`aud`、
 `sub`、`iat`、`exp`、`jti`，默认 `exp - iat <= 300` 秒（可按上述组织策略显式调整）。Main 的结构校验只是尽早
@@ -52,12 +52,12 @@ JWT 是 bearer token，被抓包后在剩余有效期内仍可能重放。短有
 
 ## 2. 服务端授权模型
 
-新版请求进入加载 `deploy/litellm/custom_auth.py` 的 JWT 数据面。Hook 完成以下检查：
+新版请求进入加载 `deploy/litellm/hooks/jwt_auth/handler.py` 的 JWT 数据面。Hook 完成以下检查：
 
 1. 通过 HTTPS JWKS 校验签名、算法、`iss`、`aud` 与时间；
 2. 要求 `X-User-Account`（若携带）与 JWT `sub` 一致；
 3. 从 LiteLLM PostgreSQL 读取已存在的 internal user；
-4. 要求用户属于且只属于一个非 legacy 的 `justdo_managed` Team；
+4. 要求用户属于且只属于一个非 legacy 的 `jwt_managed` Team；
 5. 把 Team 的模型、blocked、预算、RPM/TPM 和成员限额投影到 LiteLLM 通用检查。
 
 JWT 只证明当前请求的身份。User、Team 和成员关系长期存在于 LiteLLM 数据库，模型
@@ -65,7 +65,7 @@ JWT 只证明当前请求的身份。User、Team 和成员关系长期存在于 
 用量审计，但不能单独授权。
 
 部署使用一个 LiteLLM 实例。
-`shared/auth_dispatch.py` 在启动时安装针对 LiteLLM 1.99.1 的认证适配：JWT 请求交给
+`hooks/jwt_auth/dispatch.py` 在启动时安装针对 LiteLLM 1.99.1 的认证适配：JWT 请求交给
 自定义 Hook，普通 Key 和管理会话继续原生认证；JWT 失败直接拒绝，不回退。
 模型请求统一经过公共权限、预算和限流检查，多个 worker 通过 Redis 协调用量。
 
@@ -101,8 +101,8 @@ Main 打开 SQLite，按新版 Extension policy 初始化 outbound-header proxy�
 发现请求携带非密钥 Authorization 哨兵以及专用身份 headers：
 
 ```text
-Authorization: Bearer justdo-jwt-auth
-X-JustDo-JWT: <short-lived JWT>
+Authorization: Bearer access-jwt-auth
+X-ACCESS-JWT: <short-lived JWT>
 X-User-Account: <JWT sub>
 ```
 
@@ -123,7 +123,7 @@ PostgreSQL 不是同一个数据库。
 
 - JWT 不回写登录文件，存在于受限权限的派生二进制快照、Main 与 Gateway 运行时内存；
 - Renderer/API 配置始终看到空的 builtin `apiKey`；
-- `openclaw.json` 的 provider `apiKey`、`X-JustDo-JWT` 和 `X-User-Account` 都是
+- `openclaw.json` 的 provider `apiKey`、`X-ACCESS-JWT` 和 `X-User-Account` 都是
   `justdo_login` 原生 exec SecretRef，不含明文；
 - Gateway launch environment 不包含 builtin JWT；
 - logout 会删除 builtin provider、memory search 引用和受管 SecretRef provider；
@@ -158,9 +158,9 @@ AbortController；新的登录、退出或刷新会取消旧请求，晚到响�
 
 ## 6. Team 与旧版 30 天兼容
 
-`deploy/litellm/provision_groups.py` 幂等创建/更新长期 Team 和 internal user，明确使用
-`auto_create_key=false`，并维护每个用户唯一的 JustDo-managed Team 归属。脚本不会为
-新版用户生成、返回或保存 Virtual Key。
+首次部署只初始化默认 Team，已存在时不修改。管理员通过 LiteLLM 网页维护模型列表、
+预算、限流和成员关系，无需重启。新用户首次认证自动加入默认组，不生成 Virtual Key；
+每个用户只能属于一个 `jwt_managed=true` 的非 legacy Team。权限变更受授权缓存传播影响。
 
 旧版客户端只使用一枚服务端 legacy Virtual Key：值与历史固定 Key 完全相同，绑定
 独立 legacy Team，仅开放推理和模型发现路由，并固定 `duration=30d`。若旧值还是当前
@@ -191,13 +191,14 @@ LiteLLM PostgreSQL 会保存这一枚 legacy Virtual Key 的哈希和过期时�
 | 轮换     | `src/main/cowork/builtinModelCredentialMonitor.ts` | 文件监听、到期复核与串行刷新     |
 | Provider | `src/main/cowork/builtinModelProvider.ts`          | 认证发现、无凭据投影、并发收敛   |
 | OpenClaw | `src/main/openclaw/config/openclawConfigSync.ts`   | exec SecretRef 与 logout 清理    |
-| JWT Hook | `deploy/litellm/custom_auth.py`                    | JWKS 认证和持久 Team 权限投影    |
-| 认证适配 | `deploy/litellm/shared/auth_dispatch.py`           | 单实例 JWT/原生 Key 认证分派     |
-| 运维     | `deploy/litellm/provision_groups.py`               | Team/User 与唯一 legacy Key 迁移 |
+| JWT Hook | `deploy/litellm/hooks/jwt_auth/handler.py`                    | JWKS 认证和持久 Team 权限投影    |
+| 认证适配 | `deploy/litellm/hooks/jwt_auth/dispatch.py`           | 单实例 JWT/原生 Key 认证分派     |
+| 初始化   | `deploy/litellm/start.py`                         | 显式建表及默认组初始化          |
+| 旧 Key   | `deploy/litellm/hooks/jwt_auth/legacy_key.py`       | 唯一 legacy Key 限时登记         |
 
 任何日志、测试失败信息和排障材料都不得输出 Authorization、JWT、`X-Cookie`、master
 key 或 legacy Key 明文。
 
 ## 9. 联调边界
 
-本分支已实现可配置的 mtoken 换证与主动续签，以及 JWT 首次认证后自动创建用户并加入服务器指定默认 Team（LITELLM_DEFAULT_TEAM_ID）。默认组须提前创建，入组采用 PostgreSQL 事务；已有用户不自动回填默认组，管理员移组或移除权限不会被登录覆盖。正式联调仍需部署方填写完整服务地址、issuer、audience、JWKS，并核对实际 JWT claims 和有效期。deviceId 已获准本机保存，clientIp 可选且不发送，示例中的 pqAk 已确认为脱敏占位。尚未完成真实数据库并发验证和千级请求压测。旧版 30 天 Virtual Key 只在服务器侧保留。授权管理变更受 LiteLLM 缓存传播影响，不能承诺瞬时生效。
+上线前填写换证地址、issuer、audience、JWKS，核对实际 JWT claims 和有效期，并完成生产登录服务联调及目标并发压测。deviceId 本机保存，clientIp 不发送。权限变更受 LiteLLM 缓存传播影响，不保证瞬时生效。

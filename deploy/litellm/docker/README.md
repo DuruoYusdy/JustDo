@@ -11,22 +11,18 @@
 docker compose config --quiet
 docker compose build
 docker compose up -d --wait db redis
-docker compose run --rm --no-deps --entrypoint python litellm /opt/litellm-hooks/init_database.py
+docker compose run --rm --no-deps --entrypoint python litellm /opt/litellm-hooks/start.py init
 docker compose up -d
 docker compose ps
 docker compose logs --tail 100 litellm
 ```
 
 入口为 `http://服务器地址:9108`，端口通过 `LITELLM_PORT` 配置；生产环境接入现有 HTTPS 入口。
-新部署的项目名为 `litellm`。已有部署须保持原 `LITELLM_DEPLOYMENT_NAME`，不要用新示例覆盖旧配置；
-旧配置未设置该项时沿用历史项目名，以继续使用原数据卷。
-多个 worker 服务于同一个 LiteLLM 实例，不区分新旧认证服务。
-在管理页面配置模型，再按公共 README 创建默认 Team 和迁移旧 Key。
+项目名通过 `LITELLM_DEPLOYMENT_NAME` 配置，默认 `litellm`；部署后保持不变，以复用数据卷。
+在管理页面为初始化生成的默认 Team 设置模型和限额；旧 Key 登记见公共 README。
 
 初始化执行版本化迁移并增加 EndUser metadata 列，正常启动禁用自动 schema 同步。
-升级前备份数据库，保持原项目名，执行 `docker compose down --remove-orphans`（不带 `-v`），
-清理旧服务及其端口占用，保留数据卷；再按上述步骤构建、初始化和启动。禁止使用
-`prisma db push --accept-data-loss`。镜像固定为 LiteLLM 1.99.1，认证适配拒绝未经验证的版本。
+禁止使用 `prisma db push --accept-data-loss`。镜像固定为 LiteLLM 1.99.1。
 
 修改 Python Hook 后重新构建镜像；修改环境后执行 `docker compose up -d --force-recreate`。
 停止服务使用 `docker compose down`，不要加 `-v`，以免删除数据库和 Redis 数据卷。

@@ -1341,13 +1341,13 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.models.providers.builtin_models.apiKey).toEqual({
       source: 'exec',
       provider: 'justdo_login',
-      id: 'X-JustDo-JWT',
+      id: 'X-ACCESS-JWT',
     });
     expect(config.models.providers.builtin_models.headers).toEqual({
-      'X-JustDo-JWT': {
+      'X-ACCESS-JWT': {
         source: 'exec',
         provider: 'justdo_login',
-        id: 'X-JustDo-JWT',
+        id: 'X-ACCESS-JWT',
       },
       'X-User-Account': {
         source: 'exec',
