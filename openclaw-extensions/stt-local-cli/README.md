@@ -1,4 +1,4 @@
-# Local Speech Recognition
+# stt-local-cli
 
 Provides the `transcribe_audio` OpenClaw tool using the application's installed
 Sherpa ONNX runtime and model. Configuration is synchronized by the host app.

@@ -7,7 +7,7 @@ export const TOOL_NAME = 'transcribe_audio';
 
 export default {
   id: 'stt-local-cli',
-  name: 'Local Speech Recognition',
+  name: 'stt-local-cli',
   register(api: OpenClawPluginApi) {
     const config = readConfig(api.pluginConfig);
     if (!config) return;

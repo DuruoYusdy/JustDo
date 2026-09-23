@@ -1,6 +1,6 @@
 {
   "id": "stt-local-cli",
-  "name": "Local Speech Recognition",
+  "name": "stt-local-cli",
   "description": "Transcribe local audio attachments offline using the installed Sherpa ONNX model.",
   "activation": {
     "onStartup": true,
