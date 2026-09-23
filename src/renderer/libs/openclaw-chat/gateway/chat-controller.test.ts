@@ -15,7 +15,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test('requests local speech from the Gateway for assistant text', async () => {
+test('requests speech through the app bridge without a Gateway connection', async () => {
   const controller = new ChatController();
   const response = {
     audioBase64: 'UklGRg==',
@@ -23,11 +23,10 @@ test('requests local speech from the Gateway for assistant text', async () => {
     outputFormat: 'wav',
   };
   const request = vi.fn().mockResolvedValue(response);
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
+  vi.stubGlobal('window', { electron: { speechSynthesis: { speak: request } } });
 
   await expect(controller.speak('你好')).resolves.toEqual(response);
-  expect(request).toHaveBeenCalledWith('tts.speak', { text: '你好' });
+  expect(request).toHaveBeenCalledWith('你好');
 });
 
 test('sends /btw as an isolated side-chat turn without changing main chat state', async () => {

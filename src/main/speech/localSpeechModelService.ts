@@ -212,12 +212,10 @@ export class LocalSpeechModelService {
       downloadPercent: undefined,
       error: undefined,
     });
-    if (artifact.kind === LocalSpeechModelKind.Tts) {
-      try {
-        await this.dependencies.syncOpenClawConfig('local-speech-model-removed');
-      } catch {
-        // The next settings/config synchronization will remove the now-unavailable provider.
-      }
+    try {
+      await this.dependencies.syncOpenClawConfig('local-speech-model-removed');
+    } catch {
+      // The next settings/config synchronization will remove the now-unavailable provider.
     }
     return { success: true, status: { ...this.statuses.get(artifact.id)! } };
   }
@@ -309,9 +307,7 @@ export class LocalSpeechModelService {
     const backupModel = path.join(modelsRoot, `.backup-${artifact.id}`);
     try {
       if (this.isInstalled(artifact)) {
-        if (artifact.kind === LocalSpeechModelKind.Tts) {
-          await this.dependencies.syncOpenClawConfig('local-speech-model-installed');
-        }
+        await this.dependencies.syncOpenClawConfig('local-speech-model-installed');
         this.update(artifact, {
           phase: 'ready',
           installed: true,
@@ -392,9 +388,7 @@ export class LocalSpeechModelService {
         throw error;
       }
 
-      if (artifact.kind === LocalSpeechModelKind.Tts) {
-        await this.dependencies.syncOpenClawConfig('local-speech-model-installed');
-      }
+      await this.dependencies.syncOpenClawConfig('local-speech-model-installed');
       this.update(artifact, {
         phase: 'ready',
         installed: true,

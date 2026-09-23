@@ -1069,6 +1069,7 @@ interface IElectronAPI {
     ) => Promise<import('../../shared/speech/localTts').LocalTtsStatus>;
   };
   localAsr: {
+    stageAttachment: (source: string, workspace: string) => Promise<import('../../shared/speech/localAsr').StageAudioAttachmentResult>;
     getStatus: (
       modelId: import('../../shared/speech/localAsr').LocalAsrModelId,
     ) => Promise<import('../../shared/speech/localAsr').LocalAsrStatus>;

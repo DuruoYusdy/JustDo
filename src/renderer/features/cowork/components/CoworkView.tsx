@@ -3082,6 +3082,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         size="large"
                         showModelSelector={true}
                         sessionId={currentSession.id}
+                        workingDirectory={currentSessionFolderPath}
                         modelAgentId={currentSession.agentId}
                         slashCommandSessionKey={currentGatewaySessionKey ?? undefined}
                         sessionModelRef={currentSession.modelRef}

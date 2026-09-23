@@ -57,6 +57,7 @@ describe('LocalSpeechModelService', () => {
       requiredFiles,
     };
     const notify = vi.fn();
+    const syncOpenClawConfig = vi.fn();
     const fetchModel = vi.fn(async () =>
       new Response(archive.body, {
         headers: { 'content-length': String(archive.body.length) },
@@ -66,7 +67,7 @@ describe('LocalSpeechModelService', () => {
       userDataPath,
       fetch: fetchModel,
       notify,
-      syncOpenClawConfig: vi.fn(),
+      syncOpenClawConfig,
       artifacts: [artifact],
       baseUrl: 'https://updates.example.test/speech-models/v1/',
       resolveModelDir: modelId => path.join(userDataPath, 'local-speech-models', modelId),
@@ -75,6 +76,7 @@ describe('LocalSpeechModelService', () => {
     const result = await service.install(LocalSpeechModelKind.Asr, id);
 
     expect(result.success).toBe(true);
+    expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-installed');
     expect(result.status).toMatchObject({ phase: 'ready', installed: true });
     expect(fetchModel).toHaveBeenCalledWith(
       `https://updates.example.test/speech-models/v1/${id}.tar.zst`,
@@ -85,6 +87,8 @@ describe('LocalSpeechModelService', () => {
     }
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ phase: 'downloading' }));
     expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'ready' }));
+    await service.remove(LocalSpeechModelKind.Asr, id);
+    expect(syncOpenClawConfig).toHaveBeenCalledWith('local-speech-model-removed');
   });
 
   it('rejects a model whose SHA-256 does not match and leaves no partial installation', async () => {

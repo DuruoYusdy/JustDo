@@ -447,3 +447,52 @@ OpenClaw's ownership/visibility checks; they do not consume peer message budget.
 Ambiguous label/physical-ID targets are not used to bypass the disabled peer
 boundary. Scoped peer access providers are acquired on service start and released
 on stop, including cached-registry stop/start cycles.
+
+
+## 本地音频转写工具
+
+`openclaw-extensions/stt-local-cli` 提供 `transcribe_audio`，由模型按需调用，
+不在消息发送前自动识别。它与 `tts-local-cli` 分别负责识别和合成。
+
+```mermaid
+sequenceDiagram
+  participant UI as 消息输入框
+  participant Main as Electron Main
+  participant Agent as OpenClaw Agent
+  participant STT as stt-local-cli
+  participant CLI as 本地 FFmpeg / Sherpa ONNX
+  UI->>Main: 将工作区外的音频附件复制到当前工作区
+  Main-->>UI: 工作区内的附件路径
+  UI->>Agent: 用户消息与 MEDIA 文件路径
+  Agent->>STT: transcribe_audio(audio_path)
+  STT->>CLI: 解码为 16 kHz 单声道 WAV，按 30 秒分段识别
+  CLI-->>STT: 各段文字
+  STT-->>Agent: 文字、分段起点、模型和语言
+```
+
+应用配置同步器管理识别程序绝对路径、模型参数、语言和线程数；工具复用已安装的
+SenseVoice / Whisper ONNX 模型，不下载模型、不调用云端服务。
+文件转写独立于麦克风输入开关和在线录音模式。扩展默认启用，用户在插件页显式禁用后，
+后续配置同步保留禁用状态。模型未就绪时不注册工具。模型安装、移除或语音设置变更
+沿用现有配置同步流程更新扩展配置。
+
+扩展只在非沙箱会话注册工具，并遵守当前工具上下文的 workspaceOnly/root 策略。
+输入必须是本地文件；不接受 URL、网络共享和播放列表。对工作区外的音频/视频附件，
+输入框发送时通过 `local-asr:stage-attachment` 将副本放到项目内的 `.justdo-audio-*`
+目录，原文件不变，副本保留供历史对话再次引用，可随项目手动清理。
+此 IPC 属于用户界面附件导入，不暴露给模型。
+
+支持 WAV、MP3、M4A、AAC、OGG、Opus、FLAC、WebM、MP4、MOV、MKV（文件须有可解码音轨）。
+上限为 256 MiB / 1 小时；每次命令限时 120 秒，整次调用限时 15 分钟，同一扩展实例
+只允许一个转写。取消会终止当前子进程并清理临时解码文件；超限、无语音或失败均不返回
+伪装为成功的部分转写。分段起点为切片偏移，不代表词级时间戳或说话人分离。
+
+FFmpeg 由扩展的锁定依赖 `@ffmpeg-installer/ffmpeg` 提供，随目标平台安装，
+运行时通过 createRequire 延迟加载以维持二进制定位；打包保留依赖许可文件。
+当前应用管理的 Sherpa 运行时仅支持 Windows x64，其余平台不注册此工具。
+
+### Local speech UI and agent extension switches
+
+The microphone and local file import use the main-process ASR module. Chat read-aloud and voice preview share the speech-synthesis preload bridge: local mode executes Sherpa directly in `localTtsService`, while online mode requests Gateway `tts.speak`. Local synthesis uses the existing model/voice/rate settings, bounded execution, and disposable WAV output. Neither local UI path depends on the STT/TTS extension being enabled or Gateway connectivity.
+
+Config sync preserves explicit disabled states for both `stt-local-cli` and `tts-local-cli`. These extension switches control OpenClaw capabilities; application voice input/output switches independently control the UI features.

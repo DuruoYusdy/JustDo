@@ -18,8 +18,11 @@ vi.mock('@/features/cowork/components/composer/CoworkPromptInput', () => ({
       onSubmit: (value: string) => unknown;
       placeholder?: string;
       showModelSelector?: boolean;
+      workingDirectory?: string;
     }
-  >(({ disabled, draftKeyOverride, mode, onSubmit, placeholder, showModelSelector }, ref) => {
+  >(({
+    disabled, draftKeyOverride, mode, onSubmit, placeholder, showModelSelector, workingDirectory,
+  }, ref) => {
     useImperativeHandle(ref, () => ({ focus: vi.fn() }));
     return (
       <button
@@ -28,6 +31,7 @@ vi.mock('@/features/cowork/components/composer/CoworkPromptInput', () => ({
         data-draft-key={draftKeyOverride}
         data-mode={mode}
         data-model-selector={showModelSelector}
+        data-workspace={workingDirectory}
         onClick={() => onSubmit('side question')}
       >
         {placeholder}
@@ -77,6 +81,7 @@ describe('SideChatPanel', () => {
     render(
       <SideChatPanel
         draftKey="side-chat:one"
+        workingDirectory="C:/workspace/audio"
         messages={[]}
         onSubmit={onSubmit}
         sessionId="session-1"
@@ -89,6 +94,7 @@ describe('SideChatPanel', () => {
     ).toBeTruthy();
     const composer = screen.getByRole('button', { name: 'Ask anything' });
     expect(composer.getAttribute('data-mode')).toBe('side-chat');
+    expect(composer.getAttribute('data-workspace')).toBe('C:/workspace/audio');
     expect(composer.getAttribute('data-draft-key')).toBe('side-chat:one');
     expect(composer.getAttribute('data-model-selector')).toBe('true');
     fireEvent.click(composer);

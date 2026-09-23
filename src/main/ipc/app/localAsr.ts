@@ -12,8 +12,22 @@ import {
   isLocalAsrModelId,
   transcribeLocalAudio,
 } from '../../speech/localAsrService';
+import { stageAudioAttachment } from '../../speech/localAudioAttachment';
 
 export function registerLocalAsrHandlers(): void {
+  ipcMain.handle(
+    LocalAsrIpc.StageAttachment,
+    async (_event, source: unknown, workspace: unknown) => {
+      if (typeof source !== 'string' || typeof workspace !== 'string') {
+        return { success: false, error: 'Invalid audio attachment request.' };
+      }
+      try {
+        return { success: true, path: await stageAudioAttachment(source, workspace) };
+      } catch {
+        return { success: false, error: 'Could not copy the audio attachment into the workspace.' };
+      }
+    },
+  );
   ipcMain.handle(LocalAsrIpc.GetStatus, (_event, modelId: unknown) =>
     getLocalAsrStatus(isLocalAsrModelId(modelId) ? modelId : LOCAL_ASR_DEFAULT_MODEL_ID),
   );

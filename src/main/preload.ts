@@ -815,6 +815,8 @@ contextBridge.exposeInMainWorld('electron', {
     getStatus: (modelId: LocalTtsModelId) => ipcRenderer.invoke(LocalTtsIpc.GetStatus, modelId),
   },
   localAsr: {
+    stageAttachment: (source: string, workspace: string) =>
+      ipcRenderer.invoke(LocalAsrIpc.StageAttachment, source, workspace),
     getStatus: (modelId: LocalAsrModelId) => ipcRenderer.invoke(LocalAsrIpc.GetStatus, modelId),
     transcribe: (audio: Uint8Array, options: LocalAsrTranscribeOptions) =>
       ipcRenderer.invoke(LocalAsrIpc.Transcribe, audio, options),

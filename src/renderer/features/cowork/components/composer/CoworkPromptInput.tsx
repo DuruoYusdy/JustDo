@@ -20,6 +20,7 @@ import {
   shouldClearSlashCommandComposerBeforeExecution,
 } from '@shared/cowork/slashCommands';
 import type { OpenClawModelChoice } from '@shared/openclaw/models';
+import { isLocalAudioAttachment } from '@shared/speech/localAsr';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -976,6 +977,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           let attachmentPreparationFailed = false;
           let imagePreparationFailed = false;
           for (const attachment of attachments) {
+            if (!attachment.path.startsWith('inline:') && isLocalAudioAttachment(attachment.path)) {
+              const staged = await window.electron.localAsr.stageAttachment(
+                attachment.path,
+                workingDirectory,
+              );
+              if (!staged.success || !staged.path) {
+                window.dispatchEvent(
+                  new CustomEvent('app:showToast', {
+                    detail: i18nService.t('localAsrAttachmentCopyFailed'),
+                  }),
+                );
+                return;
+              }
+              mediaDirectivePaths.push(staged.path);
+              continue;
+            }
             const attachmentIsImage = isImageAttachment(attachment);
             let dataUrl = attachment.dataUrl;
 

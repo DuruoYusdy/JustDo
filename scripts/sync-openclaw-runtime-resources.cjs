@@ -427,7 +427,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
 
     if (canReuseDependencies) {
       replaceExtensionSources(extensionSourceDir, extensionTargetDir);
-      pruneExtensionDependencies(extensionTargetDir, { preserveLegalFiles: entry.name === 'acpx' });
+      pruneExtensionDependencies(extensionTargetDir, { preserveLegalFiles: ['acpx', 'stt-local-cli'].includes(entry.name) });
       console.log(`[${label}] Reused locked production dependencies: ${entry.name}`);
       copied.push(entry.name);
       continue;
@@ -446,7 +446,7 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         installDependencies(stagingDir, installTarget);
         verifyDeclaredDependencies(stagingDir);
         verifyAcpxTargetDependencies(stagingDir, installTarget);
-        pruneExtensionDependencies(stagingDir, { preserveLegalFiles: entry.name === 'acpx' });
+        pruneExtensionDependencies(stagingDir, { preserveLegalFiles: ['acpx', 'stt-local-cli'].includes(entry.name) });
         fs.writeFileSync(
           path.join(stagingDir, EXTENSION_ASSEMBLY_MANIFEST),
           `${JSON.stringify({ version: EXTENSION_ASSEMBLY_VERSION, target: installTarget.targetId, dependencyFingerprint: fingerprint }, null, 2)}\n`,

@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-stt-local-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "1.1.0",
+    "opencc-js": "1.4.2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

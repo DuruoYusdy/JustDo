@@ -1200,6 +1200,11 @@ export const mergeOpenClawPluginConfig = (
     ...(isRecord(sourcePlugins.entries) ? sourcePlugins.entries : {}),
     ...managedEntries,
   }).map(([pluginId, value]) => {
+    // Refresh application-owned model paths without undoing the user's plugin toggle.
+    if ((pluginId === OpenClawExtensionId.STT_LOCAL_CLI || pluginId === LOCAL_TTS_PROVIDER_ID) && isRecord(value)) {
+      const previous = isRecord(sourcePlugins.entries) ? sourcePlugins.entries[pluginId] : null;
+      if (isRecord(previous) && previous.enabled === false) value = { ...value, enabled: false };
+    }
     if (!isRecord(value) || value.enabled !== false || !isRecord(value.config)) {
       return [pluginId, value];
     }
@@ -2025,7 +2030,8 @@ const isBundledPluginAvailable = (pluginId: string): boolean => {
 };
 
 const isUserToggleableBundledPlugin = (pluginId: string): boolean =>
-  pluginId === OpenClawExtensionId.WORKBOARD || pluginId === OpenClawExtensionId.AGENT_TEAM;
+  pluginId === OpenClawExtensionId.WORKBOARD || pluginId === OpenClawExtensionId.AGENT_TEAM ||
+  pluginId === OpenClawExtensionId.STT_LOCAL_CLI || pluginId === LOCAL_TTS_PROVIDER_ID;
 
 export const listManagedOpenClawPluginIds = (): string[] => [
   ...new Set([
@@ -2162,6 +2168,7 @@ type OpenClawConfigSyncDeps = {
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
   getBrowserMode?: () => BrowserModeValue;
+  getLocalSttConfig?: () => Record<string, unknown> | null;
   getLocalTtsConfig?: () => Record<string, unknown> | null;
   getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
   getWindowsSandboxEnvironment?: () => Record<string, string>;
@@ -2176,6 +2183,7 @@ export class OpenClawConfigSync {
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
   private readonly getBrowserMode?: () => BrowserModeValue;
+  private readonly getLocalSttConfig: () => Record<string, unknown> | null;
   private readonly getLocalTtsConfig: () => Record<string, unknown> | null;
   private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
@@ -2191,6 +2199,7 @@ export class OpenClawConfigSync {
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
     this.getBrowserMode = deps.getBrowserMode;
+    this.getLocalSttConfig = deps.getLocalSttConfig ?? (() => null);
     this.getLocalTtsConfig = deps.getLocalTtsConfig ?? (() => null);
     this.getSpeechOutputState =
       deps.getSpeechOutputState ?? (() => ({ enabled: true, mode: 'online' }));
@@ -2361,6 +2370,9 @@ export class OpenClawConfigSync {
         coworkConfig.executionMode === 'sandbox',
         coworkConfig.sandboxNetworkEnabled,
       ),
+      ...(isBundledPluginAvailable(OpenClawExtensionId.STT_LOCAL_CLI)
+        ? { [OpenClawExtensionId.STT_LOCAL_CLI]: { enabled: true, config: this.getLocalSttConfig() ?? {} } }
+        : {}),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
       ...buildManagedOnlineAsrPluginEntries(existingPlugins),
     };
@@ -2793,6 +2805,9 @@ export class OpenClawConfigSync {
         coworkConfig.executionMode === 'sandbox',
         coworkConfig.sandboxNetworkEnabled,
       ),
+      ...(isBundledPluginAvailable(OpenClawExtensionId.STT_LOCAL_CLI)
+        ? { [OpenClawExtensionId.STT_LOCAL_CLI]: { enabled: true, config: this.getLocalSttConfig() ?? {} } }
+        : {}),
       ...buildManagedOpenClawTtsPluginEntries(managedTtsConfig),
     };
     const defaultPluginEntries = {

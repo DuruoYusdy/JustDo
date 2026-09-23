@@ -222,7 +222,7 @@ function pruneExtensionDependencies(extensionDir, options = {}) {
 }
 
 function shouldPreserveExtensionLegalFiles(extensionId) {
-  return extensionId === 'acpx' || extensionId === 'mxc';
+  return extensionId === 'acpx' || extensionId === 'mxc' || extensionId === 'stt-local-cli';
 }
 
 // ─── Extension pruning policy ───

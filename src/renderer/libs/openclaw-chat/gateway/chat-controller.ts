@@ -776,9 +776,7 @@ export class ChatController {
   }
 
   async speak(text: string): Promise<LocalTtsSpeakResult> {
-    const client = this.state.client;
-    if (!client || !this.state.connected) throw new Error('Gateway is not connected');
-    return client.request<LocalTtsSpeakResult>('tts.speak', { text });
+    return window.electron.speechSynthesis.speak(text);
   }
 
   /** Set an optimistic user message shown until the next loadHistory.

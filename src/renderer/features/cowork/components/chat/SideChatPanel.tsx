@@ -149,6 +149,7 @@ const SideChatPanel = ({
             size="large"
             showModelSelector={true}
             sessionId={sessionId}
+            workingDirectory={workingDirectory}
             draftKeyOverride={draftKey}
             modelAgentId={modelAgentId}
             sessionModelRef={sessionModelRef}

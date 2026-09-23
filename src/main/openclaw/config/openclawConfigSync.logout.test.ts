@@ -246,6 +246,71 @@ const writeMinimalConfig = (
 };
 
 describe('OpenClaw auth logout config sync', () => {
+  test.each(['full', 'minimal'] as const)(
+    '%s sync refreshes local STT configuration without overriding speech extension toggles',
+    mode => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-toggle-sync-'));
+      temporaryDirectories.push(stateDir);
+      const configPath = path.join(stateDir, 'openclaw.json');
+      const appConfig = mode === 'full' ? {
+        model: { defaultModel: 'custom-model', defaultModelProvider: 'custom-provider' },
+        providers: {
+          'custom-provider': {
+            enabled: true,
+            apiKey: 'test-secret',
+            baseUrl: 'https://custom.example.test/v1',
+            apiFormat: 'openai',
+            models: [{ id: 'custom-model' }],
+          },
+        },
+      } : {};
+      setStoreGetter(() => ({ get: () => appConfig }) as never);
+      let sttConfig = { command: 'sherpa.exe', args: ['--model=first.onnx'], modelId: 'first' };
+      const sync = new OpenClawConfigSync({
+        engineManager: {
+          getConfigPath: () => configPath,
+          getStateDir: () => stateDir,
+          getDesiredVersion: () => '2026.9.2',
+        },
+        getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+        getAgents: () => [],
+        getLocalSttConfig: () => sttConfig,
+        getLocalTtsConfig: () => ({
+          enabled: true,
+          provider: 'tts-local-cli',
+          providers: { 'tts-local-cli': { command: 'sherpa-tts.exe' } },
+        }),
+        getSpeechOutputState: () => ({ enabled: true, mode: 'local' }),
+      } as never);
+      const readConfig = () => JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+      expect(sync.sync('settings').ok).toBe(true);
+      let config = readConfig();
+      // Assert that the public entry point exercised the intended provider branch.
+      expect(Boolean(config.models.providers?.['custom-provider'])).toBe(mode === 'full');
+      for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
+        expect(config.plugins.entries[pluginId].enabled).toBe(true);
+        config.plugins.entries[pluginId].enabled = false;
+      }
+      fs.writeFileSync(configPath, JSON.stringify(config));
+      sttConfig = { command: 'new-sherpa.exe', args: ['--model=second.onnx'], modelId: 'second' };
+
+      expect(sync.sync('local-speech-model-installed').ok).toBe(true);
+      config = readConfig();
+      expect(config.plugins.entries['stt-local-cli']).toEqual({ enabled: false, config: sttConfig });
+      expect(config.plugins.entries['tts-local-cli'].enabled).toBe(false);
+      for (const pluginId of ['tts-local-cli', 'stt-local-cli']) {
+        config.plugins.entries[pluginId].enabled = true;
+      }
+      fs.writeFileSync(configPath, JSON.stringify(config));
+
+      expect(sync.sync('settings').ok).toBe(true);
+      config = readConfig();
+      expect(config.plugins.entries['stt-local-cli']).toEqual({ enabled: true, config: sttConfig });
+      expect(config.plugins.entries['tts-local-cli'].enabled).toBe(true);
+    },
+  );
+
   test.each([
     BuiltinModelSyncReason.ManualRefresh,
     BuiltinModelSyncReason.AuthLogin,
@@ -620,6 +685,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'agent-team',
       'browser',
+      'stt-local-cli',
       'acpx',
       'automation-permission',
       'runtime-services',
@@ -717,6 +783,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'agent-team',
       'browser',
+      'stt-local-cli',
       'acpx',
       'ask-user-question',
       'automation-permission',
@@ -863,6 +930,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'agent-team',
       'browser',
+      'stt-local-cli',
       'acpx',
       'ask-user-question',
       'automation-permission',

@@ -8,6 +8,7 @@ export const OpenClawExtensionId = {
   AGENT_TEAM: 'agent-team',
   EMBEDDED_BROWSER: 'embedded-browser',
   ACPX: 'acpx',
+  STT_LOCAL_CLI: 'stt-local-cli',
   WINDOWS_NATIVE_SANDBOX: 'mxc',
 } as const;
 

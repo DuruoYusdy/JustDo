@@ -179,6 +179,7 @@ import {
   initCronJobServiceManager,
   registerScheduledTaskHandlers,
 } from './ipc/scheduledTask';
+import { buildManagedLocalSttConfig } from './openclaw/config/localSttConfig';
 import { buildManagedLocalTtsConfig } from './openclaw/config/localTtsConfig';
 import { NativeAssistantCreation } from './openclaw/config/nativeAssistantCreation';
 import {
@@ -703,6 +704,13 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getCoworkEngineService().requestGateway<T>(method, params),
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
+      getLocalSttConfig: () => {
+        const appConfig = getStore().get<AppConfigSettings>('app_config');
+        return buildManagedLocalSttConfig(
+          normalizeLocalSpeechSettings(appConfig?.voice),
+          appConfig?.language === 'en' ? 'en' : 'zh',
+        );
+      },
       getLocalTtsConfig: () =>
         buildManagedLocalTtsConfig(
           undefined,
@@ -1351,6 +1359,9 @@ if (multicaBridgeArgv) {
       getOpenClawConfigSyncService().runConfigMutationExclusive(operation),
   });
   registerSpeechSynthesisHandlers({
+    getSettings: () => normalizeLocalSpeechSettings(
+      getStore().get<AppConfigSettings>('app_config')?.voice,
+    ),
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
   });

@@ -307,3 +307,11 @@ hooks and skill together; do not inject a roster or collaboration instructions
 on every turn. Runtime Services owns receipt history reads and blocks managed
 peer sends when the extension is disabled. Config sync must preserve the user's
 explicit extension state.
+
+
+Local audio attachment transcription is the `openclaw-extensions/stt-local-cli`
+extension (`transcribe_audio`). Config sync supplies installed Sherpa ONNX paths;
+file transcription is independent of the microphone toggle. Preserve explicit
+plugin disable state. The host tool is unavailable in sandboxed sessions and
+respects effective filesystem policy. External audio attachments are staged in
+the project before sending. See `docs/architecture/07-plugin-system.md`.
