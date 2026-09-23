@@ -2817,14 +2817,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       </button>
                     )}
                     {supportsAgentControls && (
-                      <>
-                        <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
-                        {contextUsageBadge}
-                      </>
+                      <PermissionModeSelector disabled={disabled} runActive={isRunActive} />
                     )}
                     {supportsAgentControls && <ActiveSkillBadge />}
                   </div>
-                  <div className="flex min-w-0 items-center justify-end gap-2">
+                  <div className="ml-auto flex min-w-0 items-center justify-end gap-2">
+                    {supportsAgentControls && contextUsageBadge}
                     {showModelSelector && !remoteManaged && (
                       <div className="flex flex-col items-start gap-1">
                         {isSideChat ? (

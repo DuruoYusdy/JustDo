@@ -449,6 +449,14 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
+.file-preview-shell.is-embedded .file-preview-preview-scroll:not(.is-preformatted) {
+  padding: 12px;
+}
+
+.file-preview-shell.is-embedded .file-preview-document:not(.is-preformatted) {
+  padding: clamp(16px, 3cqw, 24px);
+}
+
 .file-preview-document.is-preformatted {
   min-width: 0;
   min-height: 0;
