@@ -860,6 +860,9 @@
   font-size: 10px;
 }
 .recording-message-value {
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
   margin: 7px 0;
   padding: 7px 9px;
   background: var(--rec-soft);

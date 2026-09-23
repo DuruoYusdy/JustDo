@@ -7,6 +7,7 @@ import {
 } from './browser';
 import {
   type BrowserRecordingDraft,
+  hasRecordingValue,
   isSensitiveRecordingField,
   parseRecordingContext,
   parseRecordingEvent,
@@ -60,6 +61,25 @@ const draft: BrowserRecordingDraft = {
   ],
 };
 describe('browser operation demonstrations', () => {
+  it('omits empty incidental values from prompts and preserves missing values in history', () => {
+    for (const value of [undefined, '', '   ']) {
+      const step = { ...draft.steps[0], action: 'click' as const, value };
+      expect(hasRecordingValue(step)).toBe(false);
+      const recording = { ...draft, steps: [step] };
+      const prompt = composeBrowserGatewayPrompt('Explain', [], recording);
+      expect(prompt).not.toContain('"value":');
+      const restored = parseRecordingContext(serializeRecording(recording));
+      expect(restored?.steps[0].value).toBeUndefined();
+    }
+  });
+  it('preserves intentional empty input and selection values', () => {
+    for (const action of ['input', 'select'] as const) {
+      const step = { ...draft.steps[0], action, value: '' };
+      expect(hasRecordingValue(step)).toBe(true);
+      const restored = parseRecordingContext(serializeRecording({ ...draft, steps: [step] }));
+      expect(restored?.steps[0].value).toBe('');
+    }
+  });
   it('retains relative step times through history and edit round trips', () => {
     const recorded = { ...draft, steps: [{ ...draft.steps[0], at: 12345 }] };
     const restored = parseRecordingContext(serializeRecording(recorded));

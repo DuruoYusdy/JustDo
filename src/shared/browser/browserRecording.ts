@@ -77,6 +77,17 @@ export type BrowserRecordingStep = {
   screenshotFingerprints?: string[];
   screenshotIssue?: (typeof RecordingScreenshotIssue)[keyof typeof RecordingScreenshotIssue];
 };
+/** Empty input/selection values describe an intentional clear operation. */
+export function hasRecordingValue(step: BrowserRecordingStep): boolean {
+  return (
+    !step.sensitive &&
+    step.value !== undefined &&
+    (step.value.trim().length > 0 ||
+      step.action === RecordingAction.Input ||
+      step.action === RecordingAction.Select)
+  );
+}
+
 export type BrowserRecordingImage = { stepId: string; dataUrl: string; fileName: string };
 export type BrowserRecordingDraft = {
   id: string;
@@ -281,7 +292,7 @@ export function serializeRecording(
       url: recordingUrl(step.url),
       title: recordingPageTitle(step.title),
       screenshotFiles: undefined as string[] | undefined,
-      value: step.sensitive ? undefined : step.value,
+      value: hasRecordingValue(step) ? step.value : undefined,
       number: index + 1,
       screenshots:
         options.preserveHistoryScreenshotReferences && Array.isArray(step.screenshotFiles)
@@ -389,7 +400,8 @@ export function parseRecordingContext(text: string): BrowserRecordingDraft | nul
           screenshotFingerprints: Array.isArray(s.screenshotFingerprints)
             ? s.screenshotFingerprints.slice(0, 12).map(value => recordingText(value, 80))
             : [],
-          value: s.sensitive ? undefined : recordingText(s.value, 2000),
+          value:
+            !s.sensitive && typeof s.value === 'string' ? recordingText(s.value, 2000) : undefined,
           ...(s.sensitive ? {} : { interaction: parseInteraction(s.interaction) }),
           ...(s.target && typeof s.target === 'object'
             ? {

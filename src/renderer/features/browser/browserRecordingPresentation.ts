@@ -148,12 +148,14 @@ export function recordingActionValue(step: BrowserRecordingStep): {
     const checked = step.target?.tag === 'input' && ['true', 'false'].includes(value);
     return {
       label: t(checked ? 'recordingCheckedState' : 'recordingSelectedOption'),
-      text: checked ? t(value === 'true' ? 'recordingChecked' : 'recordingUnchecked') : value,
+      text: checked
+        ? t(value === 'true' ? 'recordingChecked' : 'recordingUnchecked')
+        : value || t('recordingEmptyValue'),
     };
   }
   return {
     label: t(step.action === RecordingAction.Input ? 'recordingValue' : 'recordingRecordedValue'),
-    text: value,
+    text: step.action === RecordingAction.Input && value === '' ? t('recordingEmptyValue') : value,
   };
 }
 

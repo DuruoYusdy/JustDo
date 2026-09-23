@@ -21,7 +21,11 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { BrowserRecordingDraft, BrowserRecordingStep } from '@shared/browser/browserRecording';
-import { RecordingAction, serializeRecording } from '@shared/browser/browserRecording';
+import {
+  hasRecordingValue,
+  RecordingAction,
+  serializeRecording,
+} from '@shared/browser/browserRecording';
 import { useId, useState } from 'react';
 
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
@@ -330,7 +334,7 @@ export function BrowserRecordingReview({
                       {t('recordingSensitive')}
                     </p>
                   ) : (
-                    step.value !== undefined && (
+                    hasRecordingValue(step) && (
                       <label className="recording-step-value" data-action={step.action}>
                         <span>{recordingActionValue(step).label}</span>
                         {step.action === RecordingAction.Input ? (

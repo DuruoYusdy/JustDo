@@ -1,4 +1,5 @@
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
+import { hasRecordingValue } from '@shared/browser/browserRecording';
 import { html, nothing } from 'lit';
 
 import {
@@ -59,7 +60,7 @@ export function renderBrowserRecording(recording: BrowserRecordingDraft) {
                 <div class="recording-source">
                   ${GLOBE}<span>${recordingPageLabel(step)}</span>${step.target?.tag && !step.sensitive ? html`<code>&lt;${step.target.tag}&gt;</code>` : nothing}
                 </div>
-                ${step.sensitive ? html`<p class="recording-message-value">${t('recordingSensitive')}</p>` : step.value !== undefined ? html`<div class="recording-message-value"><span class="recording-value-label">${recordingActionValue(step).label}</span><span>${recordingActionValue(step).text}</span>${recordingActionValue(step).hint ? html`<small class="recording-value-hint">${recordingActionValue(step).hint}</small>` : nothing}</div>` : nothing}
+                ${step.sensitive ? html`<p class="recording-message-value">${t('recordingSensitive')}</p>` : hasRecordingValue(step) ? html`<div class="recording-message-value"><span class="recording-value-label">${recordingActionValue(step).label}</span><span>${recordingActionValue(step).text}</span>${recordingActionValue(step).hint ? html`<small class="recording-value-hint">${recordingActionValue(step).hint}</small>` : nothing}</div>` : nothing}
                 ${step.note ? html`<p class="recording-message-step-note">${step.note}</p>` : nothing}
                 ${
                   hasRecordingElement(step)
