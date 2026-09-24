@@ -79,7 +79,7 @@ import {
   validateDisplayName,
 } from '@/app/config';
 import { APP_NAME } from '@/app/constants/app';
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import AgentManager from '@/features/agents/AgentManager';
 import { updateConfig as updateCoworkConfig } from '@/features/cowork/coworkSlice';
 import {
@@ -451,7 +451,6 @@ const Settings: React.FC<SettingsProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSucceeded, setSaveSucceeded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isMac = window.electron.platform === 'darwin';
   const buildNoticeMessage = useCallback((): string | null => {
     if (noticeI18nKey) {
       const base = i18nService.t(noticeI18nKey);
@@ -3072,9 +3071,9 @@ const Settings: React.FC<SettingsProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-      {/* Keep window chrome independent from settings navigation and page content. */}
-      <div className="draggable relative flex h-9 shrink-0 select-none items-center border-b border-border-subtle bg-surface-raised">
-        <div className={`flex min-w-0 items-center gap-2 pr-3 ${isMac ? 'pl-[76px]' : 'pl-2'}`}>
+      <WindowHeader />
+      <div className="relative flex h-9 shrink-0 select-none items-center border-b border-border-subtle bg-surface-raised">
+        <div className="flex min-w-0 items-center gap-2 pl-2 pr-3">
           <button
             type="button"
             onClick={handleCloseSettings}
@@ -3088,7 +3087,6 @@ const Settings: React.FC<SettingsProps> = ({
             {i18nService.t('settings')}
           </h2>
         </div>
-        <WindowTitleBar />
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden bg-background">

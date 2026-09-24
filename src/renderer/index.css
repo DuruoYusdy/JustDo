@@ -101,10 +101,6 @@ blockquote {
   height: 2.1875rem;
 }
 
-.cowork-window-header {
-  height: 1.875rem;
-}
-
 @container (min-width: 760px) {
   .cowork-display-panel {
     position: relative;

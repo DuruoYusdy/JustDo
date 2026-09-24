@@ -38,7 +38,7 @@ import type {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import ResultInbox from '@/features/scheduled-tasks/components/ResultInbox';
 import TaskRunHistory from '@/features/scheduled-tasks/components/TaskRunHistory';
 import {
@@ -1784,7 +1784,6 @@ export const CronView: React.FC<CronViewProps> = ({
   onNewChat,
 }) => {
   const t = i18nService.t.bind(i18nService);
-  const isMac = window.electron.platform === 'darwin';
 
   const nativeTasks = useSelector((s: RootState) => s.scheduledTask.tasks);
   const memoryControl = useMemoryDreamingControl(nativeTasks);
@@ -2036,9 +2035,12 @@ export const CronView: React.FC<CronViewProps> = ({
 
   if (loading && tasks.length === 0) {
     return (
-      <div className="flex flex-col h-full items-center justify-center">
-        <ArrowPathIcon className="h-8 w-8 animate-spin text-secondary" />
-        <p className="mt-3 text-sm text-secondary">{t('loading')}</p>
+      <div className="flex flex-col h-full">
+        <WindowHeader />
+        <div className="flex flex-1 flex-col items-center justify-center">
+          <ArrowPathIcon className="h-8 w-8 animate-spin text-secondary" />
+          <p className="mt-3 text-sm text-secondary">{t('loading')}</p>
+        </div>
       </div>
     );
   }
@@ -2046,10 +2048,11 @@ export const CronView: React.FC<CronViewProps> = ({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border shrink-0">
-        <div className="flex items-center space-x-3 h-8">
-          {isSidebarCollapsed && (
-            <div className={'non-draggable flex items-center gap-1 ' + (isMac ? 'pl-[68px]' : '')}>
+      <WindowHeader />
+      {isSidebarCollapsed && (
+        <div className="flex h-[2.1875rem] items-center justify-between px-4 border-b border-border shrink-0">
+          <div className="flex items-center space-x-3 h-8">
+            <div className="non-draggable flex items-center gap-1">
               <button
                 type="button"
                 onClick={onToggleSidebar}
@@ -2065,10 +2068,9 @@ export const CronView: React.FC<CronViewProps> = ({
                 <ComposeIcon className="h-4 w-4" />
               </button>
             </div>
-          )}
+          </div>
         </div>
-        <WindowTitleBar inline />
-      </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">

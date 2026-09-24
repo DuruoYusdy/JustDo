@@ -49,7 +49,7 @@ import {
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import {
   BROWSER_ANNOTATION_MAX_COUNT,
   BROWSER_ANNOTATION_MAX_IMAGE_BYTES,
@@ -2052,9 +2052,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   if (!isInitialized) {
     return (
       <div className="flex-1 h-full flex flex-col bg-background">
-        <div className="cowork-window-header draggable flex shrink-0 items-center justify-end border-b border-border px-4">
-          <WindowTitleBar inline compact />
-        </div>
+        <WindowHeader />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-secondary">{i18nService.t('loading')}</div>
         </div>
@@ -2066,11 +2064,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // cannot force the chat transcript and prompt tree to re-render.
   const isEngineReady = true;
 
-  const windowHeader = (
-    <div className="cowork-window-header draggable flex shrink-0 items-center justify-end border-b border-border px-4">
-      <WindowTitleBar inline compact />
-    </div>
-  );
+  const windowHeader = <WindowHeader />;
 
   const homeConversationHeader = (
     <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">

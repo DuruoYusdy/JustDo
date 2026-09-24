@@ -27,7 +27,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
 import SidebarToggleIcon from '@/shared/components/icons/SidebarToggleIcon';
@@ -100,7 +100,6 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
   const mountedRef = useRef(true);
   const loadGenerationRef = useRef(0);
   const sessionGenerationRef = useRef(0);
-  const isMac = window.electron.platform === 'darwin';
 
   const load = useCallback(async (silent = false) => {
     const generation = ++loadGenerationRef.current;
@@ -301,10 +300,11 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="draggable relative flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
-        <div className="flex h-8 items-center">
-          {isSidebarCollapsed && (
-            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
+      <WindowHeader />
+      {isSidebarCollapsed && (
+        <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
+          <div className="flex h-8 items-center">
+            <div className="non-draggable flex items-center gap-1">
               <button
                 type="button"
                 onClick={onToggleSidebar}
@@ -322,10 +322,9 @@ const WorkboardView: React.FC<Props> = ({ isSidebarCollapsed, onToggleSidebar, o
                 <ComposeIcon className="h-4 w-4" />
               </button>
             </div>
-          )}
+          </div>
         </div>
-        <WindowTitleBar inline />
-      </div>
+      )}
 
       <header className="flex min-h-0 max-h-[calc(100%-14rem)] shrink-0 flex-col overflow-hidden border-b border-border px-6 py-4">
         <div className="flex shrink-0 flex-wrap items-center gap-3">

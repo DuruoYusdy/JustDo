@@ -14,7 +14,7 @@ import { defaultConfig, getProviderDisplayName } from '@/app/config';
 import BottomRightStatusStack from '@/app/shell/BottomRightStatusStack';
 import Sidebar from '@/app/shell/Sidebar';
 import Toast, { type ToastContent } from '@/app/shell/Toast';
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import { agentService } from '@/features/agents/agentService';
 import {
   loadPendingApprovalsWithRetry,
@@ -261,9 +261,13 @@ const App: React.FC = () => {
     void initializeApp();
   }, [dispatch, waitWithTimeout]);
 
-  useEffect(() => window.electron?.cowork?.onSessionsChanged(() => {
-    void agentService.loadAgents();
-  }), []);
+  useEffect(
+    () =>
+      window.electron?.cowork?.onSessionsChanged(() => {
+        void agentService.loadAgents();
+      }),
+    [],
+  );
 
   useEffect(() => {
     const unsubscribe = i18nService.subscribe(() => {
@@ -436,27 +440,21 @@ const App: React.FC = () => {
 
   const handleShowWorkboard = useCallback(async () => {
     if (!workboardEnabled) return;
-    await runGuardedFilePreviewNavigation(
-      requestCoworkNavigation,
-      () => setMainView('workboard'),
-      { preserveTabs: true },
-    );
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('workboard'), {
+      preserveTabs: true,
+    });
   }, [requestCoworkNavigation, workboardEnabled]);
 
   const handleShowPlugins = useCallback(async () => {
-    await runGuardedFilePreviewNavigation(
-      requestCoworkNavigation,
-      () => setMainView('plugins'),
-      { preserveTabs: true },
-    );
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('plugins'), {
+      preserveTabs: true,
+    });
   }, [requestCoworkNavigation]);
 
   const handleShowMemory = useCallback(async () => {
-    await runGuardedFilePreviewNavigation(
-      requestCoworkNavigation,
-      () => setMainView('memory'),
-      { preserveTabs: true },
-    );
+    await runGuardedFilePreviewNavigation(requestCoworkNavigation, () => setMainView('memory'), {
+      preserveTabs: true,
+    });
   }, [requestCoworkNavigation]);
 
   const handleToggleSidebar = useCallback(() => {
@@ -790,7 +788,6 @@ const App: React.FC = () => {
   }, [modalInteraction, handleInteractionResponse]);
 
   const activeApproval = pendingApprovals[0] ?? null;
-  const isOverlayActive = interactionModal !== null || activeApproval !== null;
 
   const resolveExecApproval = useCallback(
     async (decision: ApprovalDecision) => {
@@ -812,11 +809,7 @@ const App: React.FC = () => {
     },
     [activeApproval, dismissApproval],
   );
-  const windowsStandaloneTitleBar = isWindows ? (
-    <div className="draggable relative h-9 shrink-0 bg-surface-raised">
-      <WindowTitleBar isOverlayActive={isOverlayActive} />
-    </div>
-  ) : null;
+  const windowsStandaloneTitleBar = isWindows ? <WindowHeader /> : null;
 
   if (!isInitialized) {
     return (

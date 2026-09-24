@@ -24,7 +24,7 @@ import type {
 } from '@shared/openclaw/memory';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import { toSanitizedMarkdownHtml } from '@/libs/openclaw-chat/components/markdown';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -70,7 +70,6 @@ const MemoryView: React.FC<MemoryViewProps> = ({
   const [showGuide, setShowGuide] = useState(false);
   const indexRequestRef = useRef(0);
   const locale = i18nService.getLanguage() === 'zh' ? 'zh-CN' : 'en-US';
-  const isMac = window.electron.platform === 'darwin';
 
   const loadIndexStatus = useCallback(async () => {
     const requestId = ++indexRequestRef.current;
@@ -720,10 +719,11 @@ const MemoryView: React.FC<MemoryViewProps> = ({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="draggable relative flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
-        <div className="flex h-8 items-center">
-          {isSidebarCollapsed && (
-            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
+      <WindowHeader />
+      {isSidebarCollapsed && (
+        <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
+          <div className="flex h-8 items-center">
+            <div className="non-draggable flex items-center gap-1">
               <button
                 type="button"
                 onClick={onToggleSidebar}
@@ -741,10 +741,9 @@ const MemoryView: React.FC<MemoryViewProps> = ({
                 <ComposeIcon className="h-4 w-4" />
               </button>
             </div>
-          )}
+          </div>
         </div>
-        <WindowTitleBar inline />
-      </div>
+      )}
 
       <header className="shrink-0 border-b border-border bg-gradient-to-br from-primary/[0.08] via-background to-amber-500/[0.04] px-6 pb-0 pt-5">
         <div className="mx-auto max-w-6xl">

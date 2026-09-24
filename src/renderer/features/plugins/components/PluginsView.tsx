@@ -6,7 +6,7 @@ import {
 } from '@heroicons/react/24/outline';
 import React, { useState } from 'react';
 
-import WindowTitleBar from '@/app/shell/window/WindowTitleBar';
+import WindowHeader from '@/app/shell/window/WindowHeader';
 import ExtensionsManager from '@/features/plugins/components/extensions/ExtensionsManager';
 import HookManager from '@/features/plugins/components/hooks/HookManager';
 import McpManager from '@/features/plugins/components/mcp/McpManager';
@@ -60,7 +60,6 @@ const PluginsView: React.FC<PluginsViewProps> = ({
   const [activeTab, setActiveTab] = useState<PluginTab>('extensions');
   const [searchQuery, setSearchQuery] = useState('');
   const [requestedExtensionId, setRequestedExtensionId] = useState<string>();
-  const isMac = window.electron.platform === 'darwin';
   const openExtensionDetail = (extensionId: string) => {
     setRequestedExtensionId(extensionId);
     setActiveTab('extensions');
@@ -81,10 +80,11 @@ const PluginsView: React.FC<PluginsViewProps> = ({
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <div className="draggable relative flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
-        <div className="flex h-8 items-center">
-          {isSidebarCollapsed && (
-            <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
+      <WindowHeader />
+      {isSidebarCollapsed && (
+        <div className="relative flex h-[2.1875rem] shrink-0 items-center justify-between border-b border-border px-4">
+          <div className="flex h-8 items-center">
+            <div className="non-draggable flex items-center gap-1">
               <button
                 type="button"
                 onClick={onToggleSidebar}
@@ -102,10 +102,9 @@ const PluginsView: React.FC<PluginsViewProps> = ({
                 <ComposeIcon className="h-4 w-4" />
               </button>
             </div>
-          )}
+          </div>
         </div>
-        <WindowTitleBar inline />
-      </div>
+      )}
       <main className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 sm:px-8">
         <div className="mx-auto max-w-4xl">
           <header className="pb-4 pt-7">

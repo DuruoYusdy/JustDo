@@ -83,6 +83,8 @@ flowchart TB
 
 ### 3.2 `src/renderer/`
 
+窗口首行统一由 `app/shell/window/WindowHeader.tsx` 提供：固定 30px 高度、拖拽区域、底部分隔线及紧凑窗口按钮。对话、定时任务（含加载态）、任务看板、记忆、插件与设置复用同一组件；页面导航位于其下方，内容滚动不影响窗口栏。
+
 - `app/`：应用壳、路由/导航、全局布局和产品级组合。
 - `features/`：`agents`、`cowork`、`memory`、`models`、`plugins`、`scheduled-tasks`、`workboard`、`settings` 等领域 UI。
 - `libs/openclaw-chat/`：独立聊天显示栈，包括 Gateway client/controller、模型 reducer、history reconciliation、pipeline、Lit 组件和滚动调度。
