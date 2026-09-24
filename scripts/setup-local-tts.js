@@ -63,7 +63,7 @@ const ADDITIONAL_MODELS = [
     release: 'tts-models',
     sha256: 'f1c6d0295cf16087b05f80fdca5b44daca5cd78e2c425d419a42ba34929805f9',
     licenseUrl: 'https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html',
-    licenseSha256: '32707e81ea2a1decb5a4e75d5a9f623063e6b749046a531d4ac1e5d0d029573c',
+    licenseSha256: '76c7664815352beeb07bc3652f9de2600425d6a01edb3556a77cd0e195637b72',
     requiredFiles: ['en_US-lessac-medium.onnx', 'tokens.txt', 'espeak-ng-data'],
     prune: [],
   },
@@ -114,10 +114,14 @@ function areModelsPrepared() {
     [...ASR_REQUIRED_MODEL_FILES, 'LICENSE'].every(file =>
       fs.existsSync(path.join(ASR_MODEL_ROOT, file)),
     ) &&
-    ADDITIONAL_MODELS.every(model =>
-      [...model.requiredFiles, 'LICENSE'].every(file =>
-        fs.existsSync(path.join(OUTPUT_ROOT, model.id, file)),
-      ),
+    ADDITIONAL_MODELS.every(
+      model =>
+        [...model.requiredFiles, 'LICENSE'].every(file =>
+          fs.existsSync(path.join(OUTPUT_ROOT, model.id, file)),
+        ) &&
+        createHash('sha256')
+          .update(fs.readFileSync(path.join(OUTPUT_ROOT, model.id, 'LICENSE')))
+          .digest('hex') === model.licenseSha256,
     )
   );
 }
@@ -280,7 +284,8 @@ async function prepareAdditionalModels() {
     const complete = [...model.requiredFiles, 'LICENSE'].every(file =>
       fs.existsSync(path.join(modelRoot, file)),
     );
-    if (complete) continue;
+    if (complete && (await sha256(path.join(modelRoot, 'LICENSE'))) === model.licenseSha256)
+      continue;
     await download(
       `https://github.com/k2-fsa/sherpa-onnx/releases/download/${model.release}/${model.archive}`,
       archivePath,

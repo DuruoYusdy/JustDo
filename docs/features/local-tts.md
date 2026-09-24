@@ -112,9 +112,9 @@ https://updates.example.test/electron-app-update/speech-models/v1/
 ├── manifest.json
 ├── kokoro-int8-multi-lang-v1_1.tar.zst
 ├── sherpa-onnx-whisper-base.tar.zst
-├── sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.zst
+├── sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.r2.tar.zst
 ├── vits-icefall-zh-aishell3.tar.zst
-└── vits-piper-en_US-lessac-medium-int8.tar.zst
+└── vits-piper-en_US-lessac-medium-int8.r2.tar.zst
 ```
 
 The files must be served as ordinary binary downloads. Do not apply HTTP
@@ -133,11 +133,18 @@ Run these release-engineering commands before publishing:
 ```bash
 npm run setup:local-speech-models
 npm run build:local-speech-model-artifacts
+npx vitest run tests/local-speech-model-artifacts.test.ts
 ```
 
 Upload `build-speech-models/speech-models/v1` without modifying any generated
-file. A model revision must use a new ID and filename; never replace bytes under
-an existing filename.
+file. A model revision must use a new ID and filename; packaging-only revisions
+(unchanged model identity and weights) use a new `.rN.tar.zst` filename and updated
+compiled-in size/hash. Never replace bytes under an existing published filename.
+The r2 SenseVoice package is rebuilt from the pinned source archive and setup's
+pruned file set; Piper r2 includes the currently pinned upstream license page.
+Keep older published archives for older clients. Restart the development main
+process or rebuild the application to pick up the new filenames and hashes;
+uploading a manifest alone does not override existing compiled-in metadata.
 
 ## Runtime ownership
 

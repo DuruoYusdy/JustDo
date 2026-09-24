@@ -61,9 +61,9 @@ export const LOCAL_SPEECH_MODEL_ARTIFACTS: LocalSpeechModelArtifact[] = [
   {
     id: LOCAL_ASR_DEFAULT_MODEL_ID,
     kind: LocalSpeechModelKind.Asr,
-    file: `${LOCAL_ASR_DEFAULT_MODEL_ID}.tar.zst`,
-    sha256: '52883e8e75c869d95006451d786fa91678f3af196210d4ec55f5b96c086b2444',
-    compressedBytes: 155_381_132,
+    file: `${LOCAL_ASR_DEFAULT_MODEL_ID}.r2.tar.zst`,
+    sha256: 'a319fd0fc2f6a91624bee794e110d11f3b1e641acd3e7c24823f6f94a713f5cf',
+    compressedBytes: 155_335_094,
     requiredFiles: ['model.int8.onnx', 'tokens.txt', 'MODEL-LICENSE.txt'],
   },
   {
@@ -98,8 +98,8 @@ export const LOCAL_SPEECH_MODEL_ARTIFACTS: LocalSpeechModelArtifact[] = [
   {
     id: 'vits-piper-en_US-lessac-medium-int8',
     kind: LocalSpeechModelKind.Tts,
-    file: 'vits-piper-en_US-lessac-medium-int8.tar.zst',
-    sha256: '118ab6cfe59416b52b89c1f1d74d9ad2fa19fb5af0c25067d6cfa39318ce93be',
+    file: 'vits-piper-en_US-lessac-medium-int8.r2.tar.zst',
+    sha256: 'cedf910bab1f307d3eb1f4d220bea24b1ba79616d6ed4813f36a92f4dd4bd4d7',
     compressedBytes: 21_181_920,
     requiredFiles: [
       'en_US-lessac-medium.onnx',

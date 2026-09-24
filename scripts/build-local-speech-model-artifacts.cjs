@@ -19,10 +19,11 @@ const models = [
   },
   {
     id: 'sherpa-onnx-whisper-base',
-    license: path.join(sourceRoot, 'WHISPER-LICENSE.txt'),
+    license: path.join(sourceRoot, 'sherpa-onnx-whisper-base', 'LICENSE'),
   },
   {
     id: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
+    revision: 2,
     license: path.join(
       sourceRoot,
       'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
@@ -36,6 +37,7 @@ const models = [
   },
   {
     id: 'vits-piper-en_US-lessac-medium-int8',
+    revision: 2,
     license: path.join(sourceRoot, 'vits-piper-en_US-lessac-medium-int8', 'LICENSE'),
   },
 ];
@@ -56,7 +58,10 @@ async function buildModel(model) {
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-artifact-'));
   const stagedModel = path.join(stagingRoot, model.id);
   const tarPath = path.join(stagingRoot, `${model.id}.tar`);
-  const outputPath = path.join(outputRoot, `${model.id}.tar.zst`);
+  const outputPath = path.join(
+    outputRoot,
+    `${model.id}${model.revision ? `.r${model.revision}` : ''}.tar.zst`,
+  );
   try {
     fs.cpSync(source, stagedModel, { recursive: true });
     for (const relativePath of model.exclude ?? []) {
@@ -93,6 +98,13 @@ async function buildModel(model) {
 }
 
 async function main() {
+  // Fail before replacing any published artifacts if setup did not finish.
+  for (const model of models) {
+    const source = path.join(sourceRoot, model.id);
+    if (!fs.existsSync(source) || !fs.existsSync(model.license)) {
+      throw new Error(`Incomplete model source: ${source}. Run npm run setup:local-speech-models.`);
+    }
+  }
   fs.mkdirSync(outputRoot, { recursive: true });
   const results = [];
   for (const model of models) results.push(await buildModel(model));
