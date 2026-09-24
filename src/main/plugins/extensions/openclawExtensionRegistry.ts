@@ -49,10 +49,14 @@ export const bundledOpenClawExtensions: readonly OpenClawExtensionDescriptor[] =
     id: OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX,
     buildEntry: (_approvalTimeoutMinutes, windowsSandboxEnabled, sandboxNetworkEnabled) => ({
       enabled: windowsSandboxEnabled,
-      config: {
-        containment: 'processcontainer',
-        network: sandboxNetworkEnabled ? 'default' : 'none',
-      },
+      ...(windowsSandboxEnabled
+        ? {
+            config: {
+              containment: 'processcontainer',
+              network: sandboxNetworkEnabled ? 'default' : 'none',
+            },
+          }
+        : {}),
     }),
   },
 ] as const;

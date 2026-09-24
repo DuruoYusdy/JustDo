@@ -32,10 +32,6 @@ describe('openclawExtensionRegistry', () => {
       },
       [OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]: {
         enabled: false,
-        config: {
-          containment: 'processcontainer',
-          network: 'none',
-        },
       },
     });
   });
@@ -43,7 +39,16 @@ describe('openclawExtensionRegistry', () => {
   it('enables MXC only when Windows sandbox execution is selected', () => {
     const entries = buildBundledExtensionEntries(() => true, 5, true);
 
-    expect(entries[OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]).toMatchObject({ enabled: true });
+    expect(entries[OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]).toEqual({
+      enabled: true,
+      config: { containment: 'processcontainer', network: 'none' },
+    });
+  });
+
+  it('omits inactive MXC config even when sandbox networking is selected', () => {
+    const entries = buildBundledExtensionEntries(() => true, 5, false, true);
+
+    expect(entries[OpenClawExtensionId.WINDOWS_NATIVE_SANDBOX]).toEqual({ enabled: false });
   });
 
   it('allows outbound sandbox networking only after explicit opt-in', () => {
