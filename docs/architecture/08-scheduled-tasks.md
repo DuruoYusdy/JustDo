@@ -16,6 +16,10 @@
 
 ## 2. 领域类型
 
+页面右上角的齿轮打开全局调度设置，在任务和收件箱页签均可使用，与收件箱的显示筛选菜单独立。设置映射到 OpenClaw 原生 `cron.enabled`、`cron.skipMissedJobs` 和 `cron.sessionRetention`；补跑开关与 `skipMissedJobs` 反向对应，一次性任务的补跑不受该项影响。保留期提供 1/7/30/90 天、不自动清理及原生时长语法的自定义输入；`false`（以及原生零时长）仅关闭定时运行会话清理，不改变本地摘要保留或其他归档策略。
+
+`GetSchedulerSettings` 返回有效配置和 `config.get` 的 hash；`UpdateSchedulerSettings` 只接受三个字段的增量 patch 与用户打开设置时的 revision。Main 再次校验时长/开关，提交 `config.patch` 的 `baseHash`，由 Gateway 原子拒绝过期保存；失败保留草稿并允许显式重新加载。配置同步只为缺失字段补齐产品默认 `enabled:true`、`sessionRetention:'7d'`，保留用户设置及其他 cron 配置，避免重启覆盖。全局暂停时页面显示提示，单个任务的 enabled 状态保持独立。
+
 ### 2.1 Schedule
 
 - `at`: ISO 时间字符串；一次性执行。
@@ -151,7 +155,13 @@ Gateway 启动成功后开始 polling，退出清理先停止 polling。v2026.9.
 
 ## 12. Session resolve
 
-结果详情先显示 receipt summary；用户打开完整运行时，用 `sessionKey` 调 adapter `fetchSessionHistoryByKey`，沿用 canonical chat projection。它依次尝试 `chat.history`、`sessions.resolve` 和 `sessions.get` fallback。
+结果详情先显示 receipt summary；用户打开完整运行时，IPC 用 `scheduledTaskRun` 选项调用 adapter `fetchSessionHistoryByKey`。对于精确的 `agent:<agent>:cron:<job>:run:<sessionId>`，调用 Runtime Services 的 `runtimeServices.scheduledTaskHistory`，由 Gateway 内的原生 SDK 按物理 `sessionId` 找到 transcript 所属 key 并读取可见分支消息，再交给 Renderer chat normalization。原生运行结束会移除 continuation alias，但保留任务主 key 下的历史窗口；`sessions.resolve` 只查当前 entry，不能作为历史窗口查询。禁止简单去掉 `:run:` 再读取任务当前会话，避免串到后续运行。
+
+该 RPC 校验 agent、job、sessionId 的一致性，使用 `operator.admin`，不读取或恢复删除归档，不修改原生数据库。归属检查、消息读取和读后复核统一绑定当前配置的 agent 会话存储路径。响应按 256 Ki 字符分块，SHA-256 版本防止跨块拼接不同快照，不保存额外消息缓存。已完成运行明确返回 `not-found` 或 `empty`，或消息经过显示过滤后为空时，直接展示对应解释；传输失败与运行中暂空才继续重试。非精确 cron-run 会话沿用 `chat.history`、`sessions.resolve` 和 `sessions.get` 路径。
+
+收件箱中的会话标识只表示可发起读取，不证明 transcript 仍然存在。无标识、跳过运行和上次读取失败分别提示；读取失败状态仅保存在当前收件箱组件中，允许重试，读取成功后清除，不缓存消息。重试耗尽不能据此认定记录已删除或仍在同步。来源任务不在当前列表中也不等于会话被删除；任务列表加载中或有错误时不显示该标记。
+
+`NO_REPLY` 只控制是否需要通知，不能证明运行没有 transcript。用户主动打开完整结果时仍读取该次运行的消息；只有没有可读消息时才展示静默完成说明。
 
 重试耗尽的诊断只记录 run id 规范化值、status、session kind、session key SHA-256 前 12 位 fingerprint 和是否有 sessionId，不记录完整 key 或消息内容。
 

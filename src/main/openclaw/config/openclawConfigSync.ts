@@ -130,6 +130,12 @@ type ConfiguredPluginInventory = {
   ids: string[];
 };
 
+export const buildManagedOpenClawCronConfig = (existing: unknown): Record<string, unknown> => ({
+  enabled: true,
+  sessionRetention: '7d',
+  ...(isRecord(existing) ? existing : {}),
+});
+
 export const listInstalledOpenClawExtensionIds = (stateDir: string): string[] =>
   inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions')).ids;
 
@@ -2516,10 +2522,7 @@ export class OpenClawConfigSync {
           maxSkillsPromptChars: OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
         },
       }),
-      cron: {
-        enabled: true,
-        sessionRetention: '7d',
-      },
+      cron: buildManagedOpenClawCronConfig(existingConfig?.cron),
       ...(() => {
         const pluginEntries: Record<string, unknown> = {
           ...Object.fromEntries(

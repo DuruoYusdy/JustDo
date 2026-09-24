@@ -8,6 +8,7 @@ import runtimeServicesPlugin from '../../../../openclaw-extensions/runtime-servi
 const sdk = vi.hoisted(() => ({
   getSessionEntry: vi.fn(),
   loadTranscriptEventsSync: vi.fn(),
+  resolveTranscriptSessionKeyBySessionId: vi.fn(),
   readVisibleSessionTranscriptMessageEntries: vi.fn(),
   redactSensitiveText: vi.fn((text: string) =>
     text.replace(/Bearer secret-token/g, 'Bearer [REDACTED]'),
@@ -31,6 +32,10 @@ vi.mock('openclaw/plugin-sdk/logging-core', () => ({
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({
   getSessionEntry: sdk.getSessionEntry,
   loadTranscriptEventsSync: sdk.loadTranscriptEventsSync,
+  resolveTranscriptSessionKeyBySessionId: sdk.resolveTranscriptSessionKeyBySessionId,
+}));
+vi.mock('openclaw/plugin-sdk/session-store-paths', () => ({
+  resolveStorePath: vi.fn(),
 }));
 vi.mock('openclaw/plugin-sdk/session-transcript-runtime', () => ({
   readVisibleSessionTranscriptMessageEntries: sdk.readVisibleSessionTranscriptMessageEntries,

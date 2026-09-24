@@ -31,9 +31,12 @@ import type {
   ScheduledTaskRun,
   ScheduledTaskRunPage,
   ScheduledTaskRunWithName,
+  SchedulerSettingsSnapshot,
+  SchedulerSettingsUpdate,
   TaskState,
 } from '../../shared/scheduledTask/types';
 import { stringifyScheduledTaskLog } from './scheduledTaskLog';
+import { buildSchedulerSettingsPatch, readSchedulerSettings } from './schedulerSettings';
 import { buildSystemTaskSettingsPatch, readSystemTaskSettings } from './systemTaskSettings';
 
 type GatewayClientLike = {
@@ -844,6 +847,21 @@ export class CronJobService {
     const client = await this.client();
     const snapshot = await client.request<{ config: unknown }>('config.get');
     return readSystemTaskSettings(snapshot.config);
+  }
+
+  async getSchedulerSettings(): Promise<SchedulerSettingsSnapshot> {
+    const client = await this.client();
+    const snapshot = await client.request<{ config: unknown; hash: string }>('config.get');
+    if (!snapshot.hash) throw new Error('Gateway configuration revision is unavailable');
+    return { settings: readSchedulerSettings(snapshot.config), revision: snapshot.hash };
+  }
+
+  async updateSchedulerSettings(input: SchedulerSettingsUpdate): Promise<void> {
+    const patch = buildSchedulerSettingsPatch(input);
+    if (!Object.keys(patch.cron).length) return;
+    const client = await this.client();
+    // Use the revision displayed to the user; concurrent config edits must not be overwritten.
+    await client.request('config.patch', { raw: JSON.stringify(patch), baseHash: input.revision });
   }
 
   async updateSystemSettings(

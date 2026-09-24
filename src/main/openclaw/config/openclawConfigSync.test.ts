@@ -31,6 +31,7 @@ import {
   buildManagedOpenClawAgentThinkingConfig,
   buildManagedOpenClawCompactionConfig,
   buildManagedOpenClawConnectivityConfig,
+  buildManagedOpenClawCronConfig,
   buildManagedOpenClawHeartbeatConfig,
   buildManagedOpenClawModelCatalogConfig,
   buildManagedOpenClawSandboxConfig,
@@ -1389,4 +1390,12 @@ describe('optional agent-team configuration', () => {
     );
     expect(result.entries).toEqual({ 'agent-team': { enabled: false }, 'runtime-services': { enabled: true } });
   });
+});
+
+
+test('preserves user scheduler settings across managed config synchronization', () => {
+  expect(buildManagedOpenClawCronConfig(undefined)).toEqual({ enabled: true, sessionRetention: '7d' });
+  const existing = { enabled: false, sessionRetention: false, skipMissedJobs: true, failureAlert: { after: 5 } };
+  expect(buildManagedOpenClawCronConfig(existing)).toEqual(existing);
+  expect(buildManagedOpenClawCronConfig({ sessionRetention: '1h30m' }).sessionRetention).toBe('1h30m');
 });

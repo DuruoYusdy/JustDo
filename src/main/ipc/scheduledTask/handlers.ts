@@ -7,6 +7,7 @@ import type {
   ScheduledTaskInput,
   ScheduledTaskResultQuery,
   ScheduledTaskSessionResolveContext,
+  SchedulerSettingsUpdate,
 } from '../../../shared/scheduledTask/types';
 import type { ScheduledTaskResultStore } from '../../data/scheduledTaskResultStore';
 import type { CronJobService } from '../../scheduler/cronJobService';
@@ -17,7 +18,11 @@ export interface ScheduledTaskHandlerDeps {
   getCronJobService: () => CronJobService;
   getOpenClawRuntimeAdapter: () => {
     getGatewayClient: () => unknown;
-    fetchSessionHistoryByKey: (sessionKey: string, sessionId?: string | null) => Promise<unknown>;
+    fetchSessionHistoryByKey: (
+      sessionKey: string,
+      sessionId?: string | null,
+      options?: { scheduledTaskRun?: boolean },
+    ) => Promise<unknown>;
   } | null;
   getResultStore?: () => ScheduledTaskResultStore;
   getResultSyncService?: () => ScheduledTaskResultSyncService;
@@ -54,6 +59,25 @@ function historyHasMessages(history: unknown): boolean {
 
 export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): void {
   const { getCronJobService, getOpenClawRuntimeAdapter } = deps;
+
+  ipcMain.handle(ScheduledTaskIpc.GetSchedulerSettings, async () => {
+    try {
+      return { success: true, snapshot: await getCronJobService().getSchedulerSettings() };
+    } catch {
+      return { success: false, error: 'Failed to read scheduler settings' };
+    }
+  });
+  ipcMain.handle(
+    ScheduledTaskIpc.UpdateSchedulerSettings,
+    async (_event, input: SchedulerSettingsUpdate) => {
+      try {
+        await getCronJobService().updateSchedulerSettings(input);
+        return { success: true };
+      } catch {
+        return { success: false, error: 'Failed to save scheduler settings' };
+      }
+    },
+  );
 
   ipcMain.handle(ScheduledTaskIpc.GetSystemSettings, async () => {
     try {
@@ -207,6 +231,7 @@ export function registerScheduledTaskHandlers(deps: ScheduledTaskHandlerDeps): v
         const history = await getOpenClawRuntimeAdapter()?.fetchSessionHistoryByKey(
           sessionKey,
           sessionId,
+          { scheduledTaskRun: true },
         );
         if (!historyHasMessages(history) && context?.reason === 'retry-exhausted') {
           console.warn('[ScheduledTask] Full result unavailable after retries', {

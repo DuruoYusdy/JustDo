@@ -65,6 +65,7 @@ import {
   useMemoryDreamingControl,
   withMemoryDreamingCard,
 } from './memoryDreamingControl';
+import SchedulerSettingsDialog from './SchedulerSettingsDialog';
 import { SKILL_REVIEW_CARD_ID, withSkillReviewCard } from './skillReviewCard';
 
 // ── Schedule Builder Types ─────────────────────────────────────────
@@ -545,13 +546,7 @@ export function CronJobCard({
               aria-checked={isEnabled}
               aria-label={t(isEnabled ? 'cronStatsActive' : 'cronStatsPaused')}
               disabled={toggleDisabled}
-              title={
-                isSkillAggregate
-                  ? t('cronSkillReviewToggleHint')
-                  : isMemory
-                    ? t('cronMemoryToggleHint')
-                    : undefined
-              }
+              title={isMemory ? t('cronMemoryToggleHint') : undefined}
               onClick={e => {
                 e.stopPropagation();
                 onToggle(!job.enabled);
@@ -647,60 +642,57 @@ export function CronJobCard({
         )}
       </div>
 
-      {isSkillAggregate && (
+      {isSkillAggregate && skillMembers.length > 0 && (
         <div className="mt-auto border-t border-border-subtle px-3 py-2 text-xs text-secondary">
-          <p>{t('cronSkillReviewToggleHint')}</p>
-          {skillMembers.length > 0 && (
-            <details className="mt-2">
-              <summary className="cursor-pointer">
-                {t('cronSkillReviewMembers')} ({skillMembers.length})
-              </summary>
-              <ul className="mt-2 space-y-3">
-                {skillMembers.map(member => (
-                  <li key={member.id}>
-                    <p className="flex items-center gap-1">
-                      <UserIcon className="h-3.5 w-3.5" />
-                      {getTaskAgentLabel(member, agents)}
-                    </p>
+          <details>
+            <summary className="cursor-pointer">
+              {t('cronSkillReviewMembers')} ({skillMembers.length})
+            </summary>
+            <ul className="mt-2 space-y-3">
+              {skillMembers.map(member => (
+                <li key={member.id}>
+                  <p className="flex items-center gap-1">
+                    <UserIcon className="h-3.5 w-3.5" />
+                    {getTaskAgentLabel(member, agents)}
+                  </p>
+                  <p>
+                    {t(member.enabled ? 'cronStatsActive' : 'cronStatsPaused')} ·{' '}
+                    {formatScheduleLabel(member.schedule)}
+                  </p>
+                  {isEnabled && member.enabled && member.state.nextRunAtMs && (
                     <p>
-                      {t(member.enabled ? 'cronStatsActive' : 'cronStatsPaused')} ·{' '}
-                      {formatScheduleLabel(member.schedule)}
+                      {t('cronCardNext')}: {formatDateTime(new Date(member.state.nextRunAtMs))}
                     </p>
-                    {isEnabled && member.enabled && member.state.nextRunAtMs && (
-                      <p>
-                        {t('cronCardNext')}: {formatDateTime(new Date(member.state.nextRunAtMs))}
-                      </p>
-                    )}
-                    {member.state.lastStatus && (
-                      <p className={getStatusTone(member.state.lastStatus)}>
-                        {t('cronCardLast')}:{' '}
-                        {member.state.lastRunAtMs
-                          ? formatDateTime(new Date(member.state.lastRunAtMs))
-                          : ''}{' '}
-                        · {t(getStatusLabelKey(member.state.lastStatus))}
-                      </p>
-                    )}
-                    <div className="flex gap-3 pt-1">
-                      <button
-                        type="button"
-                        className="text-primary"
-                        onClick={() => onMemberHistory?.(member.id)}
-                      >
-                        {t('cronCardHistory')}
-                      </button>
-                      <button
-                        type="button"
-                        className="text-primary"
-                        onClick={() => onMemberDetails?.(member.id)}
-                      >
-                        {t('cronDetailsTitle')}
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+                  )}
+                  {member.state.lastStatus && (
+                    <p className={getStatusTone(member.state.lastStatus)}>
+                      {t('cronCardLast')}:{' '}
+                      {member.state.lastRunAtMs
+                        ? formatDateTime(new Date(member.state.lastRunAtMs))
+                        : ''}{' '}
+                      · {t(getStatusLabelKey(member.state.lastStatus))}
+                    </p>
+                  )}
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      type="button"
+                      className="text-primary"
+                      onClick={() => onMemberHistory?.(member.id)}
+                    >
+                      {t('cronCardHistory')}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-primary"
+                      onClick={() => onMemberDetails?.(member.id)}
+                    >
+                      {t('cronDetailsTitle')}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
         </div>
       )}
       {!isPlaceholder && (
@@ -1816,6 +1808,24 @@ export const CronView: React.FC<CronViewProps> = ({
   const unreadResultCount = useSelector((s: RootState) => s.scheduledTask.unreadResultCount);
 
   const [showDialog, setShowDialog] = useState(false);
+  const [showSchedulerSettings, setShowSchedulerSettings] = useState(false);
+  const [schedulerEnabled, setSchedulerEnabled] = useState<boolean>();
+  const schedulerSettingsSavedRef = useRef(false);
+  useEffect(() => {
+    let active = true;
+    const read = window.electron.scheduledTasks.getSchedulerSettings;
+    if (!read) return;
+    void read()
+      .then(result => {
+        if (active && !schedulerSettingsSavedRef.current && result.success && result.snapshot) {
+          setSchedulerEnabled(result.snapshot.settings.enabled);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
   const [editingJob, setEditingJob] = useState<ScheduledTask | undefined>();
   const [jobToDelete, setJobToDelete] = useState<ScheduledTask | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
@@ -2090,7 +2100,21 @@ export const CronView: React.FC<CronViewProps> = ({
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={() => setShowSchedulerSettings(true)}
+              aria-label={t('schedulerSettingsTitle')}
+              title={t('schedulerSettingsTitle')}
+              className="mb-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
+            >
+              <Cog6ToothIcon className="h-4 w-4" />
+            </button>
           </div>
+          {schedulerEnabled === false && (
+            <p role="status" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+              {t('schedulerSettingsPaused')}
+            </p>
+          )}
           {activeTab === 'results' ? (
             <ResultInbox />
           ) : (
@@ -2327,6 +2351,15 @@ export const CronView: React.FC<CronViewProps> = ({
       </div>
 
       {/* Create/Edit Dialog */}
+      {showSchedulerSettings && (
+        <SchedulerSettingsDialog
+          onClose={() => setShowSchedulerSettings(false)}
+          onSaved={settings => {
+            schedulerSettingsSavedRef.current = true;
+            setSchedulerEnabled(settings.enabled);
+          }}
+        />
+      )}
       <CreateEditDialog
         open={showDialog}
         job={editingJob}

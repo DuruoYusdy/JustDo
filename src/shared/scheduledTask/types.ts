@@ -176,6 +176,7 @@ export interface ScheduledTaskSessionResolveContext {
 export interface ScheduledTaskSessionHistory {
   sessionKey: string;
   messages: unknown[];
+  unavailableReason?: 'not-found' | 'empty';
 }
 
 export interface ScheduledTaskResultQuery {
@@ -257,3 +258,19 @@ export interface SystemTaskSettings {
 export type SystemTaskSettingsPatch = Partial<
   Pick<SystemTaskSettings, 'memoryDreamingEnabled' | 'skillMode'>
 >;
+
+export interface SchedulerSettings {
+  enabled: boolean;
+  skipMissedJobs: boolean;
+  sessionRetention: string | false;
+}
+
+export interface SchedulerSettingsSnapshot {
+  settings: SchedulerSettings;
+  revision: string;
+}
+
+export interface SchedulerSettingsUpdate {
+  patch: Partial<SchedulerSettings>;
+  revision: string;
+}

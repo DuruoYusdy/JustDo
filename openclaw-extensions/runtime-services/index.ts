@@ -11,6 +11,7 @@ import {
 } from 'openclaw/plugin-sdk/ssrf-runtime';
 
 import { registerCollaborationHistory } from './collaboration-history';
+import { registerScheduledTaskHistory } from './scheduled-task-history';
 
 const PLUGIN_ID = 'runtime-services';
 const MAX_DETAIL_IDS = 250;
@@ -224,6 +225,7 @@ const plugin = {
   description: 'Provides runtime progress, history detail, and embedding capabilities.',
   register(api: OpenClawPluginApi) {
     registerCollaborationHistory(api);
+    registerScheduledTaskHistory(api);
     const historyMessageTransfers = new Map<string, HistoryMessageTransfer>();
     let historyMessageTransferSequence = 0;
     const pruneHistoryMessageTransfers = (): void => {

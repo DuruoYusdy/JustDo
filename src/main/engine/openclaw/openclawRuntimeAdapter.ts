@@ -76,6 +76,7 @@ import {
 import { normalizeModelRef, readModelRef } from '../../../shared/openclaw/modelRef';
 import { WORKBOARD_CHANGED_EVENT } from '../../../shared/openclaw/workboard';
 import { PRODUCT_NAME } from '../../../shared/productMetadata';
+import type { ScheduledTaskSessionHistory } from '../../../shared/scheduledTask/types';
 import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/approvedPlanArtifactStore';
 import { coworkLog } from '../../cowork/coworkLogger';
 import { resolveRawApiConfig } from '../../cowork/providerApiConfig';
@@ -102,6 +103,7 @@ import {
   isManagedSessionKey,
   parseManagedSessionKey,
 } from '../../openclaw/sessions/openclawSessionKeys';
+import { readScheduledTaskSessionHistory } from '../../scheduler/scheduledTaskSessionHistory';
 import {
   GATEWAY_READY_TIMEOUT_MS,
   isRecord,
@@ -4760,10 +4762,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async fetchSessionHistoryByKey(
     sessionKey: string,
     fallbackSessionId?: string | null,
-    options: { forceFullSnapshot?: boolean } = {},
-  ): Promise<{ sessionKey: string; messages: unknown[] } | null> {
+    options: { forceFullSnapshot?: boolean; scheduledTaskRun?: boolean } = {},
+  ): Promise<ScheduledTaskSessionHistory | null> {
     const client = this.gatewayClient;
     if (!client) return null;
+    if (options.scheduledTaskRun) {
+      const runMatch = /^agent:[^:]+:cron:[^:]+:run:([^:]+)$/.exec(sessionKey);
+      if (runMatch) {
+        // The native key resolver only sees current session entries. Historical
+        // cron windows need the physical run identity, even when the alias is gone.
+        return readScheduledTaskSessionHistory(
+          params => client.request('runtimeServices.scheduledTaskHistory', params),
+          sessionKey,
+          fallbackSessionId?.trim() || runMatch[1],
+        );
+      }
+    }
     try {
       const fetchHistory = async (key: string): Promise<unknown[]> => {
         const cached = options.forceFullSnapshot

@@ -12,6 +12,7 @@ interface RunSessionModalProps {
   run: ScheduledTaskRun;
   title?: string;
   onClose: () => void;
+  onAvailabilityChange?: (runId: string, available: boolean) => void;
 }
 
 const MAX_RETRIES = 5;
@@ -19,18 +20,27 @@ const RETRY_INTERVAL_MS = 3000;
 
 export { isSilentScheduledTaskResult } from '@shared/scheduledTask/resultPresentation';
 
-const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }) => {
+const RunSessionModal: React.FC<RunSessionModalProps> = ({
+  run,
+  title,
+  onClose,
+  onAvailabilityChange,
+}) => {
   const isIntentionalSilence =
     run.status === 'success' && !run.error?.trim() && isSilentScheduledTaskResult(run.summary);
   const [history, setHistory] = useState<ScheduledTaskSessionHistory | null>(null);
-  const [loading, setLoading] = useState(!isIntentionalSilence);
+  const [loading, setLoading] = useState(Boolean(run.sessionKey?.trim()));
   const [unavailable, setUnavailable] = useState(false);
+  const [unavailableReason, setUnavailableReason] =
+    useState<ScheduledTaskSessionHistory['unavailableReason']>();
   const [retryCount, setRetryCount] = useState(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestGenerationRef = useRef(0);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const onAvailabilityChangeRef = useRef(onAvailabilityChange);
+  onAvailabilityChangeRef.current = onAvailabilityChange;
 
   useEffect(() => {
     const previouslyFocused =
@@ -62,15 +72,31 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
           ...(reportUnavailable ? { reason: 'retry-exhausted' as const } : {}),
         });
         if (requestGenerationRef.current !== requestGeneration) return false;
+        if (result?.success && result.history?.unavailableReason && run.status !== 'running') {
+          setLoading(false);
+          setUnavailable(true);
+          setUnavailableReason(result.history.unavailableReason);
+          onAvailabilityChangeRef.current?.(run.id, false);
+          return true;
+        }
         if (result?.success && result.history?.messages.length) {
           const messages = await normalizeGatewayHistoryForDisplay(result.history.messages, {
             sessionKey: result.history.sessionKey,
           });
           if (requestGenerationRef.current !== requestGeneration) return false;
-          if (messages.length === 0) return false;
+          if (messages.length === 0) {
+            if (run.status === 'running') return false;
+            setLoading(false);
+            setUnavailable(true);
+            setUnavailableReason('empty');
+            onAvailabilityChangeRef.current?.(run.id, false);
+            return true;
+          }
           setHistory({ ...result.history, messages });
           setLoading(false);
           setUnavailable(false);
+          setUnavailableReason(undefined);
+          onAvailabilityChangeRef.current?.(run.id, true);
           return true;
         }
       } catch {
@@ -87,9 +113,10 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
     setHistory(null);
     setLoading(true);
     setUnavailable(false);
+    setUnavailableReason(undefined);
     setRetryCount(0);
 
-    if (isIntentionalSilence) {
+    if (!run.sessionKey?.trim()) {
       setLoading(false);
       return () => {
         if (requestGenerationRef.current === requestGeneration) {
@@ -108,7 +135,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
       }
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [isIntentionalSilence, loadSession]);
+  }, [run.sessionKey, loadSession]);
 
   useEffect(() => {
     if (retryCount === 0 || retryCount > MAX_RETRIES || history) return;
@@ -123,6 +150,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
       if (finalAttempt) {
         setLoading(false);
         setUnavailable(true);
+        onAvailabilityChangeRef.current?.(run.id, false);
       } else {
         setRetryCount(current => current + 1);
       }
@@ -134,7 +162,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
         retryTimerRef.current = null;
       }
     };
-  }, [history, loadSession, retryCount]);
+  }, [history, loadSession, retryCount, run.id]);
 
   const handleManualRetry = () => {
     const requestGeneration = requestGenerationRef.current + 1;
@@ -142,6 +170,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
     setHistory(null);
     setLoading(true);
     setUnavailable(false);
+    setUnavailableReason(undefined);
     setRetryCount(0);
     void loadSession(requestGeneration).then(success => {
       if (!success && requestGenerationRef.current === requestGeneration) setRetryCount(1);
@@ -215,7 +244,13 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
                 {i18nService.t('scheduledTasksFullResultUnavailableTitle')}
               </p>
               <p className="max-w-lg text-sm text-secondary">
-                {i18nService.t('scheduledTasksFullResultUnavailableDescription')}
+                {i18nService.t(
+                  unavailableReason === 'not-found'
+                    ? 'scheduledTasksSessionRecordMissing'
+                    : unavailableReason === 'empty'
+                      ? 'scheduledTasksSessionRecordEmpty'
+                      : 'scheduledTasksFullResultUnavailableDescription',
+                )}
               </p>
               <button
                 type="button"
@@ -228,7 +263,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ run, title, onClose }
             </div>
           )}
 
-          {!history && isIntentionalSilence && (
+          {!history && !loading && isIntentionalSilence && (
             <div className="mx-5 my-5 rounded-xl border border-border bg-surface p-4">
               <p className="text-sm font-medium text-foreground">
                 {i18nService.t('scheduledTasksSilentResultTitle')}

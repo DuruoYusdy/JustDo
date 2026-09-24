@@ -973,3 +973,14 @@ describe('system task native configuration', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
+
+
+test('scheduler settings retain the UI revision and do not overwrite fields not edited', async () => {
+  const request = vi.fn().mockResolvedValue({ hash: 'viewed-revision', config: { cron: { sessionRetention: '30d', enabled: false, failureAlert: { after: 9 } } } });
+  const service = new CronJobService({ getGatewayClient: () => ({ request }) as never, ensureGatewayReady: vi.fn() });
+  expect(await service.getSchedulerSettings()).toEqual({ revision: 'viewed-revision', settings: { enabled: false, skipMissedJobs: false, sessionRetention: '30d' } });
+  await service.updateSchedulerSettings({ revision: 'viewed-revision', patch: { sessionRetention: false } });
+  expect(request).toHaveBeenLastCalledWith('config.patch', { baseHash: 'viewed-revision', raw: JSON.stringify({ cron: { sessionRetention: false } }) });
+  request.mockRejectedValueOnce(new Error('revision conflict'));
+  await expect(service.updateSchedulerSettings({ revision: 'stale-revision', patch: { enabled: true } })).rejects.toThrow('revision conflict');
+});

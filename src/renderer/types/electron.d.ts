@@ -1259,6 +1259,15 @@ interface IElectronAPI {
     debug: (message: string, details?: Record<string, unknown>) => void;
   };
   scheduledTasks: {
+    getSchedulerSettings: () => Promise<{
+      success: boolean;
+      snapshot?: import('@shared/scheduledTask/types').SchedulerSettingsSnapshot;
+      error?: string;
+    }>;
+    updateSchedulerSettings: (input: import('@shared/scheduledTask/types').SchedulerSettingsUpdate) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
     getSystemSettings: () => Promise<{
       success: boolean;
       settings?: import('@shared/scheduledTask/types').SystemTaskSettings;

@@ -125,6 +125,7 @@ const ResultInbox: React.FC = () => {
   } = useSelector((state: RootState) => state.scheduledTask);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const [viewingResult, setViewingResult] = useState<ScheduledTaskResult | null>(null);
+  const [unavailableRunIds, setUnavailableRunIds] = useState<Set<string>>(new Set());
   const [resultToDelete, setResultToDelete] = useState<ScheduledTaskResult | null>(null);
   const [selectingResults, setSelectingResults] = useState(false);
   const [selectedResultIds, setSelectedResultIds] = useState<Set<string>>(new Set());
@@ -611,7 +612,7 @@ const ResultInbox: React.FC = () => {
                                     )}
                                   </p>
                                 )}
-                                {isResultTaskDeleted(result, tasks) && (
+                                {!tasksLoading && !error && isResultTaskDeleted(result, tasks) && (
                                   <span className="text-xs text-secondary">
                                     {t('scheduledTasksResultsDeletedTask')}
                                   </span>
@@ -654,20 +655,40 @@ const ResultInbox: React.FC = () => {
                                   <button
                                     type="button"
                                     className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
-                                    aria-label={t('scheduledTasksResultsViewFull')}
-                                    title={t('scheduledTasksResultsViewFull')}
+                                    aria-label={t(
+                                      unavailableRunIds.has(result.id)
+                                        ? 'scheduledTasksResultsSessionLoadFailed'
+                                        : 'scheduledTasksResultsViewFull',
+                                    )}
+                                    title={t(
+                                      unavailableRunIds.has(result.id)
+                                        ? 'scheduledTasksResultsSessionLoadFailed'
+                                        : 'scheduledTasksResultsViewFull',
+                                    )}
                                     onClick={event => {
                                       event.stopPropagation();
                                       openResult(result);
                                     }}
                                   >
-                                    <EyeIcon className="h-4 w-4" />
+                                    {unavailableRunIds.has(result.id) ? (
+                                      <EyeSlashIcon className="h-4 w-4" />
+                                    ) : (
+                                      <EyeIcon className="h-4 w-4" />
+                                    )}
                                   </button>
                                 ) : (
                                   <span
                                     className="inline-flex h-7 w-7 items-center justify-center text-secondary/50"
-                                    aria-label={t('scheduledTasksResultsSessionUnavailable')}
-                                    title={t('scheduledTasksResultsSessionUnavailable')}
+                                    aria-label={t(
+                                      result.status === 'skipped'
+                                        ? 'scheduledTasksResultsSessionSkipped'
+                                        : 'scheduledTasksResultsSessionUnavailable',
+                                    )}
+                                    title={t(
+                                      result.status === 'skipped'
+                                        ? 'scheduledTasksResultsSessionSkipped'
+                                        : 'scheduledTasksResultsSessionUnavailable',
+                                    )}
                                   >
                                     <EyeSlashIcon className="h-4 w-4" />
                                   </span>
@@ -754,6 +775,14 @@ const ResultInbox: React.FC = () => {
         <RunSessionModal
           run={viewingResult}
           title={getResultTitle(viewingResult)}
+          onAvailabilityChange={(runId, available) => {
+            setUnavailableRunIds(current => {
+              const next = new Set(current);
+              if (available) next.delete(runId);
+              else next.add(runId);
+              return next;
+            });
+          }}
           onClose={() => setViewingResult(null)}
         />
       )}

@@ -1966,6 +1966,21 @@ test('catches up a stable full history snapshot and uses deltas on later reads',
   });
 });
 
+test('scheduled run lookup uses its physical window and never falls back to the latest task run', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockResolvedValue({ unavailableReason: 'not-found' });
+  (adapter as unknown as { gatewayClient: GatewayClientLike | null }).gatewayClient = {
+    start: vi.fn(), stop: vi.fn(), request,
+  };
+  const sessionKey = 'agent:main:cron:job-1:run:old-run';
+  await expect(adapter.fetchSessionHistoryByKey(sessionKey, 'old-run', { scheduledTaskRun: true }))
+    .resolves.toEqual({ sessionKey, messages: [], unavailableReason: 'not-found' });
+  expect(request).toHaveBeenCalledExactlyOnceWith('runtimeServices.scheduledTaskHistory', {
+    sessionKey, sessionId: 'old-run', offset: 0,
+  });
+});
+
 test('can bypass a stale delta snapshot with an authoritative full history read', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

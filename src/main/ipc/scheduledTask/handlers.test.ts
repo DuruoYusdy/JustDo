@@ -117,7 +117,9 @@ test('logs one content-free diagnostic when full result retries are exhausted', 
     }),
   ).resolves.toEqual({ success: true, history: null });
 
-  expect(fetchSessionHistoryByKey).toHaveBeenCalledWith(sessionKey, 'gateway-session-1');
+  expect(fetchSessionHistoryByKey).toHaveBeenCalledWith(sessionKey, 'gateway-session-1', {
+    scheduledTaskRun: true,
+  });
   expect(warn).toHaveBeenCalledOnce();
   expect(warn).toHaveBeenCalledWith(
     '[ScheduledTask] Full result unavailable after retries',
@@ -249,4 +251,18 @@ test('passes native system feature settings through explicit IPC methods', async
     handlers.get(ScheduledTaskIpc.UpdateSystemSettings)?.({}, { skillMode: 'off' }),
   ).resolves.toEqual({ success: true });
   expect(updateSystemSettings).toHaveBeenCalledWith({ skillMode: 'off' });
+});
+
+
+test('passes scheduler settings and revision through the dedicated IPC contract', async () => {
+  const snapshot = { revision: 'v1', settings: { enabled: true, skipMissedJobs: false, sessionRetention: '7d' } };
+  const getSchedulerSettings = vi.fn().mockResolvedValue(snapshot);
+  const updateSchedulerSettings = vi.fn().mockResolvedValue(undefined);
+  registerScheduledTaskHandlers({ getCronJobService: () => ({ getSchedulerSettings, updateSchedulerSettings }) as unknown as CronJobService, getOpenClawRuntimeAdapter: () => null });
+  await expect(handlers.get(ScheduledTaskIpc.GetSchedulerSettings)?.({})).resolves.toEqual({ success: true, snapshot });
+  const input = { revision: 'v1', patch: { sessionRetention: false } };
+  await expect(handlers.get(ScheduledTaskIpc.UpdateSchedulerSettings)?.({}, input)).resolves.toEqual({ success: true });
+  expect(updateSchedulerSettings).toHaveBeenCalledWith(input);
+  updateSchedulerSettings.mockRejectedValueOnce(new Error('private config diagnostic'));
+  await expect(handlers.get(ScheduledTaskIpc.UpdateSchedulerSettings)?.({}, input)).resolves.toEqual({ success: false, error: 'Failed to save scheduler settings' });
 });

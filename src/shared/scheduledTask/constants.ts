@@ -52,6 +52,8 @@ export type GatewayStatus = (typeof GatewayStatus)[keyof typeof GatewayStatus];
 export const DefaultAgentId = 'main' as const;
 
 export const IpcChannel = {
+  GetSchedulerSettings: 'scheduledTask:getSchedulerSettings',
+  UpdateSchedulerSettings: 'scheduledTask:updateSchedulerSettings',
   GetSystemSettings: 'scheduledTask:getSystemSettings',
   UpdateSystemSettings: 'scheduledTask:updateSystemSettings',
   List: 'scheduledTask:list',
