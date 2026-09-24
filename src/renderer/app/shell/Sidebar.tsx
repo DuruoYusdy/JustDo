@@ -49,7 +49,6 @@ interface SidebarProps {
   onBeforeCoworkNavigation: (options?: FilePreviewNavigationOptions) => Promise<boolean>;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  developerModeAvailable: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -65,7 +64,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   onBeforeCoworkNavigation,
   isCollapsed,
   onToggleCollapse,
-  developerModeAvailable,
 }) => {
   const sessionNavigationRequestRef = useRef(0);
   const sessions = useSelector(selectCoworkSessions);
@@ -310,7 +308,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
           <div className="flex items-center gap-1">
-            {developerModeAvailable && developerMode && isOpenClawEngine && (
+            {developerMode && isOpenClawEngine && (
               <button
                 type="button"
                 onClick={handleOpenChatWeb}

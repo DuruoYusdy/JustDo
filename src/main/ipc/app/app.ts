@@ -2,7 +2,6 @@ import { app, ipcMain, powerSaveBlocker } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import { type DeveloperConfig, DeveloperConfigIpc } from '../../../shared/app/developerConfig';
 import { getAutoLaunchEnabled, setAutoLaunchEnabled } from '../../core/app/autoLaunchManager';
 import type { SqliteStore } from '../../data/sqliteStore';
 
@@ -10,17 +9,13 @@ interface AppHandlerDependencies {
   getStore: () => SqliteStore;
   getPreventSleepBlockerId: () => number | null;
   setPreventSleepBlockerId: (blockerId: number | null) => void;
-  getDeveloperConfig: () => DeveloperConfig;
 }
 
 export const registerAppHandlers = ({
   getStore,
   getPreventSleepBlockerId,
   setPreventSleepBlockerId,
-  getDeveloperConfig,
 }: AppHandlerDependencies): void => {
-  ipcMain.handle(DeveloperConfigIpc.Get, () => getDeveloperConfig());
-
   ipcMain.handle('app:getAutoLaunch', () => {
     const stored = getStore().get<boolean>('auto_launch_enabled');
     return { enabled: stored ?? getAutoLaunchEnabled() };

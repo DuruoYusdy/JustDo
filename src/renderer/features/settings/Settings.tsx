@@ -154,6 +154,8 @@ type TabType =
   | 'shortcuts'
   | 'help';
 
+const DEVELOPER_MODE_REVEAL_CLICKS = 10;
+
 const getEnabledSettingsTab = (tab?: TabType): TabType => tab ?? 'general';
 
 export type SettingsOpenOptions = {
@@ -166,7 +168,6 @@ export type SettingsOpenOptions = {
 
 interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
-  developerModeAvailable: boolean;
 }
 
 type ProviderType = string;
@@ -407,7 +408,6 @@ const getNextCustomProvider = (providers: ProvidersConfig): { key: string; name:
 
 const Settings: React.FC<SettingsProps> = ({
   onClose,
-  developerModeAvailable,
   initialTab,
   browserPage,
   notice,
@@ -418,6 +418,14 @@ const Settings: React.FC<SettingsProps> = ({
   // 状态
   const agentLeaveGuard = useRef<(() => boolean) | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>(getEnabledSettingsTab(initialTab));
+  const [generalTitleClicks, setGeneralTitleClicks] = useState(0);
+  const developerModeAvailable =
+    activeTab === 'general' && generalTitleClicks >= DEVELOPER_MODE_REVEAL_CLICKS;
+
+  useEffect(() => {
+    if (activeTab !== 'general') setGeneralTitleClicks(0);
+  }, [activeTab]);
+
   const [activeModelKind, setActiveModelKind] = useState<ModelKind>('language');
   const [activeIntegrationView, setActiveIntegrationView] = useState<IntegrationSettingsViewId>(
     IntegrationSettingsView.AgentDelegation,
@@ -3133,7 +3141,23 @@ const Settings: React.FC<SettingsProps> = ({
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
           {/* Page header */}
           <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-6">
-            <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
+            <h3 className="text-lg font-semibold text-foreground">
+              {activeTab === 'general' ? (
+                <button
+                  type="button"
+                  className="select-none rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  onClick={() =>
+                    setGeneralTitleClicks(count =>
+                      Math.min(count + 1, DEVELOPER_MODE_REVEAL_CLICKS),
+                    )
+                  }
+                >
+                  {activeTabLabel}
+                </button>
+              ) : (
+                activeTabLabel
+              )}
+            </h3>
             <div className="flex min-w-0 items-center gap-2">
               {((activeTab === 'runtime' && agentRuntimeSettingsDirty) ||
                 (activeTab === 'integrations' &&

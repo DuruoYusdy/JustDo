@@ -18,7 +18,6 @@ import packageJson from '../../package.json';
 import { ACTIVITY_REPORTING_CONFIG } from '../config/activityReporting';
 import { APP_UPDATE_CONFIG } from '../config/appUpdate';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../config/builtinModels';
-import type { DeveloperConfig } from '../shared/app/developerConfig';
 import { normalizeBrowserDownloadSettings, normalizeBrowserMode } from '../shared/browser/browser';
 import { CoworkSubagentDetailsIpc } from '../shared/cowork/subagentDetails';
 import type { ProxySettings } from '../shared/network/proxy';
@@ -53,7 +52,6 @@ import { CustomerRegistrationService } from './core/app/customerRegistrationServ
 import { isNsisInstalledApp } from './core/app/installedApp';
 import { createTray, destroyTray, updateTrayMenu } from './core/app/trayManager';
 import { APP_NAME, DEV_SERVER_URL_SWITCH, INSTALLER_QUIT_SWITCH } from './core/appConstants';
-import { loadDeveloperConfig } from './core/development/developerConfigFile';
 import { resolveDevelopmentDataDirectory } from './core/development/developmentDataDirectory';
 import { getDevServerUrlFromCommandLine } from './core/development/devServerHandoff';
 import { createDevSessionLifecycle } from './core/development/devSessionLifecycle';
@@ -352,10 +350,6 @@ if (multicaBridgeArgv) {
   initLogger();
   enableSystemCaForCurrentProcess();
 }
-
-const developerConfig: DeveloperConfig = multicaBridgeArgv
-  ? { showDeveloperMode: false }
-  : loadDeveloperConfig(app.getPath('userData'));
 
 const isDev = process.env.NODE_ENV === 'development';
 const isLinux = process.platform === 'linux';
@@ -1318,7 +1312,6 @@ if (multicaBridgeArgv) {
     setPreventSleepBlockerId: blockerId => {
       preventSleepBlockerId = blockerId;
     },
-    getDeveloperConfig: () => developerConfig,
   });
   registerWindowHandlers({
     getMainWindow: () => mainWindow,

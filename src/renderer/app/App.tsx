@@ -75,7 +75,6 @@ const App: React.FC = () => {
   const [updateToast, setUpdateToast] = useState<AppUpdateToastState>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [developerModeAvailable, setDeveloperModeAvailable] = useState(false);
   const workboardEnabled = useWorkboardAvailability(isInitialized);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const resolvedApprovalIdsRef = useRef(new Map<string, number>());
@@ -151,17 +150,6 @@ const App: React.FC = () => {
         console.info('[App] initializeApp: configService.init');
         await waitWithTimeout(configService.init(), 5000, 'configService.init');
         applyAppearanceConfig(configService.getConfig().appearance);
-
-        try {
-          const developerConfig = await waitWithTimeout(
-            window.electron.developerConfig.get(),
-            5000,
-            'developerConfig.get',
-          );
-          setDeveloperModeAvailable(developerConfig.showDeveloperMode === true);
-        } catch {
-          setDeveloperModeAvailable(false);
-        }
 
         // 初始化主题
         console.info('[App] initializeApp: themeService.initialize');
@@ -838,7 +826,6 @@ const App: React.FC = () => {
           <div className="min-h-0 flex-1 bg-background">
             <Settings
               onClose={handleCloseSettings}
-              developerModeAvailable={developerModeAvailable}
               initialTab={settingsOptions.initialTab}
               notice={settingsOptions.notice}
             />
@@ -888,7 +875,6 @@ const App: React.FC = () => {
             <div className="relative h-full min-h-0 overflow-hidden rounded-xl bg-background">
               <Settings
                 onClose={handleCloseSettings}
-                developerModeAvailable={developerModeAvailable}
                 initialTab={settingsOptions.initialTab}
                 notice={settingsOptions.notice}
               />
@@ -909,7 +895,6 @@ const App: React.FC = () => {
             onBeforeCoworkNavigation={requestCoworkNavigation}
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={handleToggleSidebar}
-            developerModeAvailable={developerModeAvailable}
           />
         )}
         <div

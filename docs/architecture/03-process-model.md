@@ -108,7 +108,7 @@ Main 启动时生成 per-process random token，并将 endpoint、pid、protocol
 | `shell`                       | open/reveal/external、上下文菜单、受控文件预览与编辑 token               |
 | `imagePreview`                | 校验图片 URL 后创建或复用独立原生查看窗口                                |
 | `autoLaunch` / `preventSleep` | OS 级开机启动和阻止休眠                                                  |
-| `developerConfig` / `appInfo` | 只读开发配置、版本与 locale                                              |
+| `appInfo`                     | 版本与 locale                                                            |
 | `appUpdate`                   | 状态、检查、清理后安装、状态事件                                         |
 | `builtinModels`               | 手工刷新和生命周期变更事件                                               |
 | `log`                         | 路径、打开目录、导出 zip；debug 写入受 shared channel 控制               |
@@ -133,6 +133,8 @@ Agent 浏览器操作复用同一 guest，不创建截图画布或外部浏览�
 AI 快照递归同源 frame、合并顶层跨域 frame 的 AX 节点，并在连续兼容快照中提供 `[new]`/`newElements`；带标签快照的图像 annotations 使用相同 ref。设备模拟描述由运行在锁定 OpenClaw runtime 内的 embedded plugin 从 Playwright 设备目录解析，再由 Main 校验并应用 UA、viewport、屏幕方向及触控状态。
 
 `WebContentsView` 是后续承载层迁移规划，不在本轮实现。迁移必须保留实时网页交互与两类标注；画笔/矩形优先通过只在标注模式存在的页面内透明 Canvas 实现，不能让用户改为操作截图。详细阶段与验收门槛见 `docs/features/browser-settings-design.md`。
+
+开发者模式入口由 Renderer 管理：每次进入设置的“通用”页面，点击页面标题 10 次才显示开发者模式开关及其设置区域；切换到其他设置页或关闭设置后，入口隐藏且计数清零。开关值仍通过应用配置保存，侧栏调试入口由已保存的开关值控制。不再创建或读取 `developer/config.json`，也不再提供开发配置 IPC。
 
 ## 4. Cowork IPC
 

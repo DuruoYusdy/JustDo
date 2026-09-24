@@ -13,7 +13,6 @@ import {
   type AppUpdatePreferences,
   type AppUpdateState,
 } from '../shared/app/appUpdate';
-import { DeveloperConfigIpc } from '../shared/app/developerConfig';
 import { DialogIpc, type SaveTextFileOptions } from '../shared/app/dialogIpc';
 import { LogIpc } from '../shared/app/logIpc';
 import { MediaCaptureIpc } from '../shared/app/mediaCapture';
@@ -941,9 +940,6 @@ contextBridge.exposeInMainWorld('electron', {
   preventSleep: {
     get: () => ipcRenderer.invoke('app:getPreventSleep'),
     set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
-  },
-  developerConfig: {
-    get: () => ipcRenderer.invoke(DeveloperConfigIpc.Get),
   },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),

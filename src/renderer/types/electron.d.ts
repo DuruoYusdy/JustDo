@@ -1223,9 +1223,6 @@ interface IElectronAPI {
     get: () => Promise<{ enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   };
-  developerConfig: {
-    get: () => Promise<import('../../shared/app/developerConfig').DeveloperConfig>;
-  };
   appInfo: {
     getVersion: () => Promise<string>;
     getOpenclawVersion: () => Promise<string>;
