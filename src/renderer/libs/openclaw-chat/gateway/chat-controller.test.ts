@@ -6315,14 +6315,14 @@ test('shows compaction progress immediately and replaces it with the authoritati
   ]);
 });
 
-test('sends and optimistically renders image attachments in an existing session', async () => {
+test.each(['second image', ''])('sends and renders image attachments with text %j', async text => {
   const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
   const controller = new ChatController();
   controller.state.client = { request } as never;
   controller.state.connected = true;
   controller.state.sessionKey = 'agent:main:justdo:session-1';
 
-  await controller.sendMessage('second image', [
+  await controller.sendMessage(text, [
     {
       name: 'second.png',
       mimeType: 'image/png',
@@ -6332,7 +6332,7 @@ test('sends and optimistically renders image attachments in an existing session'
 
   expect(request).toHaveBeenCalledWith('chat.send', {
     sessionKey: 'agent:main:justdo:session-1',
-    message: 'second image',
+    message: text,
     deliver: false,
     justdoUserInitiated: true,
     idempotencyKey: expect.stringMatching(/^justdo-/),
@@ -6349,7 +6349,7 @@ test('sends and optimistically renders image attachments in an existing session'
     expect.objectContaining({
       role: 'user',
       content: [
-        { type: 'text', text: 'second image' },
+        { type: 'text', text },
         {
           type: 'attachment',
           attachment: {
@@ -6364,66 +6364,69 @@ test('sends and optimistically renders image attachments in an existing session'
   ]);
 });
 
-test('optimistically renders browser element metadata without exposing gateway context', async () => {
-  const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
-  const controller = new ChatController();
-  controller.state.client = { request } as never;
-  controller.state.connected = true;
-  controller.state.sessionKey = 'agent:main:justdo:session-1';
-  const gatewayMessage = composeBrowserGatewayPrompt('Update this control.', [
-    {
-      id: 'annotation-1',
-      modelContext: 'Untrusted element details for the model',
-      title: 'Settings',
-      displayUrl: 'example.com',
-      markedRegionCount: 0,
-      inspectedElement: true,
-      display: {
+test.each(['Update this control.', ''])(
+  'renders browser metadata with text %j without exposing context',
+  async text => {
+    const request = vi.fn().mockResolvedValue({ runId: 'run-1' });
+    const controller = new ChatController();
+    controller.state.client = { request } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = 'agent:main:justdo:session-1';
+    const gatewayMessage = composeBrowserGatewayPrompt(text, [
+      {
         id: 'annotation-1',
+        modelContext: 'Untrusted element details for the model',
         title: 'Settings',
         displayUrl: 'example.com',
         markedRegionCount: 0,
-        element: {
-          tag: 'button',
-          id: 'save',
-          classes: ['primary'],
-          role: 'button',
-          name: 'Save changes',
-          cssPath: 'main > button#save',
-          rect: { x: 10, y: 20, width: 100, height: 40 },
+        inspectedElement: true,
+        display: {
+          id: 'annotation-1',
+          title: 'Settings',
+          displayUrl: 'example.com',
+          markedRegionCount: 0,
+          element: {
+            tag: 'button',
+            id: 'save',
+            classes: ['primary'],
+            role: 'button',
+            name: 'Save changes',
+            cssPath: 'main > button#save',
+            rect: { x: 10, y: 20, width: 100, height: 40 },
+          },
         },
+        dataUrl: 'data:image/png;base64,YWJj',
+        fileName: 'browser-annotation.png',
+        addedAt: 1,
       },
-      dataUrl: 'data:image/png;base64,YWJj',
-      fileName: 'browser-annotation.png',
-      addedAt: 1,
-    },
-  ]);
+    ]);
 
-  await controller.sendMessage('Update this control.', [], gatewayMessage);
+    await controller.sendMessage(text, [], gatewayMessage);
 
-  expect(request).toHaveBeenCalledWith(
-    'chat.send',
-    expect.objectContaining({ message: gatewayMessage }),
-  );
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Update this control.' },
-        {
-          type: 'browser_annotation',
-          annotation: expect.objectContaining({
-            id: 'annotation-1',
-            element: expect.objectContaining({ tag: 'button', id: 'save' }),
-          }),
-        },
-      ],
-    }),
-  ]);
-  expect(JSON.stringify(controller.state.chatMessages)).not.toContain(
-    'Untrusted element details for the model',
-  );
-});
+    expect(request).toHaveBeenCalledWith(
+      'chat.send',
+      expect.objectContaining({ message: gatewayMessage }),
+    );
+    expect(controller.state.chatMessages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: [
+          { type: 'text', text },
+          {
+            type: 'browser_annotation',
+            annotation: expect.objectContaining({
+              id: 'annotation-1',
+              element: expect.objectContaining({ tag: 'button', id: 'save' }),
+            }),
+          },
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(controller.state.chatMessages)).not.toContain(
+      'Untrusted element details for the model',
+    );
+  },
+);
 
 test('starts a continued Goal cleanly when browser annotations remain in the draft', async () => {
   const request = vi.fn((method: string, params?: Record<string, unknown>) =>

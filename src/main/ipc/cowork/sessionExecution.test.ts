@@ -191,6 +191,55 @@ describe('cowork session execution permissions', () => {
     );
   });
 
+  test('admits image-only first messages and preserves their attachments', async () => {
+    const createSession = vi.fn().mockReturnValue(session('ask'));
+    const store = {
+      getConfig: () => ({
+        workingDirectory: 'C:\\workspace',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'full',
+      }),
+      createSession,
+      updateSession: vi.fn(),
+      addMessage: vi.fn(),
+      getSession: vi.fn().mockReturnValue(session('ask')),
+      listAgents: () => [{ id: 'main', enabled: true, isDefault: true }],
+      getAgent: vi.fn().mockReturnValue({ enabled: true, model: 'openai/gpt-5' }),
+    } as unknown as CoworkStore;
+    const startSession = vi.fn(
+      (_sessionId: string, _prompt: string, options?: { onAccepted?: () => void }) => {
+        options?.onAccepted?.();
+        return new Promise<void>(() => undefined);
+      },
+    );
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
+      getCoworkStore: () => store,
+      getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+      waitForConfigUpdates: vi.fn().mockResolvedValue(undefined),
+      getEngineNotReadyResponse: vi.fn(),
+    });
+
+    const result = await handlers.get('cowork:session:start')?.(
+      {},
+      {
+        prompt: '',
+        attachments: [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }],
+        permissionMode: 'ask',
+      },
+    );
+    expect(result).toMatchObject({ success: true });
+    expect(createSession.mock.calls[0]?.[5]).toBe('full');
+    // Legacy main profile models must not override the composer/application selection.
+    expect(createSession.mock.calls[0]?.[6]).toBeUndefined();
+    expect(startSession).toHaveBeenCalledWith(
+      'session-1',
+      '',
+      expect.objectContaining({ attachments: [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }] }),
+    );
+  });
+
   test('waits for queued config writes before reading the new-session default', async () => {
     let releaseConfig!: () => void;
     const waitForConfigUpdates = vi.fn(

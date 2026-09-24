@@ -1347,6 +1347,46 @@ test('forwards private untrusted context from startSession to the Gateway payloa
   internals.cleanupSessionTurn(session.id);
 });
 
+test('sends image-only turns without inventing user text', async () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn(async (method: string) => {
+    if (method === 'chat.send') return { runId: 'gateway-run-1' };
+    throw new Error(`Unexpected method: ${method}`);
+  });
+  const internals = adapter as unknown as {
+    gatewayClient: GatewayClientLike | null;
+    ensureGatewayClientReady: () => Promise<void>;
+    prepareSession: () => Promise<{ sessionKey: string; gatewaySessionId: string }>;
+    resolveTurn: (sessionId: string) => void;
+    cleanupSessionTurn: (sessionId: string) => void;
+  };
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  internals.prepareSession = vi.fn().mockResolvedValue({
+    sessionKey: 'agent:main:justdo:session-1',
+    gatewaySessionId: 'gateway-session-1',
+  });
+
+  const running = adapter.startSession(session.id, '', {
+    agentId: 'main',
+    attachments: [{ name: 'image.png', mimeType: 'image/png', base64Data: 'aGVsbG8=' }],
+  });
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.send', expect.anything()));
+
+  expect(request).toHaveBeenCalledWith(
+    'chat.send',
+    expect.objectContaining({
+      message: '',
+      attachments: [{ type: 'image', fileName: 'image.png', mimeType: 'image/png', content: 'aGVsbG8=' }],
+    }),
+  );
+
+  internals.resolveTurn(session.id);
+  await running;
+  internals.cleanupSessionTurn(session.id);
+});
+
 test('rejects a session response that did not persist the permission mode', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

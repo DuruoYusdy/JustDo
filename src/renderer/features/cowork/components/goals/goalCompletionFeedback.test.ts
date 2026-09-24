@@ -7,6 +7,24 @@ import {
 } from './goalCompletionFeedback';
 
 describe('submitGoalCompletionFeedback', () => {
+  it('preserves the completed goal when feedback has no written objective', async () => {
+    const restart = vi.fn();
+    const send = vi.fn();
+    const onPrepared = vi.fn();
+    await expect(
+      submitGoalCompletionFeedback({
+        completedGoalId: 'goal-1',
+        restart,
+        onPrepared,
+        feedback: '   ',
+        send,
+      }),
+    ).resolves.toBe('send_failed');
+    expect(restart).not.toHaveBeenCalled();
+    expect(onPrepared).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('discards persisted feedback whenever canonical metadata belongs to another goal', () => {
     expect(shouldDiscardGoalCompletionFeedback('goal-1', 'goal-2')).toBe(true);
     expect(shouldDiscardGoalCompletionFeedback('goal-1', 'goal-1')).toBe(false);

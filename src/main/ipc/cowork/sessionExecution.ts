@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 
 import { MAIN_USER_AGENT_ID } from '../../../shared/agents';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
+import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
@@ -104,7 +105,7 @@ export const registerCoworkSessionExecutionHandlers = ({
   ipcMain.handle('cowork:session:start', async (_event, options: StartSessionOptions) => {
     let operation: PendingStart | undefined;
     try {
-      if (!options || typeof options.prompt !== 'string' || !options.prompt.trim()) {
+      if (!options || typeof options.prompt !== 'string' || !hasMessageInput(options)) {
         return { success: false, error: 'Prompt is required.' };
       }
       if (

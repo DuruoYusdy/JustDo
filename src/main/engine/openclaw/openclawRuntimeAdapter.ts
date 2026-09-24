@@ -6,6 +6,7 @@ import path from 'path';
 
 import { parseBrowserAnnotationPrompt } from '../../../shared/browser/browser';
 import { type CoworkAttachmentPayload, toGatewayAttachment } from '../../../shared/cowork/attachments';
+import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import {
   type CoworkPlanArtifactReference,
   type CoworkPlanHandoff,
@@ -1272,7 +1273,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       onAccepted?: () => void;
     },
   ): Promise<void> {
-    if (!prompt.trim()) {
+    if (!hasMessageInput({ prompt, attachments: options.attachments })) {
       throw new Error('Prompt is required.');
     }
     if (this.stopSessionPromises.has(sessionId)) {

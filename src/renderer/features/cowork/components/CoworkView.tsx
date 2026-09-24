@@ -27,6 +27,7 @@ import {
 } from '@shared/browser/browser';
 import { recordingImagesInStepOrder } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
+import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import { COWORK_PLAN_PREVIEW_EVENT, isCoworkPlanPreview } from '@shared/cowork/planPreview';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
@@ -871,7 +872,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const tempSessionId = `temp-${Date.now()}`;
       if (pendingStartRef.current?.requestId === requestId)
         pendingStartRef.current.temporarySessionId = tempSessionId;
-      const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || i18nService.t('coworkNewSession');
+      const titleInput = getMessageTitleInput(prompt, attachments, gatewayPrompt);
+      const fallbackTitle = titleInput.split('\n')[0].slice(0, 50) || i18nService.t('coworkAttachmentSession');
       const now = Date.now();
       const clientTurnId = `justdo-${now}-${crypto.randomUUID()}`;
       if (pendingStartRef.current?.requestId === requestId) {
@@ -982,9 +984,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       }
 
       // Generate title in the background and update when ready
-      if (startedSession) {
+      if (startedSession && titleInput) {
         coworkService
-          .generateSessionTitle(prompt, startedSession.id)
+          .generateSessionTitle(titleInput, startedSession.id)
           .then(generatedTitle => {
             const betterTitle = generatedTitle?.trim();
             if (betterTitle && betterTitle !== fallbackTitle) {
@@ -1943,7 +1945,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   // Apply pending prompt to ChatController once the wrapper is mounted
   useEffect(() => {
-    if (!pendingPromptRef.current || !chatWrapperRef.current) return;
+    if (pendingPromptRef.current === null || !chatWrapperRef.current) return;
     debugLog(
       '[CoworkView] useEffect applying pendingPrompt:',
       pendingPromptRef.current.slice(0, 60),

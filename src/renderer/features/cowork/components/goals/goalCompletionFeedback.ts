@@ -32,6 +32,9 @@ export const submitGoalCompletionFeedback = async ({
   feedback,
   send,
 }: SubmitGoalCompletionFeedbackOptions): Promise<GoalCompletionFeedbackOutcome> => {
+  // Preparing feedback clears the completed goal. Require a new objective before
+  // that mutation; an attachment alone cannot form a /goal start command.
+  if (!feedback.trim()) return 'send_failed';
   let result: GoalRestartResponse;
   try {
     result = await restart(completedGoalId, preparedObjective?.trim() || undefined);

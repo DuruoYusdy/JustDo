@@ -116,6 +116,7 @@ import XMarkIcon from '@/shared/components/icons/XMarkIcon';
 import { type RootState, store } from '@/store';
 import { getCompactFolderName } from '@/utils/path';
 
+import { hasComposerContent } from './composerContent';
 import { canClearSubmittedDraft } from './sessionSubmission';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
@@ -928,9 +929,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const submissionIsCurrent = () =>
           modelSelectionContextRef.current === submissionContext &&
           renderedSessionIdRef.current === sessionId;
-        // Require user text even when attachments exist; empty prompts produce poor session titles.
+        // Attachments and browser context are independent message content.
         if (
-          !trimmedValue ||
+          !hasComposerContent(
+            trimmedValue,
+            attachments.length,
+            submittedCompletionFeedback ? 0 : browserAnnotations.length,
+            Boolean(browserRecording),
+            Boolean(submittedCompletionFeedback),
+          ) ||
           isRunActive ||
           isStopPending() ||
           goalActionPendingRef.current ||
@@ -2097,7 +2104,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       (isSideChat || !goalActionPending) &&
       !modelUpdatePending &&
       !hasNoAvailableModels &&
-      !!value.trim();
+      (isSideChat
+        ? !!value.trim()
+        : hasComposerContent(
+            value,
+            attachments.length,
+            completionFeedback ? 0 : browserAnnotations.length,
+            Boolean(browserRecording),
+            Boolean(completionFeedback),
+          ));
     const effectivePlaceholder =
       !isSideChat && completionFeedback
         ? i18nService.t('coworkGoalCompletionFeedbackPlaceholder')
