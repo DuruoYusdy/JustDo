@@ -1223,6 +1223,34 @@ test('a delayed startup adds its canonical session without stealing selection fr
   vi.unstubAllGlobals();
 });
 
+test.each([undefined, 'canonical-start-run'])(
+  'preserves the accepted initial run identity for stop settlement (root=%s)',
+  async rootRunId => {
+    const initial: CoworkSession = {
+      id: 'start-identity-session', title: 'Initial', status: 'idle', pinned: false,
+      cwd: '', executionMode: 'local', permissionMode: 'ask', activeSkillIds: [],
+      agentId: 'main', createdAt: 1, updatedAt: 1,
+    };
+    vi.stubGlobal('window', { electron: { cowork: {
+      startSession: vi.fn().mockResolvedValue({
+        success: true,
+        session: initial,
+        timing: {
+          id: 'start-identity-receipt', sessionId: initial.id,
+          clientTurnId: 'justdo-initial', rootRunId, startedAt: 1, state: 'aborted',
+        },
+      }),
+    } } });
+    try {
+      const result = await coworkService.startSession({ prompt: 'first turn', clientTurnId: 'justdo-initial' });
+      expect(result.acceptedRunId).toBe(rootRunId ?? 'justdo-initial');
+    } finally {
+      store.dispatch(deleteSession(initial.id));
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 test('publishes the unknown admission receipt only after Main confirms recording it', async () => {
   let recordUnknown!: (result: unknown) => void;
   const marker = vi.fn(

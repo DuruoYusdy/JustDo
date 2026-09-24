@@ -142,7 +142,6 @@ import {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const STOP_COOLDOWN_MS = 10_000;
-const STOP_CANCEL_EXEC_APPROVAL_DECISION = 'deny-justdo-stop';
 const RACE_RESOLUTION_MS = 1_000;
 const FULL_HISTORY_SYNC_LIMIT = 1000;
 const TICK_WATCHDOG_INTERVAL_MS = 60_000;
@@ -1181,26 +1180,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       ...(turn ? [turn.sessionKey] : []),
       ...this.getSessionKeysForSession(sessionId),
     ])];
-    let subagentKeys: string[] = [];
-    let subagentDiscoveryError: unknown;
-    try {
-      if (fullSession || !turn) {
-        subagentKeys = await this.collectRunningSubagentSessionKeys(client, parentKeys);
-      }
-    } catch (error) {
-      subagentDiscoveryError = error;
-    }
-    const abortTargets: Array<{ key: string; runId?: string; clearQueued?: boolean }> = [
-      ...(turn && !fullSession
+    // OpenClaw owns queue clearing, descendant cancellation (including idle
+    // ancestors), and run-bound approval revocation. Send Stop immediately;
+    // display inventories and approval list RPCs are not cancellation barriers.
+    // Native partial-cascade failures still reject this request.
+    const targets =
+      turn && !fullSession
         ? [{ key: turn.sessionKey, runId: turn.runId }]
-        : parentKeys.map(key => ({ key, clearQueued: true }))),
-      ...subagentKeys.map(key => ({ key, clearQueued: true })),
-    ];
-    const uniqueTargets = [
-      ...new Map(abortTargets.map(target => [`${target.key}\0${target.runId ?? ''}`, target])).values(),
-    ];
+        : parentKeys.map(key => ({ key, clearQueued: true }));
     const results = await Promise.allSettled(
-      uniqueTargets.map(async target => {
+      targets.map(async target => {
         const response = await client.request<SessionAbortResponse>('sessions.abort', target);
         if (
           response.ok !== true ||
@@ -1213,71 +1202,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const failure = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );
-    let approvalCleanupError: unknown;
-    try {
-      await this.denyPendingApprovalsForSessionKeys(client, [
-        ...parentKeys,
-        ...subagentKeys,
-      ]);
-    } catch (error) {
-      approvalCleanupError = error;
-    }
     if (failure) throw failure.reason;
-    if (subagentDiscoveryError) throw subagentDiscoveryError;
-    if (approvalCleanupError) throw approvalCleanupError;
     this.invalidateSubagentStatus(sessionId);
-  }
-
-  private async denyPendingApprovalsForSessionKeys(
-    client: GatewayClientLike,
-    sessionKeys: string[],
-  ): Promise<void> {
-    const targetKeys = new Set(sessionKeys.filter(Boolean));
-    if (targetKeys.size === 0) return;
-    const listMatching = async () => {
-      const [execRequests, pluginRequests] = await Promise.all([
-        client.request<ExecApprovalRequest[]>('exec.approval.list'),
-        client.request<PluginApprovalRequest[]>('plugin.approval.list'),
-      ]);
-      return [
-        ...(Array.isArray(execRequests)
-          ? execRequests.map(request => ({ kind: ApprovalKind.Exec, request }))
-          : []),
-        ...(Array.isArray(pluginRequests)
-          ? pluginRequests.map(request => ({ kind: ApprovalKind.Plugin, request }))
-          : []),
-      ].filter(({ request }) => {
-        const sessionKey = request.request.sessionKey;
-        return typeof sessionKey === 'string' && targetKeys.has(sessionKey);
-      });
-    };
-    const denyAll = (pending: Awaited<ReturnType<typeof listMatching>>) =>
-      Promise.allSettled(
-        pending.map(({ kind, request }) =>
-          client.request(
-            kind === ApprovalKind.Plugin ? 'plugin.approval.resolve' : 'exec.approval.resolve',
-            {
-              id: request.id,
-              decision:
-                kind === ApprovalKind.Exec
-                  ? STOP_CANCEL_EXEC_APPROVAL_DECISION
-                  : ExecApprovalDecision.Deny,
-            },
-          ),
-        ),
-      );
-
-    await denyAll(await listMatching());
-    let remaining = await listMatching();
-    if (remaining.length > 0) {
-      await denyAll(remaining);
-      remaining = await listMatching();
-    }
-    if (remaining.length > 0) {
-      throw new Error(
-        `Gateway still has ${remaining.length} pending approval(s) for the stopped session.`,
-      );
-    }
   }
 
   private async collectRunningSubagentSessionKeys(

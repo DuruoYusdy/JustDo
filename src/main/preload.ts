@@ -77,6 +77,7 @@ import {
 } from '../shared/cowork/sessionGoal';
 import { SessionRunIpc, type SessionRunUnknownInput } from '../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../shared/cowork/sessionSearch';
+import { type CancelSessionStartInput, SessionStartIpc } from '../shared/cowork/sessionStart';
 import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../shared/cowork/sessionTitle';
 import { SlashCommandIpc } from '../shared/cowork/slashCommands';
 import {
@@ -631,6 +632,8 @@ contextBridge.exposeInMainWorld('electron', {
       startedAt?: number;
       planMode?: boolean;
     }) => ipcRenderer.invoke('cowork:session:start', options),
+    cancelSessionStart: (input: CancelSessionStartInput) =>
+      ipcRenderer.invoke(SessionStartIpc.Cancel, input),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
     copySession: (input: CopyCoworkSessionInput) =>

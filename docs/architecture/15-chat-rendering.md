@@ -61,7 +61,7 @@ Cowork 主工作区在桌面宽度下固定为左侧对话、右侧显示区两�
 
 ## 3. 状态模型
 
-`ChatTranscriptState`：当前 canonical session 的 key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
+`ChatTranscriptState`：当前 canonical session 的 key/id、persistedMessages、historySource、historyGeneration、activeTurn、recentRuns、terminalRunIds和revision。History source只有 `gateway` 或 `optimistic`：前者来自权威 history，后者是提交后等待 Gateway 接管的短暂用户尾部。Main/SQLite 不提供降级 transcript。
 
 Plan mode 的规划与实施共用一个 canonical Gateway transcript。批准后 OpenClaw 在同一 transcript 写入 reset boundary；Patch 022 让 JustDo session 的 display-history 投影跨该 boundary，Renderer 因此继续通过普通 `chat.history` 分页读取完整可见历史，而 model-context 投影仍只从最新 boundary 后开始。搜索、导出、滚动锚点、会话复制和用量统计都沿用普通会话路径，不需要 Renderer 拼接多份 transcript，也不需要 SQLite 保存消息或 segment 血缘。
 
@@ -72,7 +72,22 @@ Plan mode 的规划与实施共用一个 canonical Gateway transcript。批准�
 - Content：streaming/completed/interrupted，标记 delta/snapshot/replaceable；
 - Terminal：aborted/error可见行。
 
-最近24个run保留5分钟terminal/sequence fence，阻止迟到事件重新创建已结束turn。实时Tool结果保留完整canonical字符串；折叠detail和有界history DOM控制渲染成本，不再通过截断数据控制成本。
+最近24个run保留5分钟sequence及终态详情；仅含身份的 `terminalRunIds` 则保留到当前
+session projection reset，避免慢模型在详情过期或淘汰后以迟到事件重新创建已结束turn。
+
+Stop 的成功回执通过 `settleConfirmedRun` 按 session/run 身份进入同一终态 reducer，
+不会依赖 `chat.aborted` 恰好送达；后台会话也在其自己的缓存中结算。新会话尚未收到
+首个流事件时，确认只记录终态 fence，不制造消息或覆盖其他运行。Agent 与 Chat 两类
+迟到流均受 fence 约束，已中断运行不能被后续 delta/final 改回运行或成功。
+手动压缩的取消在原生 handle 尚未注册时继续确认，但重试窗口限制为 30 秒，单次 RPC
+仍受传输超时约束；超时保留未确认操作并报告失败，释放停止按钮供重试，不假装已空闲。
+发送协调层同样最多等待30秒，避免未返回的 send/compact admission 无限锁住停止按钮。
+超时后后台继续等待并取消迟到 admission，同一操作的重试共用取消任务；完成之前保留
+会话发送隔离，后台成功再按操作最新绑定的 canonical run ID 收尾。
+重复的 lifecycle/abort/receipt 复用同一 Terminal 行及结束时间；更具体的终止诊断可以
+补充原行，完整中断正文仍替换同 run 的临时投影，不能追加多份“已中断”。
+
+实时Tool结果保留完整canonical字符串；折叠detail和有界history DOM控制渲染成本，不再通过截断数据控制成本。
 
 ## 4. 端到端数据流
 

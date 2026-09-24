@@ -17,6 +17,7 @@ import {
   type ChatTranscriptState,
   type ContentItem,
   eventMatchesTranscriptSession,
+  isTerminalRun,
   pruneRecentRuns,
   RECENT_RUN_RETENTION_MS,
   type ThinkingItem,
@@ -1047,13 +1048,12 @@ function admitTurn(
   allowSequenceBackfill = false,
 ): AssistantTurn | null {
   pruneRecentRuns(state, dependencies.now());
-  const tombstone = state.recentRuns.get(event.runId);
   const active = state.activeTurn;
   const admission = classifyAgentEvent({
     selected: state,
     activeRun: active,
     event,
-    terminalRun: Boolean(tombstone?.terminalStatus),
+    terminalRun: isTerminalRun(state, event.runId),
   });
   if (
     admission === 'ignored-session' ||
@@ -1097,7 +1097,7 @@ export function reduceAgentEvent(
     selected: state,
     activeRun: previousTurn,
     event,
-    terminalRun: Boolean(state.recentRuns.get(event.runId)?.terminalStatus),
+    terminalRun: isTerminalRun(state, event.runId),
   });
   if (admission === 'ignored-session') return 'ignored-session';
   const lateStartTool =
@@ -1245,6 +1245,18 @@ export function reduceChatEvent(
   event: NormalizedChatEvent,
   dependencies: TranscriptReducerDependencies,
 ): TranscriptReduceResult {
+  if (event.runId && isTerminalRun(state, event.runId) && state.activeTurn?.runId !== event.runId) {
+    return 'ignored-run';
+  }
+  // A completed provisional run must not adopt a different late run. Only
+  // richer terminal frames for its own outcome may refine the projection.
+  const active = state.activeTurn;
+  if (
+    active &&
+    active.status !== 'running' &&
+    ((event.runId && event.runId !== active.runId) || event.state !== active.status)
+  )
+    return 'ignored-run';
   const admission = classifyChatEvent({
     selected: state,
     activeRun: state.activeTurn,
@@ -1331,25 +1343,33 @@ export function reduceChatEvent(
   }
 
   turn.status = event.state;
-  turn.endedAt = now;
+  turn.endedAt ??= now;
   finishTurnItems(turn, event.state, now);
   if (event.state === 'aborted' || event.state === 'error') {
     const message =
       event.errorMessage?.trim() ||
       (event.state === 'aborted' ? 'The run was interrupted.' : 'The run failed.');
-    const terminal: TurnItem = {
-      id: dependencies.createId('terminal'),
-      runId: turn.runId,
-      firstSeq: turn.lastAgentSeq,
-      lastSeq: turn.lastAgentSeq,
-      startedAt: now,
-      updatedAt: now,
-      type: 'terminal',
-      status: event.state,
-      message,
-    };
-    turn.items.push(terminal);
+    const existingTerminal = turn.items.find(item => item.type === 'terminal');
+    if (existingTerminal?.type === 'terminal') {
+      // lifecycle:end, the Stop receipt and chat.aborted can all describe the
+      // same interruption. Keep its row identity and enrich diagnostics only.
+      if (event.errorMessage?.trim()) existingTerminal.message = message;
+    } else {
+      const terminal: TurnItem = {
+        id: dependencies.createId('terminal'),
+        runId: turn.runId,
+        firstSeq: turn.lastAgentSeq,
+        lastSeq: turn.lastAgentSeq,
+        startedAt: now,
+        updatedAt: now,
+        type: 'terminal',
+        status: event.state,
+        message,
+      };
+      turn.items.push(terminal);
+    }
   }
+  state.terminalRunIds.add(turn.runId);
   state.recentRuns.set(turn.runId, {
     runId: turn.runId,
     sessionId: turn.sessionId,

@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 
 import { MAIN_USER_AGENT_ID } from '../../../shared/agents';
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
+import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import { resolvePermissionMode } from '../../../shared/openclaw/approvals';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -49,7 +50,59 @@ export const registerCoworkSessionExecutionHandlers = ({
   waitForConfigUpdates,
   getEngineNotReadyResponse,
 }: SessionExecutionHandlerDependencies): void => {
+  type PendingStart = {
+    cancelled: boolean;
+    sessionId?: string;
+    cancelBeforeAdmission: () => void;
+    cancellation: Promise<void>;
+    confirmCancellation?: () => void;
+    stopping?: Promise<{ success: boolean; error?: string }>;
+  };
+  const pendingStarts = new Map<string, PendingStart>();
+  ipcMain.handle(SessionStartIpc.Cancel, async (_event, input: CancelSessionStartInput) => {
+    if (!input || typeof input.clientTurnId !== 'string' || !input.clientTurnId.trim()) {
+      return { success: false, error: 'Invalid start operation.' };
+    }
+    const operation = pendingStarts.get(input.clientTurnId);
+    if (!operation) {
+      // Admission may have replied immediately before this IPC was delivered.
+      // An old cancellation must never abort a later turn in the same session.
+      const store = getCoworkStore();
+      const timing = store.getSessionRunByClientTurnId(input.clientTurnId);
+      if (!timing) return { success: false, error: 'Unknown start operation.' };
+      if (timing.state !== 'running') return { success: true };
+      if (store.getLatestSessionRun(timing.sessionId)?.id !== timing.id) {
+        return { success: false, error: 'The start operation is no longer current.' };
+      }
+      try {
+        await getCoworkEngineRouter().stopSession(timing.sessionId);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to stop session' };
+      }
+    }
+    operation.cancelled = true;
+    if (!operation.sessionId) {
+      operation.cancelBeforeAdmission();
+      return { success: true };
+    }
+    if (operation.stopping) return operation.stopping;
+    const stopping = (async () => {
+      try {
+        await getCoworkEngineRouter().stopSession(operation.sessionId!);
+        operation.confirmCancellation?.();
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to stop session' };
+      } finally {
+        operation.stopping = undefined;
+      }
+    })();
+    operation.stopping = stopping;
+    return stopping;
+  });
   ipcMain.handle('cowork:session:start', async (_event, options: StartSessionOptions) => {
+    let operation: PendingStart | undefined;
     try {
       if (!options || typeof options.prompt !== 'string' || !options.prompt.trim()) {
         return { success: false, error: 'Prompt is required.' };
@@ -63,7 +116,17 @@ export const registerCoworkSessionExecutionHandlers = ({
       if (options.agentId && options.agentId !== MAIN_USER_AGENT_ID) {
         return { success: false, error: 'agentUnavailable' };
       }
-      await waitForConfigUpdates();
+      if (options.clientTurnId) {
+        if (pendingStarts.has(options.clientTurnId)) {
+          return { success: false, error: 'The start operation is already pending.' };
+        }
+        let cancelBeforeAdmission!: () => void;
+        const cancellation = new Promise<void>(resolve => { cancelBeforeAdmission = resolve; });
+        operation = { cancelled: false, cancelBeforeAdmission, cancellation };
+        pendingStarts.set(options.clientTurnId, operation);
+      }
+      await Promise.race([waitForConfigUpdates(), ...(operation ? [operation.cancellation] : [])]);
+      if (operation?.cancelled) return { success: false, cancelled: true };
       const store = getCoworkStore();
       const existingTiming = options.clientTurnId
         ? store.getSessionRunByClientTurnId(options.clientTurnId)
@@ -74,7 +137,11 @@ export const registerCoworkSessionExecutionHandlers = ({
           return { success: true, session: existingSession, timing: existingTiming };
         }
       }
-      const engineStatus = await ensureEngineRunning();
+      const engineStatus = await Promise.race([
+        ensureEngineRunning(),
+        ...(operation ? [operation.cancellation.then((): null => null)] : []),
+      ]);
+      if (!engineStatus || operation?.cancelled) return { success: false, cancelled: true };
       if (engineStatus.phase !== 'running') {
         return getEngineNotReadyResponse(engineStatus);
       }
@@ -135,6 +202,16 @@ export const registerCoworkSessionExecutionHandlers = ({
           },
         },
       );
+      if (operation) {
+        operation.sessionId = session.id;
+        operation.confirmCancellation = () => {
+          if (timing) store.finishSessionRun(timing.id, 'aborted', Date.now());
+          if (!admissionSettled) {
+            admissionSettled = true;
+            resolveAdmission();
+          }
+        };
+      }
       void run
         .then(() => {
           if (!admissionSettled) {
@@ -162,13 +239,17 @@ export const registerCoworkSessionExecutionHandlers = ({
       return {
         success: true,
         session: store.getSession(session.id) || { ...session, status: 'running' as const },
-        ...(timing ? { timing } : {}),
+        ...(timing ? { timing: store.getSessionRunByClientTurnId(timing.clientTurnId) ?? timing } : {}),
       };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to start session',
       };
+    } finally {
+      if (operation && pendingStarts.get(options.clientTurnId!) === operation) {
+        pendingStarts.delete(options.clientTurnId!);
+      }
     }
   });
 };

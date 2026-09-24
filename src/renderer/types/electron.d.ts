@@ -811,7 +811,11 @@ interface IElectronAPI {
       code?: string;
       engineStatus?: OpenClawEngineStatus;
       timing?: SessionRunTiming;
+      cancelled?: boolean;
     }>;
+    cancelSessionStart: (
+      input: import('../../shared/cowork/sessionStart').CancelSessionStartInput,
+    ) => Promise<import('../../shared/cowork/sessionStart').CancelSessionStartResult>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     copySession: (

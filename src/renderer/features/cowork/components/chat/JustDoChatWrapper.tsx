@@ -252,7 +252,15 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         settleConfirmedRun: (sessionKey, runId, state) => {
           controllerRef.current?.settleConfirmedRun(sessionKey, runId, state);
         },
-        getSendingRunId: () => controllerRef.current?.state.chatRunId ?? null,
+        getSendingRunId: () => {
+          const state = controllerRef.current?.state;
+          return (
+            state?.chatRunId ??
+            (state?.transcript.activeTurn?.status === 'running'
+              ? state.transcript.activeTurn.runId
+              : null)
+          );
+        },
         clearSending: (expectedSessionKey, expectedRunId) => {
           controllerRef.current?.clearSending(expectedSessionKey, expectedRunId);
         },

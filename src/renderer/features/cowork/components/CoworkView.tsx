@@ -138,6 +138,7 @@ import { coworkService } from '@/features/cowork/coworkService';
 import { setDraftBrowserRecording } from '@/features/cowork/coworkSlice';
 import {
   addDraftBrowserAnnotation,
+  clearCurrentSession,
   clearDraftBrowserAnnotations,
   type DraftAttachment,
   setCurrentSession,
@@ -188,6 +189,7 @@ import CollaborationPanel, {
   useCollaborationRooms,
 } from './chat/CollaborationPanel';
 import {
+  bindSessionSubmissionRun,
   createSessionSubmission,
   getSessionStopOperationKey,
   type SessionSubmission,
@@ -475,6 +477,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     settled: Promise<boolean>;
     temporarySessionId?: string;
     canonicalSessionId?: string;
+    clientTurnId?: string;
   } | null>(null);
   const startRequestIdRef = useRef(0);
   // Ref for CoworkPromptInput
@@ -871,6 +874,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || i18nService.t('coworkNewSession');
       const now = Date.now();
       const clientTurnId = `justdo-${now}-${crypto.randomUUID()}`;
+      if (pendingStartRef.current?.requestId === requestId) {
+        pendingStartRef.current.clientTurnId = clientTurnId;
+      }
 
       // Capture active skill IDs before clearing them
       const sessionSkillIds = [...activeSkillIds];
@@ -920,7 +926,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       dispatch(clearActiveSkills());
 
       // Start the actual session immediately with fallback title
-      const { session: startedSession, error: startError } = await coworkService.startSession(
+      const {
+        session: startedSession,
+        error: startError,
+        cancelled: startCancelled,
+        acceptedRunId,
+      } = await coworkService.startSession(
         {
           prompt,
           gatewayPrompt,
@@ -953,11 +964,19 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         },
       );
 
-      if (!startedSession && startError) {
-        dispatch(updateSessionStatus({ sessionId: tempSessionId, status: 'error' }));
+      if (!startedSession && (startError || startCancelled)) {
+        dispatch(updateSessionStatus({ sessionId: tempSessionId, status: startCancelled ? 'idle' : 'error' }));
         chatWrapperRef.current?.clearSending(
           `agent:${currentAgentId?.trim() || 'main'}:justdo:${tempSessionId}`,
         );
+        if (startCancelled && store.getState().cowork.currentSession?.id === tempSessionId) {
+          pendingPromptRef.current = null;
+          pendingAttachmentsRef.current = [];
+          pendingGatewayPromptRef.current = undefined;
+          // No canonical session was created. The unchanged home draft remains
+          // available because this submission returns false to the composer.
+          dispatch(clearCurrentSession());
+        }
         cancelledStartStopped = true;
         return false;
       }
@@ -980,6 +999,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // Stop immediately if user cancelled while startup request was in flight.
       if (isPendingStartCancelled() && startedSession) {
         cancelledStartStopped = await coworkService.stopSession(startedSession.id);
+        if (cancelledStartStopped) {
+          const sessionKey = `agent:${startedSession.agentId?.trim() || 'main'}:justdo:${startedSession.id}`;
+          chatWrapperRef.current?.settleConfirmedRun(sessionKey, acceptedRunId ?? clientTurnId, 'aborted');
+          chatWrapperRef.current?.clearSending(sessionKey, null);
+        }
         if (getPendingCancellationAction() === 'delete') {
           await coworkService.deleteSession(startedSession.id);
         }
@@ -1000,12 +1024,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const pendingStart = pendingStartRef.current;
       pendingStart.cancelled = true;
       pendingStart.cancellationAction = 'stop';
-      // The temporary ID has no Gateway run. Wait for canonical admission and
-      // its cancellation before releasing the stop control.
-      return pendingStart.settled;
+      // Main knows the canonical session before chat.send acknowledges it. Send
+      // cancellation by operation identity even if that acknowledgement is lost.
+      if (!pendingStart.clientTurnId) return pendingStart.settled;
+      return coworkService.cancelSessionStart(pendingStart.clientTurnId);
     }
     const targetSessionKey = currentGatewaySessionKey;
-    const targetRunId = chatWrapperRef.current?.getSendingRunId();
+    const targetSendingRunId = chatWrapperRef.current?.getSendingRunId() ?? null;
+    const timings = sessionRunTimings[currentSession.id];
+    const timing = timings?.[timings.length - 1];
+    const targetRunId =
+      targetSendingRunId ??
+      (timing?.state === 'running' ? timing.rootRunId ?? timing.clientTurnId : null);
     const pendingSubmission = pendingMessageSubmissionsRef.current.get(currentSession.id);
     if (pendingSubmission?.unknown && pendingSubmission.receiptId) {
       pendingSubmission.cancelled = true;
@@ -1016,7 +1046,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       });
       pendingSubmission.unknownMarked = true;
     }
-    const stopped = await stopSessionSubmission(pendingSubmission, async () => {
+    const stopping = stopSessionSubmission(pendingSubmission, async () => {
       const results = await Promise.allSettled([
         coworkService.stopSession(currentSession.id),
         targetSessionKey
@@ -1029,16 +1059,28 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         results[1].status === 'fulfilled'
       );
     });
-    if (
-      pendingSubmission &&
-      !pendingSubmission.unknown &&
-      pendingMessageSubmissionsRef.current.get(currentSession.id) === pendingSubmission
-    ) {
-      pendingMessageSubmissionsRef.current.delete(currentSession.id);
-    }
-    if (stopped && targetSessionKey)
-      chatWrapperRef.current?.clearSending(targetSessionKey, targetRunId);
-    return stopped;
+    // The UI has a bounded wait, while admission cancellation can finish later.
+    // Retain its fence and apply its eventual receipt even after that UI wait.
+    void (pendingSubmission?.stopCompletion ?? stopping).then(stopped => {
+      if (
+        pendingSubmission &&
+        !pendingSubmission.stopping &&
+        !pendingSubmission.unknown &&
+        pendingMessageSubmissionsRef.current.get(currentSession.id) === pendingSubmission
+      ) {
+        pendingMessageSubmissionsRef.current.delete(currentSession.id);
+      }
+      if (stopped && targetSessionKey) {
+        // Admission can bind a canonical run while Stop is waiting. Apply the
+        // receipt to that operation only, even after navigating to another chat.
+        const stoppedRunId = pendingSubmission?.runId ?? targetRunId;
+        if (stoppedRunId) {
+          chatWrapperRef.current?.settleConfirmedRun(targetSessionKey, stoppedRunId, 'aborted');
+        }
+        chatWrapperRef.current?.clearSending(targetSessionKey, targetSendingRunId);
+      }
+    });
+    return stopping;
   };
 
   const handleSubtasksChange = useCallback(
@@ -2238,7 +2280,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
             clientTurnId,
             onRunBound: async runId => {
-              await coworkService.bindSessionRun(timing.id, runId, currentSession.id);
+              await bindSessionSubmissionRun(operation, runId, () =>
+                coworkService.bindSessionRun(timing.id, runId, currentSession.id),
+              );
             },
           });
         },

@@ -9,6 +9,12 @@ history projection, native tool search, most Goal behavior, subagent admission/q
 approvals, compaction/context-budget behavior and task queries are upstream capabilities and must
 not be reimplemented here.
 
+Session Stop also relies on native queue clearing, descendant cancellation through completed
+ancestors, partial-cascade failure reporting, immediate terminal events, and run-bound approval
+revocation. The pristine contract audit checks those implementation seams before patches are
+applied, so removing application-side task/approval discovery cannot silently lose native coverage
+when the runtime is rebuilt. These artifact shape checks complement cancellation behavior tests.
+
 The v2026.9.2 audit revalidated the retained gaps against the pristine artifact. Upstream
 now starts Chrome MCP stderr capture before connect, so patch 003 no longer owns that behavior and
 only supplies the Windows Electron-safe package runner. Patch 007 tracks the prepared

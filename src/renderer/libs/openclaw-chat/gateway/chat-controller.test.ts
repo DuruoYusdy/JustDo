@@ -5,7 +5,7 @@ import { buildGoalFollowUpPrompt } from '@shared/prompts/goalFollowUpPrompt';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
-import { beginAssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { beginAssistantTurn, pruneRecentRuns } from '@/libs/openclaw-chat/model/chat-transcript-state';
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/project-history-timeline';
 import { projectTurnItems } from '@/libs/openclaw-chat/model/project-turn-items';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/run-activity';
@@ -11222,4 +11222,364 @@ test('settles the background unknown run without clearing the selected session',
   await controller.switchSession('session-a');
   expect(controller.state.chatSending).toBe(false);
   expect(controller.state.chatRunId).toBeNull();
+});
+
+
+test.each([false, true])(
+  'settles Thinking, Tool and Content from Stop confirmation without terminal frames (background=%s)',
+  async background => {
+    const controller = new ChatController();
+    controller.state.sessionKey = 'session-stop';
+    controller.state.transcript.sessionKey = 'session-stop';
+    controller.state.chatSending = true;
+    controller.state.chatRunId = 'run-stop';
+    const turn = beginAssistantTurn(
+      controller.state.transcript,
+      { runId: 'run-stop' },
+      {
+        now: () => 100,
+        createId: prefix => `${prefix}-stop`,
+      },
+    );
+    const base = { runId: turn.runId, firstSeq: 1, lastSeq: 1, startedAt: 100, updatedAt: 100 };
+    turn.items.push(
+      {
+        ...base,
+        id: 'thinking-stop',
+        type: 'thinking',
+        status: 'running',
+        text: 'Thinking slowly',
+      },
+      {
+        ...base,
+        id: 'tool-stop',
+        type: 'tool',
+        status: 'running',
+        toolCallId: 'call-stop',
+        name: 'exec',
+      },
+      {
+        ...base,
+        id: 'content-stop',
+        type: 'content',
+        status: 'streaming',
+        sourceMode: 'snapshot',
+        text: 'Partial answer',
+      },
+    );
+    if (background) {
+      await controller.switchSession('session-other');
+      controller.state.chatSending = true;
+      controller.state.chatRunId = 'run-other';
+    }
+
+    controller.settleConfirmedRun('session-stop', 'run-stop', 'aborted');
+    controller.settleConfirmedRun('session-stop', 'run-stop', 'aborted');
+
+    expect(turn.status).toBe('aborted');
+    expect(turn.items.map(item => item.status)).toEqual([
+      'interrupted',
+      'cancelled',
+      'interrupted',
+      'aborted',
+    ]);
+    if (background) {
+      expect(controller.state.chatRunId).toBe('run-other');
+      expect(controller.state.chatSending).toBe(true);
+      await controller.switchSession('session-stop');
+    }
+    expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.chatRunId).toBeNull();
+    expect(controller.state.chatMessages).toHaveLength(1);
+  },
+);
+
+test('repairs a still-running transcript even if sending state was already cleared', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-stop';
+  controller.state.transcript.sessionKey = 'session-stop';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-stop' },
+    {
+      now: () => 100,
+      createId: prefix => `${prefix}-stop`,
+    },
+  );
+
+  controller.settleConfirmedRun('session-stop', 'run-stop', 'aborted');
+
+  expect(turn.status).toBe('aborted');
+  expect(turn.items.filter(item => item.type === 'terminal')).toHaveLength(1);
+});
+
+test('does not terminate a replacement run when an older Stop confirmation arrives', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-stop';
+  controller.state.transcript.sessionKey = 'session-stop';
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-new';
+  const turn = beginAssistantTurn(
+    controller.state.transcript,
+    { runId: 'run-new' },
+    {
+      now: () => 100,
+      createId: prefix => `${prefix}-new`,
+    },
+  );
+
+  controller.settleConfirmedRun('session-stop', 'run-old', 'aborted');
+
+  expect(turn.status).toBe('running');
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-new');
+  expect(controller.state.chatMessages).toEqual([]);
+});
+
+test.each([false, true])(
+  'keeps one interrupted message when late abort frames follow Stop confirmation (background=%s)',
+  async background => {
+    const controller = new ChatController();
+    const sessionKey = 'session-stop';
+    const runId = 'run-stop';
+    controller.state.sessionKey = sessionKey;
+    controller.state.transcript.sessionKey = sessionKey;
+    controller.state.chatSending = true;
+    controller.state.chatRunId = runId;
+    const turn = beginAssistantTurn(
+      controller.state.transcript,
+      { runId },
+      {
+        now: () => 100,
+        createId: prefix => `${prefix}-stop`,
+      },
+    );
+    turn.items.push({
+      id: 'content-stop',
+      runId,
+      firstSeq: 1,
+      lastSeq: 1,
+      startedAt: 100,
+      updatedAt: 100,
+      type: 'content',
+      status: 'streaming',
+      sourceMode: 'snapshot',
+      text: 'Partial answer',
+    });
+    const handleEvent = (
+      controller as unknown as {
+        handleEvent(event: { event: string; payload: unknown }): void;
+      }
+    ).handleEvent.bind(controller);
+
+    if (background) await controller.switchSession('session-other');
+    controller.settleConfirmedRun(sessionKey, runId, 'aborted');
+    for (let repeat = 0; repeat < 3; repeat += 1) {
+      handleEvent({
+        event: 'agent',
+        payload: {
+          runId,
+          session: sessionKey,
+          seq: 2,
+          stream: 'lifecycle',
+          data: { phase: 'end', aborted: true },
+        },
+      });
+      handleEvent({
+        event: 'chat',
+        payload: {
+          runId,
+          sessionKey,
+          state: 'aborted',
+          message: { role: 'assistant', content: 'Partial answer with its final buffered words.' },
+        },
+      });
+    }
+    handleEvent({
+      event: 'agent',
+      payload: {
+        runId,
+        session: sessionKey,
+        seq: 3,
+        stream: 'assistant',
+        data: { text: 'stale output after Stop' },
+      },
+    });
+
+    expect(controller.state.chatSending).toBe(false);
+    expect(turn.status).toBe('aborted');
+    expect(turn.items.filter(item => item.type === 'terminal')).toHaveLength(1);
+    if (background) await controller.switchSession(sessionKey);
+    expect(controller.state.chatMessages).toHaveLength(1);
+    expect(controller.state.chatMessages[0]).toMatchObject({
+      runId,
+      content: 'Partial answer with its final buffered words.',
+    });
+    expect(
+      turn.items.some(item => item.type === 'content' && item.text.includes('stale output')),
+    ).toBe(false);
+  },
+);
+
+test('fences a confirmed Main-started run stopped before its first stream frame', () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-stop';
+  controller.state.transcript.sessionKey = 'session-stop';
+  const handleEvent = (
+    controller as unknown as {
+      handleEvent(event: { event: string; payload: unknown }): void;
+    }
+  ).handleEvent.bind(controller);
+
+  controller.settleConfirmedRun('session-stop', 'run-before-first-frame', 'aborted');
+  handleEvent({
+    event: 'agent',
+    payload: {
+      session: 'session-stop',
+      runId: 'run-before-first-frame',
+      seq: 1,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+  handleEvent({
+    event: 'chat',
+    payload: {
+      sessionKey: 'session-stop',
+      runId: 'run-before-first-frame',
+      state: 'delta',
+      message: { role: 'assistant', content: 'late first token' },
+    },
+  });
+
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.transcript.activeTurn).toBeNull();
+  handleEvent({ event: 'chat', payload: { sessionKey: 'session-stop', runId: 'run-before-first-frame',
+    state: 'final', message: { role: 'assistant', content: 'late final must not bypass the terminal fence' } } });
+  expect(controller.state.chatMessages).toEqual([]);
+});
+
+test('releases an unconfirmed compaction Stop for retry without admitting replacement work', async () => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  let finishCompact!: (value: unknown) => void;
+  const compact = new Promise(resolve => {
+    finishCompact = resolve;
+  });
+  const request = vi.fn(async (method: string) => {
+    if (method === 'sessions.compact') return compact;
+    return { ok: true, status: 'no-active-run' };
+  });
+  controller.state.client = { request } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = 'session-a';
+  const compacting = controller.sendMessage('/compact');
+  const stopping = expect(controller.cancelManualCompaction('session-a')).rejects.toThrow();
+
+  await vi.advanceTimersByTimeAsync(30_000);
+  await stopping;
+
+  expect(controller.state.compactionInFlight).toBe(true);
+  expect(controller.state.chatSending).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+  const compactionRequests = request.mock.calls.filter(
+    ([method]) => method === 'sessions.compact',
+  ).length;
+  await expect(controller.sendMessage('/compact')).rejects.toThrow('already being sent');
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.compact')).toHaveLength(
+    compactionRequests,
+  );
+  request.mockImplementation(async () => {
+    finishCompact({ ok: false, reason: 'aborted' });
+    return { ok: true, status: 'aborted' };
+  });
+  const retry = controller.cancelManualCompaction('session-a');
+  await vi.advanceTimersByTimeAsync(250);
+  await Promise.all([retry, compacting]);
+  expect(controller.state.compactionInFlight).toBe(false);
+});
+
+
+test('clears a stopped background startup placeholder without clearing the selected run', async () => {
+  const controller = new ChatController();
+  controller.state.sessionKey = 'session-starting';
+  controller.state.transcript.sessionKey = 'session-starting';
+  controller.setPendingUserMessage('first prompt');
+  await controller.switchSession('session-other');
+  controller.state.chatSending = true;
+  controller.state.chatRunId = 'run-other';
+
+  controller.settleConfirmedRun('session-starting', 'justdo-starting', 'aborted');
+  controller.clearSending('session-starting', null);
+
+  expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.chatRunId).toBe('run-other');
+  await controller.switchSession('session-starting');
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.pendingUserMessage).toBeNull();
+  expect(controller.state.transcript.recentRuns.get('justdo-starting')?.terminalStatus).toBe('aborted');
+});
+
+
+test.each([
+  ['expired', false], ['expired', true], ['capacity', false], ['capacity', true],
+] as const)('keeps stopped run identity after recent metadata is %s (background=%s)', async (eviction, background) => {
+  vi.useFakeTimers();
+  const controller = new ChatController();
+  const sessionKey = 'session-stop-retention';
+  controller.state.sessionKey = sessionKey;
+  controller.state.transcript.sessionKey = sessionKey;
+  controller.settleConfirmedRun(sessionKey, 'stopped-before-first-frame', 'aborted');
+  const transcript = controller.state.transcript;
+  if (eviction === 'expired') {
+    vi.setSystemTime(Date.now() + 6 * 60 * 1000);
+    pruneRecentRuns(transcript, Date.now());
+  } else {
+    for (let index = 0; index < 25; index += 1) {
+      controller.settleConfirmedRun(sessionKey, `other-stopped-${index}`, 'aborted');
+    }
+  }
+  expect(transcript.recentRuns.has('stopped-before-first-frame')).toBe(false);
+  const internal = controller as unknown as {
+    handleEvent(event: { event: string; payload: unknown }): void;
+    applyInFlightRunSnapshot(snapshot: Record<string, unknown>, key: string,
+      sessionId: string | null, requestedRunId: string | null, info: Record<string, unknown>): void;
+  };
+  if (background) await controller.switchSession('other-session');
+  for (const [stream, data] of [
+    ['lifecycle', { phase: 'start' }],
+    ['thinking', { thinking: 'late thought' }],
+    ['tool', { phase: 'start', toolCallId: 'late-call', name: 'exec' }],
+    ['assistant', { text: 'late text' }],
+  ] as const) {
+    internal.handleEvent({ event: 'agent', payload: {
+      sessionKey, runId: 'stopped-before-first-frame', seq: 10, stream, data,
+    } });
+  }
+  for (const state of ['delta', 'final'] as const) {
+    internal.handleEvent({ event: 'chat', payload: {
+      sessionKey, runId: 'stopped-before-first-frame', state,
+      message: { role: 'assistant', content: 'late text' },
+    } });
+  }
+  if (background) await controller.switchSession(sessionKey);
+  internal.applyInFlightRunSnapshot({ runId: 'stopped-before-first-frame', text: 'stale snapshot', events: [] },
+    sessionKey, null, null, { hasActiveRun: true, activeRunIds: ['stopped-before-first-frame'] });
+  expect(controller.state.chatSending).toBe(false);
+  expect(controller.state.chatRunId).toBeNull();
+  expect(transcript.activeTurn).toBeNull();
+  expect(controller.state.chatMessages).toEqual([]);
+  // Durable message appends remain authoritative after transient run metadata
+  // expires. Repeated delivery merges its stable identity without starting work.
+  for (let delivery = 0; delivery < 2; delivery += 1) {
+    internal.handleEvent({ event: 'session.message', payload: {
+      sessionKey, runId: 'stopped-before-first-frame', messageId: 'persisted-stop', messageSeq: 1,
+      message: { role: 'assistant', content: 'persisted partial',
+        __openclaw: { id: 'persisted-stop', seq: 1, runId: 'stopped-before-first-frame' } },
+    } });
+  }
+  expect(controller.state.chatMessages).toHaveLength(1);
+  expect(controller.state.chatMessages[0]).toMatchObject({ content: 'persisted partial' });
+  expect(controller.state.chatSending).toBe(false);
+  controller.disconnect();
 });

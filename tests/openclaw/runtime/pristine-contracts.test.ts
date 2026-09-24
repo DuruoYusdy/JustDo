@@ -4,8 +4,9 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, test } from 'vitest';
 
-const { verifyPristineOpenClawContracts } =
+const { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts } =
   require('../../../scripts/verify-openclaw-pristine-contracts.cjs') as {
+    verifyNativeSessionStopContracts: (runtimeDir: string) => string[];
     verifyPristineOpenClawContracts: (
       runtimeDir: string,
       options: { patchFiles: string[] },
@@ -53,11 +54,33 @@ const UPSTREAM_CONTRACTS = [
   'native-session-goals',
   'native-task-rpc-and-events',
   'subagent-queue-and-wait',
+  'native-session-stop',
   'persistent-approval-lifecycle',
   'native-approval-timeouts',
   'compaction-and-context-budget',
   'openai-visible-stop-tool-safety',
 ] as const;
+
+const NATIVE_STOP_FIXTURES = {
+  'session-stop.js': '"sessions.abort": if (clearQueued) clearSessionQueues([key]); ' +
+    '!requestedRunId ? { cascadeDescendants: true } : {};',
+  'session-stop-cascade.js': 'if (params.cascadeDescendants && plan.canCascade) ' +
+    'descendants = await abortControlledSubagents({ beforeKill() { result = plan.abort(); } }); ' +
+    'descendant cancellation was incomplete',
+  'session-stop-tree.js': 'async function killSubagentRunTree() { ' +
+    'if (!tree.entry.execution.endedAt) stop(); result.descendants = true; ' +
+    'if (result.descendants && tree.canTraverse()) tree.children.map(visit); }',
+  'session-stop-run.js': 'function abortChatRunById() { ' +
+    'releaseAgentRunDelegatedAuthority(active.agentRunDelegatedAuthority); ' +
+    'ops.onRunAborted?.(runId); active.controller.abort(createChatAbortSignalReason(stopReason)); ' +
+    'broadcastChatAborted(ops); status: "cancelled"; }',
+  'session-stop-ops.js': 'function createChatAbortOps() { ' +
+    'onRunAborted: context.cancelRunBoundApprovals; }',
+  'session-stop-approvals.js': 'function cancelAgentRuntimeBoundApprovals() {} ' +
+    'function cancelUnboundRunApprovals() {} ' +
+    'params.manager.forceDenyDetailed(pending.id, "run-aborted"); ' +
+    'pending.request.runId === params.runId; registerAgentRunDelegatedAuthorityClosedHandler;',
+};
 
 function writeDistFile(root: string, name: string, content: string): void {
   fs.writeFileSync(path.join(root, 'dist', name), content);
@@ -174,6 +197,9 @@ function createPristineFixture(): string {
     'allowSilentToolCallPromotion; Provider returned an incomplete or malformed tool call; ' +
       'stopReason=`toolUse`; stopReason=`error`;',
   );
+  for (const [name, content] of Object.entries(NATIVE_STOP_FIXTURES)) {
+    writeDistFile(root, name, content);
+  }
   return root;
 }
 
@@ -193,6 +219,26 @@ afterEach(() => {
 });
 
 describe('OpenClaw pristine artifact contracts', () => {
+  test.each(Object.keys(NATIVE_STOP_FIXTURES))(
+    'rejects an artifact missing native Stop capability in %s',
+    name => {
+      const root = createPristineFixture();
+      fs.unlinkSync(path.join(root, 'dist', name));
+
+      expect(() => verifyPristineOpenClawContracts(root, { patchFiles: [] }))
+        .toThrow(/Pristine OpenClaw contract is missing: .*Stop/);
+    },
+  );
+
+  test('does not combine disconnected native Stop wiring into evidence', () => {
+    const root = createPristineFixture();
+    writeDistFile(root, 'session-stop-ops.js', 'function createChatAbortOps() {}');
+    writeDistFile(root, 'unrelated-stop.js', 'onRunAborted: context.cancelRunBoundApprovals');
+
+    expect(() => verifyNativeSessionStopContracts(root))
+      .toThrow(/run Stop connects native approval cancellation/);
+  });
+
   test('keeps the independently auditable v2026.9.2 patch inventory exact', () => {
     const patchDir = path.resolve('scripts', 'patches', 'v2026.9.2');
     const patchFiles = fs

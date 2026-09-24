@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -28,6 +29,113 @@ const session = (permissionMode: 'ask' | 'auto' | 'full'): CoworkSession => ({
   agentId: 'main',
   createdAt: 1,
   updatedAt: 2,
+});
+
+describe('initial admission cancellation', () => {
+  const setup = (preparation?: 'config' | 'engine') => {
+    let timing:
+      | { id: string; sessionId: string; clientTurnId: string; startedAt: number; state: string }
+      | undefined;
+    const createdSession = session('ask');
+    const createSession = vi.fn(() => createdSession);
+    const startSession = vi.fn(() => new Promise<void>(() => undefined));
+    const stopSession = vi.fn().mockResolvedValue(undefined);
+    const store = {
+      getConfig: () => ({ workingDirectory: 'C:/project', permissionMode: 'ask' }),
+      getAgent: () => ({ enabled: true, model: '' }),
+      createSession,
+      updateSession: vi.fn(),
+      getSession: () => createdSession,
+      getSessionRunByClientTurnId: () => timing,
+      getLatestSessionRun: vi.fn(() => timing),
+      beginSessionRun: (input: { sessionId: string; clientTurnId: string; startedAt: number }) => {
+        timing = { ...input, id: 'receipt-1', state: 'running' };
+        return timing;
+      },
+      finishSessionRun: vi.fn((_id: string, state: string) => {
+        if (timing) timing = { ...timing, state };
+        return timing;
+      }),
+    };
+    const ensureEngineRunning = vi.fn(() =>
+      preparation === 'engine'
+        ? new Promise<never>(() => undefined)
+        : Promise.resolve({ phase: 'running' as const, message: '' }),
+    );
+    registerCoworkSessionExecutionHandlers({
+      ensureEngineRunning: ensureEngineRunning as never,
+      waitForConfigUpdates: () =>
+        preparation === 'config' ? new Promise<void>(() => undefined) : Promise.resolve(),
+      getCoworkStore: () => store as unknown as CoworkStore,
+      getCoworkEngineRouter: () => ({ startSession, stopSession }) as unknown as CoworkEngineRouter,
+      getEngineNotReadyResponse: vi.fn(),
+    });
+    const start = () =>
+      handlers.get('cowork:session:start')!(
+        {},
+        {
+          prompt: 'slow model',
+          clientTurnId: 'client-1',
+          startedAt: 100,
+        },
+      ) as Promise<unknown>;
+    const cancel = () =>
+      handlers.get(SessionStartIpc.Cancel)!({}, { clientTurnId: 'client-1' }) as Promise<unknown>;
+    return { start, cancel, startSession, stopSession, createSession, store, ensureEngineRunning };
+  };
+
+  test('cancels an initial run without waiting for a lost admission acknowledgement', async () => {
+    const fixture = setup();
+    const starting = fixture.start();
+    await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalled());
+    await expect(fixture.cancel()).resolves.toEqual({ success: true });
+    expect(fixture.stopSession).toHaveBeenCalledWith('session-1');
+    await expect(starting).resolves.toMatchObject({ success: true, timing: { state: 'aborted' } });
+  });
+
+  test.each(['config', 'engine'] as const)(
+    'cancels during %s preparation without creating a run',
+    async preparation => {
+      const fixture = setup(preparation);
+      const starting = fixture.start();
+      if (preparation === 'engine')
+        await vi.waitFor(() => expect(fixture.ensureEngineRunning).toHaveBeenCalled());
+      await expect(fixture.cancel()).resolves.toEqual({ success: true });
+      await expect(starting).resolves.toEqual({ success: false, cancelled: true });
+      expect(fixture.createSession).not.toHaveBeenCalled();
+      expect(fixture.startSession).not.toHaveBeenCalled();
+    },
+  );
+
+  test('keeps uncertain admission cancellable after a failed stop', async () => {
+    const fixture = setup();
+    fixture.stopSession.mockRejectedValueOnce(new Error('unconfirmed abort'));
+    const starting = fixture.start();
+    let admitted = false;
+    void starting.then(() => {
+      admitted = true;
+    });
+    await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalled());
+    await expect(fixture.cancel()).resolves.toEqual({ success: false, error: 'unconfirmed abort' });
+    expect(admitted).toBe(false);
+    expect(fixture.store.finishSessionRun).not.toHaveBeenCalled();
+    await expect(fixture.cancel()).resolves.toEqual({ success: true });
+    await expect(starting).resolves.toMatchObject({ timing: { state: 'aborted' } });
+  });
+
+  test('rejects an old start cancellation when a different receipt owns the session', async () => {
+    const fixture = setup();
+    const starting = fixture.start();
+    await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalled());
+    await fixture.cancel();
+    await starting;
+    const timing = fixture.store.getSessionRunByClientTurnId()!;
+    timing.state = 'running';
+    fixture.store.getLatestSessionRun.mockReturnValue({ ...timing, id: 'new-receipt' });
+    fixture.stopSession.mockClear();
+    await expect(fixture.cancel()).resolves.toMatchObject({ success: false });
+    expect(fixture.stopSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('cowork session execution permissions', () => {

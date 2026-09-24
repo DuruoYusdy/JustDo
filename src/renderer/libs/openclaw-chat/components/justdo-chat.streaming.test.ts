@@ -88,6 +88,59 @@ afterEach(() => {
 });
 
 describe('justdo-chat direct-property streaming', () => {
+  test('stops tool animation and flushes paced content on a confirmed stop without a terminal frame', async () => {
+    const frames = createAnimationFrameHarness();
+    const controller = prepareController();
+    controller.state.sessionKey = 'agent:main:justdo:confirmed-stop-dom';
+    controller.state.transcript.sessionKey = controller.state.sessionKey;
+    const handleEvent = gatewayEventHandler(controller);
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.controller = controller;
+    document.body.append(chat);
+    await chat.updateComplete;
+    await frames.drain(chat);
+
+    handleEvent({
+      event: 'agent',
+      payload: {
+        session: controller.state.sessionKey,
+        runId: 'stopped-run',
+        seq: 1,
+        stream: 'tool',
+        data: { phase: 'start', toolCallId: 'slow-tool', name: 'exec' },
+      },
+    });
+    handleEvent({
+      event: 'agent',
+      payload: {
+        session: controller.state.sessionKey,
+        runId: 'stopped-run',
+        seq: 2,
+        stream: 'assistant',
+        data: { text: 'The partial answer received before cancellation.' },
+      },
+    });
+    await chat.updateComplete;
+    expect(chat.shadowRoot?.querySelector('.process-summary__tool-status--running')).not.toBeNull();
+
+    controller.settleConfirmedRun(controller.state.sessionKey, 'stopped-run', 'aborted');
+    await chat.updateComplete;
+    expect(assistantText(chat)).toBe('The partial answer received before cancellation.');
+    expect(chat.shadowRoot?.querySelector('.process-summary__tool-status--running')).toBeNull();
+    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe('false');
+
+    for (let count = 0; count < 3; count += 1) {
+      handleEvent({
+        event: 'chat',
+        payload: { sessionKey: controller.state.sessionKey, runId: 'stopped-run', state: 'aborted' },
+      });
+    }
+    await frames.drain(chat);
+    expect(chat.shadowRoot?.querySelectorAll('.process-terminal')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelectorAll('.chat-bubble__text')).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelector('.chat-container')?.getAttribute('aria-busy')).toBe('false');
+  });
+
   test('renders standalone completed turns with the main-chat model and duration footer', async () => {
     const frames = createAnimationFrameHarness();
     const startedAt = new Date(2026, 8, 17, 9, 30, 0).getTime();

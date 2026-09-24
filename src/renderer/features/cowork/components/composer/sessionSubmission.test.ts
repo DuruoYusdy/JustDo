@@ -3,10 +3,77 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   canClearSubmittedDraft,
   createSessionSubmission,
+  SESSION_STOP_WAIT_MS,
   stopSessionSubmission,
 } from './sessionSubmission';
 
 describe('session submission cancellation', () => {
+  it('releases the stop control for hung admission while fencing and cancelling a late ACK', async () => {
+    vi.useFakeTimers();
+    try {
+      const operation = createSessionSubmission();
+      const stop = vi.fn().mockResolvedValue(true);
+      const stopping = stopSessionSubmission(operation, stop);
+      await vi.advanceTimersByTimeAsync(SESSION_STOP_WAIT_MS);
+      expect(await stopping).toBe(false);
+      expect(operation.cancelled).toBe(true);
+      expect(operation.stopping).toBe(true);
+      const completion = operation.stopCompletion;
+      const retry = stopSessionSubmission(operation, stop);
+      expect(stop).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stop).toHaveBeenCalledTimes(2);
+      operation.finish();
+      expect(await completion).toBe(true);
+      expect(await retry).toBe(true);
+      expect(stop).toHaveBeenCalledTimes(3);
+      expect(operation.stopping).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows retry after cancellation failure without an unhandled background rejection', async () => {
+    const operation = createSessionSubmission();
+    operation.finish();
+    const stop = vi.fn().mockRejectedValue(new Error('disconnected'));
+    expect(await stopSessionSubmission(operation, stop)).toBe(false);
+    expect(operation.stopping).toBe(false);
+    stop.mockResolvedValue(true);
+    expect(await stopSessionSubmission(operation, stop)).toBe(true);
+  });
+
+  it('shares an unresolved cancellation request across retries and cancels again after admission', async () => {
+    vi.useFakeTimers();
+    try {
+      const operation = createSessionSubmission();
+      let finishAbort!: (value: boolean) => void;
+      const stop = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>(resolve => {
+              finishAbort = resolve;
+            }),
+        )
+        .mockResolvedValue(true);
+      const first = stopSessionSubmission(operation, stop);
+      await vi.advanceTimersByTimeAsync(SESSION_STOP_WAIT_MS);
+      expect(await first).toBe(false);
+      const retry = stopSessionSubmission(operation, stop);
+      operation.finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(operation.stopping).toBe(true);
+      finishAbort(true);
+      expect(await retry).toBe(true);
+      expect(stop).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps cancellation pending until late admission is settled and aborted again', async () => {
     const operation = createSessionSubmission();
     const stop = vi.fn().mockResolvedValue(true);

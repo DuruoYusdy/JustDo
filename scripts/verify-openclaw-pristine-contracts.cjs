@@ -38,6 +38,73 @@ function uniqueEvidence(...groups) {
   return [...new Set(groups.flat())];
 }
 
+// Stop no longer queries task or approval inventories in the application.
+// Keep its native dependencies explicit at the pristine artifact boundary.
+// These shape checks complement behavior tests; they are not execution proofs.
+function verifyNativeSessionStopContracts(runtimeDir) {
+  const files = walkJavaScriptFiles(path.join(runtimeDir, 'dist'));
+  const contracts = [
+    {
+      label: 'session Stop clears queues and enables descendant cancellation',
+      fragments: [
+        '"sessions.abort":',
+        'if (clearQueued)',
+        'clearSessionQueues([',
+        '!requestedRunId ? { cascadeDescendants: true }',
+      ],
+    },
+    {
+      label:
+        'session Stop signals the parent before awaiting descendants and reports partial failure',
+      fragments: [
+        'if (params.cascadeDescendants && plan.canCascade)',
+        'descendants = await abortControlledSubagents({',
+        'result = plan.abort()',
+        'descendant cancellation was incomplete',
+      ],
+    },
+    {
+      label: 'session Stop traverses descendants through completed ancestors',
+      fragments: [
+        'async function killSubagentRunTree',
+        '!tree.entry.execution.endedAt',
+        'result.descendants = true',
+        'result.descendants && tree.canTraverse()',
+        'tree.children.map(visit)',
+      ],
+    },
+    {
+      label:
+        'run Stop revokes authority and emits terminal events without waiting for provider output',
+      fragments: [
+        'function abortChatRunById',
+        'releaseAgentRunDelegatedAuthority(active.agentRunDelegatedAuthority)',
+        'ops.onRunAborted?.(runId)',
+        'active.controller.abort(createChatAbortSignalReason(stopReason))',
+        'broadcastChatAborted(ops',
+        'status: "cancelled"',
+      ],
+    },
+    {
+      label: 'run Stop connects native approval cancellation',
+      fragments: ['function createChatAbortOps', 'onRunAborted: context.cancelRunBoundApprovals'],
+    },
+    {
+      label: 'native Stop cancels both delegated and legacy run-bound approvals',
+      fragments: [
+        'function cancelAgentRuntimeBoundApprovals',
+        'function cancelUnboundRunApprovals',
+        'params.manager.forceDenyDetailed(pending.id, "run-aborted"',
+        'pending.request.runId === params.runId',
+        'registerAgentRunDelegatedAuthorityClosedHandler',
+      ],
+    },
+  ];
+  return uniqueEvidence(
+    ...contracts.map(({ fragments, label }) => findFileWithAll(files, fragments, label)),
+  );
+}
+
 function listPatchFiles(repoRoot) {
   const patchDir = path.join(repoRoot, 'scripts', 'patches', `v${TARGET_VERSION}`);
   return fs
@@ -187,6 +254,7 @@ function verifyPristineOpenClawContracts(runtimeDir, options = {}) {
           'terminal child results resume the requester session through durable delivery',
         ),
       ),
+      'native-session-stop': verifyNativeSessionStopContracts(runtimeDir),
       'persistent-approval-lifecycle': uniqueEvidence(
         findFileWithAll(
           files,
@@ -261,4 +329,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { verifyPristineOpenClawContracts };
+module.exports = { verifyPristineOpenClawContracts, verifyNativeSessionStopContracts };

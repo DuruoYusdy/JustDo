@@ -2512,20 +2512,20 @@ test('waits for Gateway confirmation before clearing a stopped session', async (
   expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
 });
 
-test('keeps a session active when descendant discovery fails despite no active root', async () => {
+test('preserves retryable state when native descendant cancellation is incomplete', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const internals = adapter as unknown as StopTestAdapter;
   const turn = createSessionTurn();
   internals.activeTurns.set(turn.sessionId, turn);
-  const request = vi.fn(async (method: string) => {
-    if (method === 'tasks.list') throw new Error('task ledger unavailable');
-    if (method === 'sessions.abort') return { ok: true, status: 'no-active-run' };
-    return [];
+  const request = vi.fn(async () => {
+    throw new Error('Session stopped, but descendant cancellation was incomplete');
   });
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
 
-  await expect(adapter.stopSession(turn.sessionId)).rejects.toThrow('discovery is incomplete');
+  await expect(adapter.stopSession(turn.sessionId)).rejects.toThrow(
+    'descendant cancellation was incomplete',
+  );
 
   expect(request).toHaveBeenCalledWith('sessions.abort', {
     key: turn.sessionKey,
@@ -2617,76 +2617,43 @@ test('coalesces concurrent stops for the same session', async () => {
   expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
 });
 
-test('denies only approvals belonging to a stopped session after abort confirmation', async () => {
-  const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
-  const internals = adapter as unknown as StopTestAdapter;
-  const turn = createSessionTurn();
-  internals.activeTurns.set(turn.sessionId, turn);
-  let execTargetPending = true;
-  let pluginTargetPending = true;
-  const request = vi.fn((method: string) => {
-    if (method === 'sessions.list') return Promise.resolve({ sessions: [] });
-    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
-    if (method === 'sessions.abort') return Promise.resolve({ ok: true, status: 'aborted' });
-    if (method === 'exec.approval.list') {
-      return Promise.resolve([
-        ...(execTargetPending
-          ? [{
-              id: 'exec-target',
-              request: { command: 'npm test', sessionKey: turn.sessionKey },
-              createdAtMs: 1,
-              expiresAtMs: Number.MAX_SAFE_INTEGER,
-            }]
-          : []),
-        {
-          id: 'exec-other',
-          request: { command: 'npm run build', sessionKey: 'agent:main:justdo:session-2' },
-          createdAtMs: 2,
-          expiresAtMs: Number.MAX_SAFE_INTEGER,
-        },
-      ]);
-    }
-    if (method === 'plugin.approval.list') {
-      return Promise.resolve(pluginTargetPending ? [
-        {
-          id: 'plugin-target',
-          request: {
-            title: 'Write',
-            description: 'write a file',
-            sessionKey: turn.sessionKey,
-          },
-          createdAtMs: 3,
-          expiresAtMs: Number.MAX_SAFE_INTEGER,
-        },
-      ] : []);
-    }
-    if (method === 'exec.approval.resolve') {
-      execTargetPending = false;
-      return Promise.reject(new Error('approval already resolved'));
-    }
-    if (method === 'plugin.approval.resolve') pluginTargetPending = false;
-    return Promise.resolve({});
-  });
-  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+test.each(['unavailable', 'unresponsive'])(
+  'confirms native Stop without waiting for %s task or approval inventories',
+  async inventoryState => {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const internals = adapter as unknown as StopTestAdapter;
+    const turn = createSessionTurn();
+    internals.activeTurns.set(turn.sessionId, turn);
+    const request = vi.fn((method: string) => {
+      if (method === 'sessions.abort') return Promise.resolve({ ok: true, status: 'aborted' });
+      return inventoryState === 'unavailable'
+        ? Promise.reject(new Error('inventory unavailable'))
+        : new Promise(() => {});
+    });
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+    const stopped = vi.fn();
+    adapter.on('sessionStopped', stopped);
 
-  await adapter.stopSession(turn.sessionId);
+    const stopping = adapter.stopSession(turn.sessionId);
+    expect(request).toHaveBeenCalledWith('sessions.abort', {
+      key: turn.sessionKey,
+      clearQueued: true,
+    });
+    await stopping;
 
-  expect(request).toHaveBeenCalledWith('exec.approval.resolve', {
-    id: 'exec-target',
-    decision: 'deny-justdo-stop',
-  });
-  expect(request).toHaveBeenCalledWith('plugin.approval.resolve', {
-    id: 'plugin-target',
-    decision: ExecApprovalDecision.Deny,
-  });
-  expect(request).not.toHaveBeenCalledWith(
-    'exec.approval.resolve',
-    expect.objectContaining({ id: 'exec-other' }),
-  );
-  const methods = request.mock.calls.map(([method]) => method);
-  expect(methods.indexOf('sessions.abort')).toBeLessThan(methods.indexOf('exec.approval.list'));
-});
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.abort')).toHaveLength(1);
+    expect(
+      request.mock.calls.some(([method]) =>
+        ['tasks.list', 'sessions.list', 'exec.approval.list', 'plugin.approval.list'].includes(
+          method,
+        ),
+      ),
+    ).toBe(false);
+    expect(stopped).toHaveBeenCalledWith(turn.sessionId);
+    expect(internals.activeTurns.has(turn.sessionId)).toBe(false);
+  },
+);
 
 test('broadcasts an authoritative pending approval snapshot during reconciliation', async () => {
   sendToRenderer.mockClear();
@@ -2790,56 +2757,18 @@ test('preserves local running state when Gateway does not confirm the stop', asy
   expect(stopped).not.toHaveBeenCalled();
 });
 
-test('stops a recovered active descendant through an idle child session', async () => {
+test('uses native session-wide cancellation for descendants when the root is already idle', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const internals = adapter as unknown as StopTestAdapter;
-  const parentKey = 'agent:main:justdo:session-1';
-  const childKey = `${parentKey}:subagent:child`;
-  const grandchildKey = `${childKey}:subagent:grandchild`;
-  const request = vi.fn((method: string, params?: unknown) => {
-    const input = params as { sessionKey?: string };
-    if (method === 'tasks.list') {
-      if (input.sessionKey === parentKey) {
-        return Promise.resolve({
-          tasks: [
-            {
-              id: 'child-task',
-              runtime: 'subagent',
-              status: 'completed',
-              childSessionKey: childKey,
-            },
-          ],
-        });
-      }
-      if (input.sessionKey === childKey) {
-        return Promise.resolve({
-          tasks: [
-            {
-              id: 'grandchild-task',
-              runtime: 'subagent',
-              status: 'running',
-              childSessionKey: grandchildKey,
-            },
-          ],
-        });
-      }
-      return Promise.resolve({ tasks: [] });
-    }
-    if (method === 'tasks.list') return Promise.resolve({ tasks: [] });
-    if (method === 'sessions.abort') {
-      return Promise.resolve({ ok: true, status: 'aborted', abortedRunId: 'remote-run' });
-    }
-    return Promise.resolve({});
-  });
+  const request = vi.fn().mockResolvedValue({ ok: true, status: 'aborted', abortedRunId: null });
   internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
 
   await adapter.stopSession('session-1');
 
-  const abortedKeys = request.mock.calls
-    .filter(([method]) => method === 'sessions.abort')
-    .map(([, params]) => (params as { key: string }).key);
-  expect(abortedKeys).toEqual([parentKey, grandchildKey]);
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.abort')).toEqual([
+    ['sessions.abort', { key: 'agent:main:justdo:session-1', clearQueued: true }],
+  ]);
 });
 
 test('cancels a goal turn stopped while its Gateway session is being prepared', async () => {

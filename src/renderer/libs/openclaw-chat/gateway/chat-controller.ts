@@ -87,7 +87,10 @@ import {
   type ChatTranscriptState,
   createChatTranscriptState,
   type HistorySource,
+  isTerminalRun,
   normalizeTranscriptSessionKey,
+  pruneRecentRuns,
+  RECENT_RUN_RETENTION_MS,
   resetChatTranscriptState,
   type ToolItem,
   type TranscriptReducerDependencies,
@@ -427,6 +430,7 @@ const MAX_ACTIVE_TOOL_HISTORY_CATCHUP_ATTEMPTS = 4;
 // Subscribe-before-snapshot closes the initial race. The timeout only prevents
 // a stalled subscription RPC from blocking the session UI indefinitely.
 const DEFAULT_INITIAL_MESSAGE_SUBSCRIPTION_BARRIER_TIMEOUT_MS = 3000;
+const MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS = 30_000;
 const DEFAULT_INITIAL_HISTORY_RETRY_DELAYS_MS = [100, 300, 900] as const;
 const PROGRESS_CARD_GET_METHOD = 'progressCard.get';
 const PROGRESS_CARD_PUT_METHOD = 'progressCard.put';
@@ -808,7 +812,17 @@ export class ChatController {
 
   /** Clear sending state (e.g. when session start fails) */
   clearSending(expectedSessionKey?: string, expectedRunId?: string | null): void {
-    if (expectedSessionKey && this.state.sessionKey !== expectedSessionKey) return;
+    if (expectedSessionKey && !this.isSelectedSession(expectedSessionKey)) {
+      const cached = this.findLiveSessionState(expectedSessionKey)?.[1];
+      if (!cached || (expectedRunId !== undefined && cached.chatRunId !== expectedRunId)) return;
+      cached.chatSending = false;
+      cached.chatRunId = null;
+      cached.pendingUserMessage = null;
+      cached.assistantSnapshotRunId = null;
+      cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+      cached.runActivity = null;
+      return;
+    }
     if (expectedRunId !== undefined && this.state.chatRunId !== expectedRunId) return;
     this.state.chatSending = false;
     this.state.chatRunId = null;
@@ -824,14 +838,37 @@ export class ChatController {
     runId: string,
     state: 'completed' | 'failed' | 'aborted',
   ): void {
-    if (this.getSessionRunId(sessionKey) !== runId) return;
+    const live = this.isSelectedSession(sessionKey)
+      ? this.state
+      : this.findLiveSessionState(sessionKey)?.[1];
+    if (!live) return;
+    const turn = live.transcript.activeTurn;
+    // Sending can already be cleared while the transcript still awaits its
+    // terminal frame. Never let an old receipt terminate a replacement run.
+    if ((live.chatRunId ?? (turn?.status === 'running' ? turn.runId : null)) !== runId) {
+      // A Main-started run can be stopped before its first stream frame. Keep
+      // its terminal fence without creating a message or touching newer work.
+      if (!isTerminalRun(live.transcript, runId)) {
+        live.transcript.terminalRunIds.add(runId);
+        live.transcript.recentRuns.set(runId, {
+          runId,
+          sessionId: live.currentSessionId,
+          lifecycleGeneration: null,
+          lastAgentSeq: -1,
+          terminalStatus: state === 'completed' ? 'final' : state === 'failed' ? 'error' : 'aborted',
+          expiresAt: this.transcriptDependencies.now() + RECENT_RUN_RETENTION_MS,
+        });
+        pruneRecentRuns(live.transcript, this.transcriptDependencies.now());
+      }
+      return;
+    }
     const event: NormalizedChatEvent = {
       runId,
       sessionKey,
       sessionId: this.isSelectedSession(sessionKey)
         ? this.state.currentSessionId
         : (this.findLiveSessionState(sessionKey)?.[1].currentSessionId ?? null),
-      lifecycleGeneration: null,
+      lifecycleGeneration: turn?.lifecycleGeneration ?? null,
       frameSeq: null,
       replace: false,
       state: state === 'completed' ? 'final' : state === 'failed' ? 'error' : 'aborted',
@@ -3741,6 +3778,7 @@ export class ChatController {
         const externalFinal =
           reduceResult === 'ignored-run' &&
           payload.state === 'final' &&
+          !(payload.runId && isTerminalRun(this.state.transcript, payload.runId)) &&
           this.state.transcript.activeTurn === null &&
           this.state.chatRunId === null &&
           normalizeTranscriptSessionKey(payload.sessionKey) ===
@@ -4097,12 +4135,7 @@ export class ChatController {
                 activeRunId:
                   activeTurn?.status === 'running' ? activeTurn.runId : this.state.chatRunId,
                 runActive,
-                isRecentTerminalRun: runId => {
-                  const recent = this.state.transcript.recentRuns.get(runId);
-                  return Boolean(
-                    recent?.terminalStatus && recent.expiresAt > this.transcriptDependencies.now(),
-                  );
-                },
+                isRecentTerminalRun: runId => isTerminalRun(this.state.transcript, runId),
               },
             )
           : null;
@@ -4285,7 +4318,7 @@ export class ChatController {
 
     const currentRunId = this.state.chatRunId;
     const activeRunIds = sessionInfo?.activeRunIds;
-    const terminalSnapshotRun = this.state.transcript.recentRuns.get(runId)?.terminalStatus;
+    const terminalSnapshotRun = isTerminalRun(this.state.transcript, runId);
     const snapshotIsActive =
       sessionInfo?.hasActiveRun !== false &&
       (!Array.isArray(activeRunIds) || activeRunIds.includes(runId));
@@ -5962,7 +5995,13 @@ export class ChatController {
     const needsConfirmation = (operation: (typeof operations)[number]) =>
       !operation.settled ||
       Boolean(operation.error && !isDefinitiveSessionGoalGatewayError(operation.error));
+    const retryDeadline = Date.now() + MANUAL_COMPACTION_STOP_RETRY_WINDOW_MS;
     while (operations.some(needsConfirmation)) {
+      // Preparation may never register a native handle. Keep its admission
+      // uncertain, but release the Stop control so the user can retry instead
+      // of polling forever behind a disabled button. Each RPC is also bounded
+      // by the Gateway client's transport timeout.
+      if (Date.now() >= retryDeadline) throw new Error(i18nService.t('coworkStopFailed'));
       const operation = operations.find(needsConfirmation)!;
       const client =
         this.state.connected && this.state.client ? this.state.client : operation.client;

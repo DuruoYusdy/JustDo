@@ -105,6 +105,8 @@ export interface ChatTranscriptState {
   historyGeneration: number;
   activeTurn: AssistantTurn | null;
   recentRuns: Map<string, RecentRunState>;
+  /** Identity-only fences live until this session projection is reset. */
+  terminalRunIds: Set<string>;
   revision: number;
 }
 
@@ -128,6 +130,7 @@ export function createChatTranscriptState(
     historyGeneration: 0,
     activeTurn: null,
     recentRuns: new Map(),
+    terminalRunIds: new Set(),
     revision: 0,
   };
 }
@@ -144,6 +147,7 @@ export function resetChatTranscriptState(
   state.historyGeneration += 1;
   state.activeTurn = null;
   state.recentRuns.clear();
+  state.terminalRunIds.clear();
   state.revision += 1;
 }
 
@@ -204,6 +208,10 @@ export function eventMatchesTranscriptSession(
  */
 export function normalizeTranscriptSessionKey(sessionKey: string): string {
   return normalizeMessageSessionKey(sessionKey);
+}
+
+export function isTerminalRun(state: ChatTranscriptState, runId: string): boolean {
+  return state.terminalRunIds.has(runId) || Boolean(state.recentRuns.get(runId)?.terminalStatus);
 }
 
 export function pruneRecentRuns(state: ChatTranscriptState, now: number): void {

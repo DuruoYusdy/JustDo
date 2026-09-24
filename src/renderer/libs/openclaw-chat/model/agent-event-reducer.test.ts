@@ -5,6 +5,7 @@ import { reduceAgentEvent, reduceChatEvent } from './agent-event-reducer';
 import {
   beginAssistantTurn,
   createChatTranscriptState,
+  resetChatTranscriptState,
   type TranscriptReducerDependencies,
 } from './chat-transcript-state';
 import { projectTurnItems } from './project-turn-items';
@@ -904,4 +905,87 @@ describe('agent event reducer', () => {
     ).toBe('applied');
     expect(state.activeTurn?.runId).toBe('run-2');
   });
+});
+
+
+test.each(['aborted', 'error'] as const)(
+  'merges repeated %s frames into one stable terminal row',
+  outcome => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'partial' }), dependencies);
+    reduceChatEvent(state, chat(outcome), dependencies);
+    const turn = state.activeTurn!;
+    const terminal = turn.items.find(item => item.type === 'terminal')!;
+    const endedAt = turn.endedAt;
+    now += 5 * 60 * 1000;
+
+    reduceChatEvent(
+      state,
+      chat(outcome, { errorMessage: 'Specific terminal diagnostic' }),
+      dependencies,
+    );
+    reduceChatEvent(state, chat(outcome), dependencies);
+
+    expect(turn.items.filter(item => item.type === 'terminal')).toEqual([terminal]);
+    expect(terminal).toMatchObject({ message: 'Specific terminal diagnostic' });
+    expect(turn.endedAt).toBe(endedAt);
+  },
+);
+
+test.each([false, true])(
+  'rejects late chat deltas and conflicting final after abort (retired=%s)',
+  retired => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'partial' }), dependencies);
+    reduceChatEvent(state, chat('aborted'), dependencies);
+    const turn = state.activeTurn!;
+    if (retired) state.activeTurn = null;
+
+    expect(reduceChatEvent(state, chat('delta', { deltaText: 'late output' }), dependencies)).toBe(
+      'ignored-run',
+    );
+    expect(
+      reduceChatEvent(
+        state,
+        chat('final', { message: { role: 'assistant', content: 'late final' } }),
+        dependencies,
+      ),
+    ).toBe('ignored-run');
+
+    expect(state.activeTurn).toBe(retired ? null : turn);
+    expect(turn.status).toBe('aborted');
+    expect(turn.items.filter(item => item.type === 'content').map(item => item.text)).toEqual([
+      'partial',
+    ]);
+  },
+);
+
+
+test.each(['expired', 'capacity'] as const)('never resurrects stopped tools after terminal metadata is %s', eviction => {
+  const state = createChatTranscriptState('session-1', 'sid-1');
+  reduceAgentEvent(state, agent(1, 'tool', { phase: 'start', toolCallId: 'stopped-tool', name: 'exec' }), dependencies);
+  reduceChatEvent(state, chat('aborted'), dependencies);
+  if (eviction === 'expired') now += 6 * 60 * 1000;
+  for (let index = 0; index < (eviction === 'capacity' ? 25 : 1); index += 1) {
+    const runId = `replacement-${index}`;
+    reduceAgentEvent(state, agent(1, 'assistant', { text: 'new answer' }, { runId }), dependencies);
+    reduceChatEvent(state, chat('final', { runId }), dependencies);
+  }
+  expect(state.recentRuns.has('run-1')).toBe(false);
+  const replacement = state.activeTurn;
+  expect(reduceAgentEvent(state, agent(2, 'tool', { phase: 'start', toolCallId: 'late-tool', name: 'exec' }), dependencies)).toBe('ignored-run');
+  expect(reduceChatEvent(state, chat('delta', { deltaText: 'late words' }), dependencies)).toBe('ignored-run');
+  expect(state.activeTurn).toBe(replacement);
+  expect(state.activeTurn?.status).toBe('final');
+});
+
+
+test('releases terminal identity fences when the session projection is reset', () => {
+  const state = createChatTranscriptState('session-1', 'sid-1');
+  reduceAgentEvent(state, agent(1, 'assistant', { text: 'partial' }), dependencies);
+  reduceChatEvent(state, chat('aborted'), dependencies);
+  expect(state.terminalRunIds.has('run-1')).toBe(true);
+  resetChatTranscriptState(state, 'session-2', 'sid-2');
+  expect(state.terminalRunIds.size).toBe(0);
+  expect(state.recentRuns.size).toBe(0);
 });

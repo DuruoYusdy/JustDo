@@ -606,7 +606,7 @@ export class CoworkService {
   async startSession(
     options: CoworkStartOptions,
     hooks: StartSessionHooks = {},
-  ): Promise<{ session: CoworkSession | null; error?: string }> {
+  ): Promise<{ session: CoworkSession | null; error?: string; cancelled?: boolean; acceptedRunId?: string }> {
     const cowork = window.electron?.cowork;
     if (!cowork) {
       console.error('Cowork API not available');
@@ -665,7 +665,10 @@ export class CoworkService {
           }),
         );
       }
-      return { session: runningSession };
+      return {
+        session: runningSession,
+        acceptedRunId: result.timing?.rootRunId ?? result.timing?.clientTurnId ?? options.clientTurnId,
+      };
     }
 
     if (pendingTemporarySessionId) {
@@ -688,8 +691,18 @@ export class CoworkService {
     if (store.getState().cowork.currentSession?.id === temporarySessionId) {
       store.dispatch(setStreaming(false));
     }
-    console.error('Failed to start session:', result.error);
-    return { session: null, error: result.error };
+    if (!result.cancelled) console.error('Failed to start session:', result.error);
+    return { session: null, error: result.error, cancelled: result.cancelled };
+  }
+
+  async cancelSessionStart(clientTurnId: string): Promise<boolean> {
+    try {
+      const result = await window.electron?.cowork?.cancelSessionStart({ clientTurnId });
+      return result?.success === true;
+    } catch (error) {
+      console.error('Failed to cancel session start:', error);
+      return false;
+    }
   }
 
   async stopSession(sessionId: string): Promise<boolean> {

@@ -7,6 +7,8 @@ export const createSessionSubmission = () => {
   return {
     cancelled: false,
     stopping: false,
+    stopCompletion: undefined as Promise<boolean> | undefined,
+    stopAttempt: undefined as Promise<boolean> | undefined,
     unknown: false,
     unknownMarked: false,
     receiptId: undefined as string | undefined,
@@ -17,6 +19,18 @@ export const createSessionSubmission = () => {
   };
 };
 export type SessionSubmission = ReturnType<typeof createSessionSubmission>;
+
+/** Preserve canonical identity before receipt persistence can yield or fail. */
+export const bindSessionSubmissionRun = async (
+  operation: SessionSubmission,
+  runId: string,
+  persist: () => Promise<unknown>,
+): Promise<void> => {
+  operation.runId = runId;
+  await persist();
+};
+
+export const SESSION_STOP_WAIT_MS = 30_000;
 
 export const getSessionStopOperationKey = (
   sessionId: string,
@@ -33,16 +47,50 @@ export const stopSessionSubmission = async (
 ): Promise<boolean> => {
   if (!operation) return stop();
   operation.cancelled = true;
-  operation.stopping = true;
+  const requestStop = (): Promise<boolean> => {
+    if (operation.stopAttempt) return operation.stopAttempt;
+    const attempt = Promise.resolve()
+      .then(stop)
+      .catch(() => false)
+      .finally(() => {
+        if (operation.stopAttempt === attempt) operation.stopAttempt = undefined;
+      });
+    operation.stopAttempt = attempt;
+    return attempt;
+  };
+  if (!operation.stopCompletion) {
+    operation.stopping = true;
+    operation.stopCompletion = (async () => {
+      try {
+        await requestStop();
+        // Keep admission fenced even when the UI stops waiting. A late ACK must
+        // still be cancelled before another submission can use this session.
+        await operation.settled;
+        // An explicit retry may still be cancelling pre-admission work. Wait
+        // for it before issuing the required post-admission cancellation.
+        await operation.stopAttempt;
+        const finallyStopped = await requestStop();
+        return finallyStopped && !operation.unknown;
+      } finally {
+        operation.stopping = false;
+        operation.stopCompletion = undefined;
+      }
+    })();
+  } else {
+    // A timed-out UI wait must allow a real cancellation retry, while sharing
+    // any RPC that has not returned yet.
+    void requestStop();
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await stop().catch(() => false);
-    // An ACK may arrive after the first abort. Keep new submissions blocked until
-    // admission settles and cancel again against the now-admitted operation.
-    await operation.settled;
-    const finallyStopped = await stop();
-    return finallyStopped && !operation.unknown;
+    return await Promise.race([
+      operation.stopCompletion,
+      new Promise<boolean>(resolve => {
+        timeout = setTimeout(() => resolve(false), SESSION_STOP_WAIT_MS);
+      }),
+    ]);
   } finally {
-    operation.stopping = false;
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 };
 

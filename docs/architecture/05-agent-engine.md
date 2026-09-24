@@ -140,6 +140,28 @@ Adapter 在初始会话和后台任务路径调用 `chat.send`，保存 requeste
 
 Adapter 不再读写 OpenClaw `sessions.json`。模型变更在 Gateway ready 后用 `sessions.patch`；历史来自原生分页 `chat.history`；原生 display projection 未公开的 tool input 与 compaction detail 由 `runtime-services` 的受限 `operator.read` RPC 按请求 id 有界补齐。所有 RPC 结果先经过 `v2026.9.2` wire validator，再进入产品 DTO。
 
+### 用户停止与原生取消边界
+
+输入框 Stop 直接调用 OpenClaw `sessions.abort { key, clearQueued: true }`。
+Gateway 原生取消路径拥有排队工作、后代级联（包括空闲祖先下的活动后代）和 run-bound
+审批撤销；Adapter 不在停止前递归查询 `tasks.list` / `sessions.list`，也不在确认后
+通过审批列表 RPC 再判定停止成败。这样展示查询缓慢或不可用不会阻塞中断，审批列表
+失败也不会推翻已确认的取消。Gateway 返回的部分后代取消失败仍须向上传播，不能
+把 `no-active-run` 当作发送受理状态未知的证明。
+
+同会话并发 Stop 复用 promise，停止期间禁止新提交。正在等待 `chat.send` 受理的
+操作保留取消标记，受理后再次取消；未知受理通过原生 run 查询确认。内部冲突替换
+继续按 `{ key, runId }` 精确取消，避免旧操作取消后续运行。Renderer 将确认应用到
+原始 session/run 的 transcript（包括后台会话），而不是仅清除发送标志；终止流事件
+缺失时也能结束 Thinking、Tool、Content，并以最近运行终态阻止迟到事件复活。
+
+新会话还处于临时 ID 时，Renderer 用 `clientTurnId` 调用
+`cowork:session:start:cancel`，无需等待初次 `chat.send` 回执。Main 在配置和引擎准备
+阶段保留取消屏障，阻止创建运行；已有 canonical session 时立即取消其执行，并只在
+原生停止确认后释放初始 admission、结束 receipt。取消失败保留原操作供重试。
+初次受理已经返回时，取消入口核对最新 receipt，避免旧启动请求停止同会话的新 turn。
+尚未创建 canonical session 的取消返回首页并保留未提交草稿，不留下不可发送的临时会话。
+
 ## 11. Slash commands
 
 命令列表来自 Gateway，再应用 JustDo policy 的 blacklist、category、tier、execution type 和 before-send hook。本地命令和 Gateway 命令分开；UI 不应把未知 `/...` 默认为本地执行，也不能绕开 policy 直接 RPC。App-owned `/plan` 只切换模式，`/plan <task>` 切换后把去掉命令前缀的任务作为规划消息提交；冒号形式 `/plan: ...` 按普通消息发送。用户手工输入的 Gateway slash command仍可走命令处理，但 Goal 卡片生命周期操作使用原生 structured Goal RPC，不依赖命令文本和控制 run。
