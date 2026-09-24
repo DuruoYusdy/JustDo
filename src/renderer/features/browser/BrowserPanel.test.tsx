@@ -355,6 +355,40 @@ describe('BrowserPanel embedded webview', () => {
     expect(unregisterAgentTab).toHaveBeenCalledTimes(unregisterCount);
   });
 
+  it.each(['canGoBack', 'canGoForward'])(
+    'survives an unavailable guest during %s and recovers on dom-ready',
+    method => {
+      let available = true;
+      defineWebviewMethod(method, () => {
+        if (!available) throw new Error('The WebView must be attached to the DOM');
+        return true;
+      });
+      const view = render(<BrowserPanelHarness draftKey="navigation-draft" />);
+      const webview = view.container.querySelector('webview')!;
+      const label = i18nService.t(
+        method === 'canGoBack' ? 'browserPanelBack' : 'browserPanelForward',
+      );
+      expect((screen.getByLabelText(label) as HTMLButtonElement).disabled).toBe(true);
+      fireEvent(webview, new Event('dom-ready'));
+      expect((screen.getByLabelText(label) as HTMLButtonElement).disabled).toBe(false);
+
+      available = false;
+      view.rerender(<BrowserPanelHarness draftKey="navigation-session" />);
+      expect((screen.getByLabelText(label) as HTMLButtonElement).disabled).toBe(true);
+
+      available = true;
+      fireEvent(webview, new Event('dom-ready'));
+      expect((screen.getByLabelText(label) as HTMLButtonElement).disabled).toBe(false);
+      const navigate = vi.fn(() => {
+        throw new Error('guest detached after render');
+      });
+      defineWebviewMethod(method === 'canGoBack' ? 'goBack' : 'goForward', navigate);
+      fireEvent.click(screen.getByLabelText(label));
+      expect(navigate).toHaveBeenCalledOnce();
+      expect(view.container.querySelector('webview')).toBe(webview);
+    },
+  );
+
   it('registers a delayed webview with the promoted session instead of a stale draft key', async () => {
     let guestReady = false;
     defineWebviewMethod('getWebContentsId', () => {

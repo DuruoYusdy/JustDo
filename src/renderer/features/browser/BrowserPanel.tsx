@@ -445,6 +445,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
   const activeWebview = activeTab ? (webviewsRef.current.get(activeTab.targetId) ?? null) : null;
+  const canNavigate = (direction: 'back' | 'forward'): boolean => {
+    if (!activeWebview?.isConnected || !readyGuestsRef.current.has(activeWebview)) return false;
+    try {
+      return direction === 'back' ? activeWebview.canGoBack() : activeWebview.canGoForward();
+    } catch {
+      // A retained target can outlive its Electron guest during session changes.
+      return false;
+    }
+  };
   const recorder = useBrowserRecording({
     draftKey,
     isOpen,
@@ -990,15 +999,23 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         setTimeout(() => webviewsRef.current.get(nextTab.targetId)?.focus(), 0);
         return;
       }
+      if (command === 'reload' && sourceTargetId) {
+        clearNonPdfFallback(sourceTargetId);
+        const viewer = pdfViewersRef.current.get(sourceTargetId);
+        if (viewer) {
+          viewer.reload();
+          return;
+        }
+      }
       const webview = sourceTargetId ? webviewsRef.current.get(sourceTargetId) : null;
-      if (!webview) return;
-      if (command === 'reload') {
-        if (sourceTargetId) clearNonPdfFallback(sourceTargetId);
-        const viewer = sourceTargetId ? pdfViewersRef.current.get(sourceTargetId) : null;
-        if (viewer) viewer.reload();
-        else webview.reload();
-      } else if (command === 'back' && webview.canGoBack()) webview.goBack();
-      else if (command === 'forward' && webview.canGoForward()) webview.goForward();
+      if (!webview?.isConnected || !readyGuestsRef.current.has(webview)) return;
+      try {
+        if (command === 'reload') webview.reload();
+        else if (command === 'back' && webview.canGoBack()) webview.goBack();
+        else if (command === 'forward' && webview.canGoForward()) webview.goForward();
+      } catch {
+        // The guest can detach between the toolbar render and the command.
+      }
     },
     [clearAnnotations, clearNonPdfFallback, closeTab, onActiveTargetChange, openTab],
   );
@@ -1046,7 +1063,15 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const installGuest = useCallback(
     (targetId: string, webview: LiveWebview | null) => {
       if (!webview) {
+        const previousGuest = webviewsRef.current.get(targetId);
+        if (previousGuest) readyGuestsRef.current.delete(previousGuest);
         webviewsRef.current.delete(targetId);
+        setReadyTargets(current => {
+          if (!current.has(targetId)) return current;
+          const next = new Set(current);
+          next.delete(targetId);
+          return next;
+        });
         for (const sessionId of new Set([
           registeredDraftKeyRef.current,
           currentDraftKeyRef.current,
@@ -1105,6 +1130,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         handleNavigation(targetId, webview);
       });
       webview.addEventListener('dom-ready', () => {
+        if (webviewsRef.current.get(targetId) !== webview || !webview.isConnected) return;
         recorderRef.current.onReady(targetId);
         registerAgentTab();
         readyGuestsRef.current.add(webview);
@@ -2251,10 +2277,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           <button
             type="button"
             className={modeButton(false)}
-            disabled={
-              !activeTab || !readyTargets.has(activeTab.targetId) || !activeWebview?.canGoBack()
-            }
-            onClick={() => activeWebview?.goBack()}
+            disabled={!canNavigate('back')}
+            onClick={() => runBrowserCommand('back')}
             aria-label={i18nService.t('browserPanelBack')}
           >
             <ArrowLeftIcon className="h-4 w-4" />
@@ -2269,10 +2293,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           <button
             type="button"
             className={modeButton(false)}
-            disabled={
-              !activeTab || !readyTargets.has(activeTab.targetId) || !activeWebview?.canGoForward()
-            }
-            onClick={() => activeWebview?.goForward()}
+            disabled={!canNavigate('forward')}
+            onClick={() => runBrowserCommand('forward')}
             aria-label={i18nService.t('browserPanelForward')}
           >
             <ArrowRightIcon className="h-4 w-4" />
