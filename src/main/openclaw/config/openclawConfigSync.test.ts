@@ -1394,8 +1394,17 @@ describe('optional agent-team configuration', () => {
 
 
 test('preserves user scheduler settings across managed config synchronization', () => {
-  expect(buildManagedOpenClawCronConfig(undefined)).toEqual({ enabled: true, sessionRetention: '7d' });
+  expect(buildManagedOpenClawCronConfig(undefined)).toEqual({
+    enabled: true,
+    skipMissedJobs: true,
+    sessionRetention: '7d',
+  });
   const existing = { enabled: false, sessionRetention: false, skipMissedJobs: true, failureAlert: { after: 5 } };
   expect(buildManagedOpenClawCronConfig(existing)).toEqual(existing);
   expect(buildManagedOpenClawCronConfig({ sessionRetention: '1h30m' }).sessionRetention).toBe('1h30m');
+});
+
+test('disables missed-job catch-up by default while preserving an explicit opt-in', () => {
+  expect(buildManagedOpenClawCronConfig({ enabled: true }).skipMissedJobs).toBe(true);
+  expect(buildManagedOpenClawCronConfig({ skipMissedJobs: false }).skipMissedJobs).toBe(false);
 });

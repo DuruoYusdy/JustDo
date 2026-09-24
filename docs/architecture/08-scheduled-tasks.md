@@ -18,7 +18,7 @@
 
 页面右上角的齿轮打开全局调度设置，在任务和收件箱页签均可使用，与收件箱的显示筛选菜单独立。设置映射到 OpenClaw 原生 `cron.enabled`、`cron.skipMissedJobs` 和 `cron.sessionRetention`；补跑开关与 `skipMissedJobs` 反向对应，一次性任务的补跑不受该项影响。保留期提供 1/7/30/90 天、不自动清理及原生时长语法的自定义输入；`false`（以及原生零时长）仅关闭定时运行会话清理，不改变本地摘要保留或其他归档策略。
 
-`GetSchedulerSettings` 返回有效配置和 `config.get` 的 hash；`UpdateSchedulerSettings` 只接受三个字段的增量 patch 与用户打开设置时的 revision。Main 再次校验时长/开关，提交 `config.patch` 的 `baseHash`，由 Gateway 原子拒绝过期保存；失败保留草稿并允许显式重新加载。配置同步只为缺失字段补齐产品默认 `enabled:true`、`sessionRetention:'7d'`，保留用户设置及其他 cron 配置，避免重启覆盖。全局暂停时页面显示提示，单个任务的 enabled 状态保持独立。
+`GetSchedulerSettings` 返回有效配置和 `config.get` 的 hash；`UpdateSchedulerSettings` 只接受三个字段的增量 patch 与用户打开设置时的 revision。Main 再次校验时长/开关，提交 `config.patch` 的 `baseHash`，由 Gateway 原子拒绝过期保存；失败保留草稿并允许显式重新加载。配置同步只为缺失字段补齐产品默认 `enabled:true`、`skipMissedJobs:true`、`sessionRetention:'7d'`，即启动补跑默认关闭；保留用户设置及其他 cron 配置，避免重启覆盖。全局暂停时页面显示提示，单个任务的 enabled 状态保持独立。
 
 ### 2.1 Schedule
 

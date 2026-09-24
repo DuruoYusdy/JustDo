@@ -132,6 +132,7 @@ type ConfiguredPluginInventory = {
 
 export const buildManagedOpenClawCronConfig = (existing: unknown): Record<string, unknown> => ({
   enabled: true,
+  skipMissedJobs: true,
   sessionRetention: '7d',
   ...(isRecord(existing) ? existing : {}),
 });
